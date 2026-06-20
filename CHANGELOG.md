@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.4.0 (2026-06-20)
+
+### Features
+
+- Complete epic 1 endpoint foundation ([#1](https://github.com/fxmartin/local-code-bench/pull/1),
+  [`90d94a0`](https://github.com/fxmartin/local-code-bench/commit/90d94a06211b0a7bfeb0cd70c2552a2de611ae35))
+
+
 ## v0.3.0 (2026-06-20)
 
 ### Features
