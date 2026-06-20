@@ -63,7 +63,16 @@ def run_endpoint_suite(
     done = completed_pairs(result_path) if resume else set()
     summary = {"passed": 0, "failed": 0, "infra_failed": 0, "skipped": 0}
     for model in model_list:
-        provider = provider_for_model(model)
+        try:
+            provider = provider_for_model(model)
+        except ProviderError as exc:
+            for task in task_list:
+                if (model.name, task.task_id) in done:
+                    summary["skipped"] += 1
+                    continue
+                append_jsonl(result_path, failure_record(model, task, str(exc), infra=True))
+                summary["infra_failed"] += 1
+            continue
         for task in task_list:
             if (model.name, task.task_id) in done:
                 summary["skipped"] += 1
@@ -79,6 +88,9 @@ def run_endpoint_suite(
             except ProviderError as exc:
                 record = failure_record(model, task, str(exc), infra=True)
                 summary["infra_failed"] += 1
+            except Exception as exc:
+                record = failure_record(model, task, f"scoring failed: {exc}", infra=False)
+                summary["failed"] += 1
             append_jsonl(result_path, record)
     return summary
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from local_code_bench.config import ModelConfig, TokenPrices
 from local_code_bench.metrics import StreamEvent
+from local_code_bench.provider import ProviderError
 from local_code_bench.runner import completed_pairs, run_endpoint_suite, select_models
 from local_code_bench.tasks import BenchmarkTask
 
@@ -49,3 +50,16 @@ def test_run_endpoint_suite_writes_records_and_resumes(tmp_path, monkeypatch) ->
     assert summary["passed"] == 1
     assert resumed["skipped"] == 1
     assert completed_pairs(path) == {("a", "t1")}
+
+
+def test_run_endpoint_suite_records_provider_init_failure(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "local_code_bench.runner.provider_for_model",
+        lambda _model: (_ for _ in ()).throw(ProviderError("server down")),
+    )
+    path = tmp_path / "run.jsonl"
+
+    summary = run_endpoint_suite(models=[model("a")], tasks=[task()], result_path=path)
+
+    assert summary["infra_failed"] == 1
+    assert "server down" in path.read_text(encoding="utf-8")

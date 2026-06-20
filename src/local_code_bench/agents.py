@@ -21,6 +21,7 @@ class AgentWorkspace:
     instructions: Path
     solution: Path
     tests: Path
+    final_message: Path
 
 
 def materialize_task_workspace(
@@ -32,13 +33,14 @@ def materialize_task_workspace(
     instructions = root / "INSTRUCTIONS.md"
     solution = root / "solution.py"
     tests = root / "test_solution.py"
+    final_message = root / "codex-final.txt"
     instructions.write_text(
         f"Implement `{task.entry_point}` in `solution.py`.\n\n{task.prompt}\n",
         encoding="utf-8",
     )
     solution.write_text("# Codex should replace this file.\n", encoding="utf-8")
     tests.write_text(f"from solution import *\n\n{task.test_code}", encoding="utf-8")
-    return AgentWorkspace(root, instructions, solution, tests)
+    return AgentWorkspace(root, instructions, solution, tests, final_message)
 
 
 def build_codex_command(agent: AgentConfig, workspace: AgentWorkspace) -> list[str]:
@@ -49,6 +51,9 @@ def build_codex_command(agent: AgentConfig, workspace: AgentWorkspace) -> list[s
         agent.sandbox,
         "--cd",
         str(workspace.root),
+        "--skip-git-repo-check",
+        "--output-last-message",
+        str(workspace.final_message),
     ]
     if agent.model:
         command.extend(["--model", agent.model])
@@ -98,7 +103,8 @@ def run_codex_task(
             "exit_code": completed.returncode,
             "stdout": completed.stdout,
             "stderr": completed.stderr,
-            "command": command[:4],
+            "final_message": _read_optional(workspace.final_message),
+            "command": command,
             "cost_status": "unavailable",
         }
     except subprocess.TimeoutExpired as exc:
@@ -116,8 +122,29 @@ def run_codex_task(
             "stderr": exc.stderr or "",
             "cost_status": "unavailable",
         }
+    except FileNotFoundError as exc:
+        record = {
+            "run_mode": "agent",
+            "agent": agent.name,
+            "task_id": task.task_id,
+            "suite": task.suite,
+            "passed": False,
+            "failure_reason": f"codex executable not found: {agent.command}",
+            "wall_time_seconds": 0.0,
+            "sandbox_mode": agent.sandbox,
+            "exit_code": None,
+            "stdout": "",
+            "stderr": str(exc),
+            "cost_status": "unavailable",
+        }
     finally:
         if not retain_workspace:
             shutil.rmtree(workspace.root, ignore_errors=True)
     append_jsonl(result_path, record)
     return record
+
+
+def _read_optional(path: Path) -> str:
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8")
