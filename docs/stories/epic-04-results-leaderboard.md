@@ -1,0 +1,81 @@
+# Epic 4: Results & Leaderboard
+
+## Epic Overview
+**Epic ID**: Epic-04
+**Description**: Turn raw `results/<run>.jsonl` into a publishable, ranked `LEADERBOARD.md`, regenerable offline without re-running models, and document the manual server bring-up so a visitor can reproduce a run.
+**Business Value**: The leaderboard is what makes the public repo self-demonstrating and answers the project's core questions ("best local model per second on 48 GB"; "when does local beat cloud on cost"). Offline re-scoring means a price change or a new ranking formula costs zero model calls.
+**Success Metrics**: A committed `LEADERBOARD.md` regenerates from stored results; re-scorable offline (REQUIREMENTS §7 Phase 3 milestone).
+
+## Epic Scope
+**Total Stories**: 3 | **Total Points**: 10 | **MVP Stories**: 3
+
+## Features in This Epic
+
+### Feature 4.1: Leaderboard Generation
+
+#### Stories
+
+##### Story 04.1-001: `LEADERBOARD.md` generator
+**User Story**: As a tinkerer, I want a ranked `LEADERBOARD.md` generated from results so that I can see at a glance which model wins on correctness, speed, and cost.
+**Priority**: Must Have
+**Story Points**: 5
+
+**Acceptance Criteria**:
+- **Given** one or more `results/*.jsonl` **When** I run the generator **Then** `LEADERBOARD.md` is written with per-model pass@1, median latency, prefill tok/s, decode tok/s, and $/task, ranked.
+- **Given** the ranking **When** generated **Then** the ranking key is explicit and documented (e.g. correctness floor, then a speed/cost composite), not a hidden heuristic.
+- **Given** model vs. infra failures in the data **When** rendered **Then** they are reflected (e.g. pass@1 over attempted, infra failures noted) rather than silently dropped.
+
+**Technical Notes**: Pure transform of JSONL → Markdown (REQUIREMENTS P0-8). Charts are explicitly v2 (P2-4) — table only.
+
+**Definition of Done**:
+- [ ] Code implemented and peer reviewed
+- [ ] Tests written and passing (fixture JSONL → expected table)
+- [ ] Documentation updated
+
+**Dependencies**: Epic-03 (full run produces complete JSONL)
+**Risk Level**: Low
+
+##### Story 04.1-002: Offline re-score / regenerate
+**User Story**: As a reproducer, I want to regenerate scores and the leaderboard from stored JSONL so that I never re-run models just to change the view or update prices.
+**Priority**: Must Have
+**Story Points**: 3
+
+**Acceptance Criteria**:
+- **Given** stored JSONL with raw responses **When** I re-score offline **Then** pass@1 is recomputed in the sandbox without any model calls.
+- **Given** an updated price table **When** I regenerate **Then** $/task and the leaderboard update from existing token counts (REQUIREMENTS P1-2).
+
+**Technical Notes**: Requires raw responses + token counts to be in the JSONL (Epic-01/03 guarantee this). Re-score reuses the Epic-02 sandbox path.
+
+**Definition of Done**:
+- [ ] Code implemented and peer reviewed
+- [ ] Tests written and passing
+- [ ] Documentation updated
+
+**Dependencies**: 04.1-001, 02.2-002, 03.2-001
+**Risk Level**: Low
+
+### Feature 4.2: Documentation
+
+#### Stories
+
+##### Story 04.2-001: README with server bring-up guide
+**User Story**: As a reproducer, I want a README documenting prerequisites and manual server bring-up so that I can stand up the local servers and run the benchmark myself.
+**Priority**: Must Have
+**Story Points**: 2
+
+**Acceptance Criteria**:
+- **Given** the README **When** I follow it **Then** I can install deps (`uv sync`), set the required API keys, bring up `dflash`/`turboquant` (or use the bring-up script), and run a benchmark.
+- **Given** the README **When** read **Then** it states the v1 scope and limitations (single-turn, no agentic loop) so expectations are correct (REQUIREMENTS §4).
+
+**Technical Notes**: Documents the manual bring-up required by REQUIREMENTS §6 DoD #7. Link to `REQUIREMENTS.md` and `STORIES.md`.
+
+**Definition of Done**:
+- [ ] Code implemented and peer reviewed
+- [ ] Tests written and passing (N/A — docs; verify commands run)
+- [ ] Documentation updated
+
+**Dependencies**: Epic-03 (03.1-003 bring-up script)
+**Risk Level**: Low
+
+## Epic Progress
+**Completed**: 0 / 3 stories · 0 / 10 points

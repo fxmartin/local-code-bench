@@ -81,9 +81,40 @@ in the sandbox (temp dir + subprocess timeout, no network).
 
 Always use `gh` CLI for all GitHub operations (issues, PRs, releases, API calls).
 
+## Story Management Protocol
+
+### Single Source of Truth
+The `docs/stories/` directory and its epic files are the **single source of truth** for all story definitions, progress tracking, and acceptance criteria.
+
+### Story File Hierarchy
+```
+docs/STORIES.md (overview and navigation)
+└── docs/stories/
+    ├── epic-01-foundation-endpoint-protocol.md
+    ├── epic-02-correctness-suite-sandbox.md
+    ├── epic-03-model-matrix-resilience.md
+    ├── epic-04-results-leaderboard.md
+    ├── epic-05-sweep-run-control.md
+    └── non-functional-requirements.md
+```
+
+### Progress Update Protocol
+1. Update story completion checkboxes in epic files
+2. Update the Epic Progress line in each epic
+3. Mark completed acceptance criteria
+4. Update dependency tracking
+5. Track completed story points in epic progress sections
+
+### Development Workflow
+- **Sprint Planning**: Use epic files for story selection (critical path: Epic-01 → 02 → 03 → 04)
+- **Code Reviews**: Link PRs to story IDs (e.g., "Implements Story 01.2-001")
+- **Deployment**: Update story status in epic files post-merge
+- **Updates**: Maintain within 24 hours of story completion
+
 ## Key Docs
 
 - `REQUIREMENTS.md` — v1 Product Requirements (scope, P0/P1/P2, acceptance bar, risks)
+- `docs/STORIES.md` — Epic navigation, personas, MVP scope, dependency graph
 - `PROJECT-SEED.md` — Project seed data for downstream skills
 - `LEADERBOARD.md` — Generated benchmark rankings (created by the harness)
 - `articles/` — The two-part Medium series this project is modeled on (local Claude
