@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from pathlib import Path
 
+from local_code_bench.config import ModelConfig
 from local_code_bench.metrics import estimate_tokens
+from local_code_bench.metrics import capture_stream_metrics
+from local_code_bench.provider import ChatRequest, provider_for_model
+from local_code_bench.results import append_jsonl
 
 CONTEXT_SIZES = (2000, 8000, 16000, 24000)
 
@@ -21,6 +26,41 @@ def padded_prompt(question: str, target_tokens: int) -> str:
 
 def sweep_prompts(question: str, sizes: tuple[int, ...] = CONTEXT_SIZES) -> list[tuple[int, str]]:
     return [(size, padded_prompt(question, size)) for size in sizes]
+
+
+def run_sweep(
+    *,
+    models: list[ModelConfig],
+    question: str,
+    result_path: Path,
+    sizes: tuple[int, ...] = CONTEXT_SIZES,
+) -> dict[str, int]:
+    count = 0
+    for model in models:
+        provider = provider_for_model(model)
+        for size, prompt in sweep_prompts(question, sizes):
+            measurement = capture_stream_metrics(
+                provider.stream_chat(ChatRequest(prompt=prompt, temperature=0.0)),
+                prompt,
+            )
+            append_jsonl(
+                result_path,
+                {
+                    "run_mode": "sweep",
+                    "model": model.name,
+                    "context_tokens": size,
+                    "prompt_tokens": measurement.prompt_tokens,
+                    "raw_response": measurement.response,
+                    "metrics": {
+                        "ttft_seconds": measurement.ttft_seconds,
+                        "latency_seconds": measurement.latency_seconds,
+                        "prefill_tokens_per_second": measurement.prefill_tokens_per_second,
+                        "decode_tokens_per_second": measurement.decode_tokens_per_second,
+                    },
+                },
+            )
+            count += 1
+    return {"sweeps": count}
 
 
 def summarize_sweep(records: list[dict[str, object]]) -> str:

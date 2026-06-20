@@ -22,6 +22,26 @@ def test_run_in_sandbox_blocks_outside_write(tmp_path) -> None:
     assert not (tmp_path / "escape.txt").exists()
 
 
+def test_run_in_sandbox_blocks_network_socket() -> None:
+    result = run_in_sandbox(
+        "import socket\nsocket.socket()",
+        "assert True",
+    )
+
+    assert result.passed is False
+    assert "PermissionError" in result.reason
+
+
+def test_run_in_sandbox_blocks_subprocess() -> None:
+    result = run_in_sandbox(
+        "import subprocess\nsubprocess.run(['echo', 'bad'])",
+        "assert True",
+    )
+
+    assert result.passed is False
+    assert "PermissionError" in result.reason
+
+
 def test_score_completion_extracts_python_fence() -> None:
     task = BenchmarkTask(
         task_id="x",

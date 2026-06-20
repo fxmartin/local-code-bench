@@ -76,3 +76,14 @@ Generate deterministic sweep prompts or summarize stored sweep records:
 uv run bench --mode sweep --prompt "Return 1"
 uv run bench --mode sweep --input results/sweep.jsonl
 ```
+
+## Verification Status
+
+Automated verification covers config parsing, real HumanEval/MBPP cache loading,
+stream metric math, OpenAI/Anthropic stream parsing, macOS `sandbox-exec` scoring
+guards, offline re-score, endpoint resume/fault handling, fake Codex execution,
+leaderboard generation, and sweep execution with mocked providers.
+
+Live validation still requires FX's local/cloud runtime environment: running the
+full configured model matrix, killing a local MLX server mid-run, and measuring
+actual local model resident memory on the M3 Max 48 GB machine.
