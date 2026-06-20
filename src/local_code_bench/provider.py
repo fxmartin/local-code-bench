@@ -66,6 +66,54 @@ class OpenAIStreamingProvider:
             raise ProviderError(f"{self._model.name} request timed out") from exc
 
 
+class AnthropicStreamingProvider:
+    """Minimal Anthropic streaming adapter normalized to StreamEvent."""
+
+    def __init__(self, model: ModelConfig, *, timeout_seconds: float = 120.0) -> None:
+        if model.type != "anthropic":
+            raise ProviderError(f"model '{model.name}' is type '{model.type}', not anthropic")
+        self._model = model
+        self._timeout_seconds = timeout_seconds
+
+    def stream_chat(self, request: ChatRequest) -> Iterable[StreamEvent]:
+        api_key = _api_key(self._model)
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+            "x-api-key": api_key or "",
+            "anthropic-version": "2023-06-01",
+        }
+        body = {
+            "model": self._model.model_id,
+            "max_tokens": 4096,
+            "temperature": request.temperature,
+            "stream": True,
+            "messages": [{"role": "user", "content": request.prompt}],
+        }
+        http_request = urllib.request.Request(
+            f"{self._model.base_url}/messages",
+            data=json.dumps(body).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(http_request, timeout=self._timeout_seconds) as response:
+                yield from parse_anthropic_sse_lines(_decode_lines(response))
+        except urllib.error.HTTPError as exc:
+            message = exc.read().decode("utf-8", errors="replace")
+            raise ProviderError(f"{self._model.name} HTTP {exc.code}: {_redact(message, api_key)}") from exc
+        except urllib.error.URLError as exc:
+            raise ProviderError(f"{self._model.name} request failed: {exc.reason}") from exc
+
+
+def provider_for_model(model: ModelConfig) -> OpenAIStreamingProvider | AnthropicStreamingProvider:
+    if model.type == "openai":
+        return OpenAIStreamingProvider(model)
+    if model.type == "anthropic":
+        return AnthropicStreamingProvider(model)
+    raise ProviderError(f"unsupported provider type: {model.type}")
+
+
 def parse_openai_sse_lines(lines: Iterable[str]) -> Iterable[StreamEvent]:
     """Parse OpenAI-compatible SSE chunks into normalized stream events."""
 
@@ -94,6 +142,34 @@ def parse_openai_sse_lines(lines: Iterable[str]) -> Iterable[StreamEvent]:
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
             )
+
+
+def parse_anthropic_sse_lines(lines: Iterable[str]) -> Iterable[StreamEvent]:
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.startswith("data:"):
+            continue
+        payload = stripped.removeprefix("data:").strip()
+        try:
+            chunk = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise ProviderError(f"malformed stream JSON: {payload}") from exc
+        event_type = chunk.get("type")
+        if event_type == "message_start":
+            usage = chunk.get("message", {}).get("usage", {})
+            input_tokens = usage.get("input_tokens")
+            output_tokens = usage.get("output_tokens")
+        elif event_type == "content_block_delta":
+            text = chunk.get("delta", {}).get("text", "")
+            if text:
+                yield StreamEvent(content=text)
+        elif event_type == "message_delta":
+            usage = chunk.get("usage", {})
+            output_tokens = usage.get("output_tokens", output_tokens)
+        elif event_type == "message_stop":
+            yield StreamEvent(prompt_tokens=input_tokens, completion_tokens=output_tokens)
 
 
 def _decode_lines(response: Any) -> Iterable[str]:

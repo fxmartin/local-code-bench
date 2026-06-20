@@ -32,6 +32,20 @@ class ModelConfig:
     api_key_env: str | None = None
 
 
+AgentType = Literal["codex"]
+
+
+@dataclass(frozen=True)
+class AgentConfig:
+    name: str
+    type: AgentType
+    command: str
+    sandbox: str
+    timeout_seconds: float
+    model: str | None = None
+    profile: str | None = None
+
+
 def load_models(path: str | Path) -> dict[str, ModelConfig]:
     """Load and validate endpoint model configs from YAML."""
 
@@ -58,6 +72,25 @@ def load_models(path: str | Path) -> dict[str, ModelConfig]:
         models[model.name] = model
 
     return models
+
+
+def load_agents(path: str | Path) -> dict[str, AgentConfig]:
+    config_path = Path(path)
+    try:
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ConfigError(f"agent config not found: {config_path}") from exc
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"invalid YAML in {config_path}: {exc}") from exc
+    if not isinstance(raw, dict) or not isinstance(raw.get("agents"), list):
+        raise ConfigError("agents.yaml field 'agents' must be a list")
+    agents: dict[str, AgentConfig] = {}
+    for index, entry in enumerate(raw["agents"]):
+        agent = _parse_agent(entry, index)
+        if agent.name in agents:
+            raise ConfigError(f"agents[{index}].name duplicates '{agent.name}'")
+        agents[agent.name] = agent
+    return agents
 
 
 def _parse_model(entry: Any, index: int) -> ModelConfig:
@@ -87,19 +120,51 @@ def _parse_model(entry: Any, index: int) -> ModelConfig:
     )
 
 
-def _required_str(entry: dict[str, Any], field: str, index: int) -> str:
+def _parse_agent(entry: Any, index: int) -> AgentConfig:
+    if not isinstance(entry, dict):
+        raise ConfigError(f"agents[{index}] must be a mapping")
+    agent_type = _required_str(entry, "type", index, root="agents")
+    if agent_type != "codex":
+        raise ConfigError(f"agents[{index}].type must be 'codex'")
+    timeout = entry.get("timeout_seconds", 600)
+    if not isinstance(timeout, int | float) or timeout <= 0:
+        raise ConfigError(f"agents[{index}].timeout_seconds must be a positive number")
+    return AgentConfig(
+        name=_required_str(entry, "name", index, root="agents"),
+        type="codex",
+        command=_required_str(entry, "command", index, root="agents"),
+        sandbox=_required_str(entry, "sandbox", index, root="agents"),
+        timeout_seconds=float(timeout),
+        model=_optional_str(entry, "model", index, root="agents"),
+        profile=_optional_str(entry, "profile", index, root="agents"),
+    )
+
+
+def _required_str(
+    entry: dict[str, Any],
+    field: str,
+    index: int,
+    *,
+    root: str = "models",
+) -> str:
     value = entry.get(field)
     if not isinstance(value, str) or not value.strip():
-        raise ConfigError(f"models[{index}].{field} must be a non-empty string")
+        raise ConfigError(f"{root}[{index}].{field} must be a non-empty string")
     return value
 
 
-def _optional_str(entry: dict[str, Any], field: str, index: int) -> str | None:
+def _optional_str(
+    entry: dict[str, Any],
+    field: str,
+    index: int,
+    *,
+    root: str = "models",
+) -> str | None:
     value = entry.get(field)
     if value is None:
         return None
     if not isinstance(value, str) or not value.strip():
-        raise ConfigError(f"models[{index}].{field} must be a non-empty string when set")
+        raise ConfigError(f"{root}[{index}].{field} must be a non-empty string when set")
     return value
 
 

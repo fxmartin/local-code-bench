@@ -29,9 +29,9 @@
 **Technical Notes**: Pure transform of JSONL → Markdown (REQUIREMENTS P0-8). Do not combine endpoint token metrics and agent wall-clock metrics into one hidden composite. Charts are explicitly v2 (P2-4) — table only.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing (fixture JSONL → expected table)
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing (fixture JSONL → expected table)
+- [x] Documentation updated
 
 **Dependencies**: Epic-03 (full run produces complete JSONL)
 **Risk Level**: Low
@@ -49,9 +49,9 @@
 **Technical Notes**: Requires raw responses + token counts to be in the JSONL (Epic-01/03 guarantee this). Re-score reuses the Epic-02 sandbox path.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 04.1-001, 02.2-002, 03.2-001
 **Risk Level**: Low
@@ -72,12 +72,12 @@
 **Technical Notes**: Documents the manual bring-up required by REQUIREMENTS §6 DoD #7. Link to `REQUIREMENTS.md` and `STORIES.md`.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing (N/A — docs; verify commands run)
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing (N/A — docs; verify commands run)
+- [x] Documentation updated
 
 **Dependencies**: Epic-03 (03.1-003 bring-up script)
 **Risk Level**: Low
 
 ## Epic Progress
-**Completed**: 0 / 3 stories · 0 / 10 points
+**Completed**: 3 / 3 stories · 10 / 10 points

@@ -25,3 +25,15 @@ def append_jsonl(path: str | Path, record: dict[str, object]) -> None:
     with output_path.open("a", encoding="utf-8") as file:
         json.dump(record, file, sort_keys=True, separators=(",", ":"))
         file.write("\n")
+
+
+def read_jsonl(path: str | Path) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    input_path = Path(path)
+    if not input_path.exists():
+        return records
+    with input_path.open("r", encoding="utf-8") as file:
+        for line in file:
+            if line.strip():
+                records.append(json.loads(line))
+    return records

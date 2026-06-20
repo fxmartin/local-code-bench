@@ -19,9 +19,9 @@ These cross-cutting requirements govern the functional epics. NFR-SEC-001 and NF
 **Technical Notes**: Validated against a synthetic timed stream (no live model). Governs Epic-01 (01.2-002).
 
 **Definition of Done**:
-- [ ] Implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: Epic-01 (01.2-002)
 **Risk Level**: Medium
@@ -41,9 +41,9 @@ These cross-cutting requirements govern the functional epics. NFR-SEC-001 and NF
 **Technical Notes**: Realized by Epic-02 (02.2-001), Epic-03 (03.1-001/002), and Epic-06 (Codex agent output capture). This is the project's highest-impact risk control (REQUIREMENTS §8).
 
 **Definition of Done**:
-- [ ] Implemented and peer reviewed
-- [ ] Tests written and passing (timeout, sandbox escape attempt, secret-redaction)
-- [ ] Documentation updated
+- [x] Implemented and peer reviewed
+- [x] Tests written and passing (timeout, sandbox escape attempt, secret-redaction)
+- [x] Documentation updated
 
 **Dependencies**: Epic-02 (02.2-001)
 **Risk Level**: High
@@ -63,9 +63,9 @@ These cross-cutting requirements govern the functional epics. NFR-SEC-001 and NF
 **Technical Notes**: Cuts across all epics; mock the streamed response and the sandbox boundary. Aligns with CLAUDE.md Testing Strategy.
 
 **Definition of Done**:
-- [ ] Implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: Epics 01–03, Epic-06
 **Risk Level**: Medium
@@ -84,9 +84,9 @@ These cross-cutting requirements govern the functional epics. NFR-SEC-001 and NF
 **Technical Notes**: Protects the core design constraint (REQUIREMENTS §4). Validated by Epic-01 + Epic-03 provider coverage.
 
 **Definition of Done**:
-- [ ] Implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: Epic-01 (01.2-001), Epic-03 (03.1-*)
 **Risk Level**: Low
@@ -105,9 +105,9 @@ These cross-cutting requirements govern the functional epics. NFR-SEC-001 and NF
 **Technical Notes**: Single fixed machine (M3 Max 48 GB); no multi-machine support. Pairs with Epic-03 (03.1-003).
 
 **Definition of Done**:
-- [ ] Implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: Epic-03 (03.1-003)
 **Risk Level**: Medium

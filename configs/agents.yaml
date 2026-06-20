@@ -1,0 +1,6 @@
+agents:
+  - name: codex
+    type: codex
+    command: codex
+    sandbox: workspace-write
+    timeout_seconds: 600
