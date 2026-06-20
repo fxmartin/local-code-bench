@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.5.3 (2026-06-20)
+
+### Bug Fixes
+
+- Harden benchmark implementation ([#6](https://github.com/fxmartin/local-code-bench/pull/6),
+  [`8acbcb3`](https://github.com/fxmartin/local-code-bench/commit/8acbcb399a0292151506fa6dcf370022cb9c8838))
+
+### Chores
+
+- Sync lockfile version ([#5](https://github.com/fxmartin/local-code-bench/pull/5),
+  [`9046fd1`](https://github.com/fxmartin/local-code-bench/commit/9046fd1a89933264c7c5241f14539664fb597223))
+
+
 ## v0.5.2 (2026-06-20)
 
 ### Bug Fixes
