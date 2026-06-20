@@ -1,6 +1,6 @@
-# local-claude-code
+# local-code-bench
 
-Benchmark harness for local and cloud coding models on Apple Silicon.
+Benchmark harness for local, cloud, and agentic coding models on Apple Silicon.
 
 ## Development
 

@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from local_claude_code.cli import main
+from local_code_bench.cli import main
 
 
 def test_main_help_prints_usage(capsys) -> None:
@@ -20,7 +20,7 @@ def test_main_help_prints_usage(capsys) -> None:
 
 def test_bench_help_entrypoint_exits_successfully() -> None:
     result = subprocess.run(
-        [sys.executable, "-m", "local_claude_code.cli", "--help"],
+        [sys.executable, "-m", "local_code_bench.cli", "--help"],
         check=False,
         capture_output=True,
         text=True,

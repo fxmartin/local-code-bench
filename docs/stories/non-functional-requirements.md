@@ -3,7 +3,7 @@
 ## Overview
 **Total Stories**: 5 | **Total Points**: 12
 
-These cross-cutting requirements govern the functional epics. NFR-SEC-001 and NFR-QUAL-001 are **MVP** (they constrain Epics 02–03); the rest are validated throughout.
+These cross-cutting requirements govern the functional epics. NFR-SEC-001 and NFR-QUAL-001 are **MVP** (they constrain Epics 02–03 and Epic-06); the rest are validated throughout.
 
 ## Performance Requirements
 
@@ -34,11 +34,11 @@ These cross-cutting requirements govern the functional epics. NFR-SEC-001 and NF
 **Story Points**: 3
 
 **Acceptance Criteria**:
-- **Given** generated code **When** executed **Then** it runs only in an isolated temp dir + subprocess with timeout and **no network**, and cannot write outside that dir.
+- **Given** generated code or agent-edited code **When** executed for scoring **Then** it runs only in an isolated temp dir + subprocess with timeout and **no network**, and cannot write outside that dir.
 - **Given** API keys **When** used **Then** they are read from env/`.env` only, never committed, never logged (gitleaks pre-commit enforced).
 - **Given** an error from a cloud backend **When** logged **Then** the message contains no secret material.
 
-**Technical Notes**: Realized by Epic-02 (02.2-001) and Epic-03 (03.1-001/002). This is the project's highest-impact risk control (REQUIREMENTS §8).
+**Technical Notes**: Realized by Epic-02 (02.2-001), Epic-03 (03.1-001/002), and Epic-06 (Codex agent output capture). This is the project's highest-impact risk control (REQUIREMENTS §8).
 
 **Definition of Done**:
 - [ ] Implemented and peer reviewed
@@ -56,7 +56,7 @@ These cross-cutting requirements govern the functional epics. NFR-SEC-001 and NF
 **Story Points**: 3
 
 **Acceptance Criteria**:
-- **Given** the harness logic **When** tests run **Then** metrics parsing (TTFT/tok/s), pass@1 scoring, and cost calculation are covered with mocked/synthetic inputs — no live model required.
+- **Given** the harness logic **When** tests run **Then** metrics parsing (TTFT/tok/s), pass@1 scoring, cost calculation, and Codex runner command handling are covered with mocked/synthetic inputs — no live model or live Codex run required.
 - **Given** fault-tolerance paths **When** tested **Then** timeout, malformed-output, and backend-error cases are exercised and assert score 0 + continue.
 - **Given** the repo **When** committed **Then** tests pass (no `--no-verify`) per global TDD standard.
 
@@ -67,7 +67,7 @@ These cross-cutting requirements govern the functional epics. NFR-SEC-001 and NF
 - [ ] Tests written and passing
 - [ ] Documentation updated
 
-**Dependencies**: Epics 01–03
+**Dependencies**: Epics 01–03, Epic-06
 **Risk Level**: Medium
 
 ## Integration Requirements

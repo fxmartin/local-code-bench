@@ -1,13 +1,12 @@
-# local-claude-code — Benchmarking local & cloud coding models for Claude Code
+# local-code-bench — Benchmarking local, cloud, and Codex coding runs
 
 ## Project Context
 
-A CLI benchmark harness for driving and measuring agentic coding models. It runs
-**local MLX-served models** on an Apple Silicon Mac against each other through
-Claude Code, then against cloud models (GLM, Kimi K2, …) via **OpenRouter** — with
-Claude Code itself as the baseline. The goal is to find the fastest, most capable
-local coding setup and quantify the gap to the frontier. For FX's own
-experimentation and (being public) reproducible by others.
+A CLI benchmark harness for driving and measuring coding models and coding-agent
+runs. It compares **local MLX-served models**, cloud endpoints (GLM, Kimi K2, ...),
+and Codex CLI agent runs on the same Apple Silicon machine. The goal is to find
+the fastest usable local coding setup, quantify the gap to frontier cloud options,
+and measure Codex as a first-class coding-agent baseline.
 
 ## Tech Stack
 
@@ -32,7 +31,7 @@ because local agentic coding is **prefill-bound, not decode-bound**.
 ## Repository Structure
 
 ```
-local-claude-code/
+local-code-bench/
 ├── src/                  # harness package (runner, providers, metrics)
 ├── configs/              # model + provider definitions (local MLX, OpenRouter)
 ├── prompts/              # task-mode sub-prompts + sweep-mode preambles
@@ -40,6 +39,7 @@ local-claude-code/
 ├── articles/             # reference research (Medium series, PDFs)
 ├── tests/
 ├── CLAUDE.md
+├── AGENTS.md
 ├── PROJECT-SEED.md
 └── .gitignore
 ```
@@ -58,13 +58,15 @@ Use these instead of their traditional counterparts. They're installed and expec
 
 ## Benchmark Protocol (v1)
 
-- **Measurement surface**: direct OpenAI-compatible `/v1/chat/completions` — single-turn,
-  controlled prompts. The real Claude Code agentic loop is **deliberately bypassed** in v1
-  (it's noisy and unreproducible); it returns in v2.
+- **Endpoint mode**: direct OpenAI-compatible `/v1/chat/completions` — single-turn,
+  controlled prompts.
+- **Agent mode**: Codex CLI via `codex exec`, run non-interactively in an isolated
+  task workspace and scored with the same benchmark tests where practical.
 - **Correctness**: HumanEval + MBPP, **pass@1 at temperature 0**, scored against the
   benchmark's own unit tests run in an isolated sandbox.
 - **Speed**: per-turn TTFT / prefill tok/s / decode tok/s / total latency from the stream.
-- **Cost**: tokens × dated price table in `configs/models.yaml` ($0 for local).
+- **Cost**: endpoint tokens × dated price table in `configs/models.yaml` ($0 for local);
+  Codex agent cost is marked unavailable unless reliable usage data is exposed.
 - **Outputs**: raw `results/<run>.jsonl` (re-scorable offline) → generated `LEADERBOARD.md`.
 - **Reproducibility**: fixed seed/temp, pinned model revisions, suite version, and hardware
   tag recorded in every run's metadata.
@@ -134,6 +136,7 @@ docs/STORIES.md (overview and navigation)
 
 - `REQUIREMENTS.md` — v1 Product Requirements (scope, P0/P1/P2, acceptance bar, risks)
 - `docs/STORIES.md` — Epic navigation, personas, MVP scope, dependency graph
+- `AGENTS.md` — Codex project instructions
 - `PROJECT-SEED.md` — Project seed data for downstream skills
 - `LEADERBOARD.md` — Generated benchmark rankings (created by the harness)
 - `articles/` — The two-part Medium series this project is modeled on (local Claude

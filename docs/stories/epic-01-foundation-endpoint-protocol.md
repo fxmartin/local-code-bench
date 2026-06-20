@@ -2,18 +2,38 @@
 
 ## Epic Overview
 **Epic ID**: Epic-01
-**Description**: Establish the `uv` Python project, the config-driven model roster, and the core measurement loop: send a controlled single-turn prompt to any OpenAI-compatible `/v1/chat/completions` endpoint, stream the response, and capture speed metrics to raw JSONL. This is the spine every other epic builds on.
+**Description**: Establish the `uv` Python project, the config-driven endpoint model roster, the agent-target roster, and the core endpoint measurement loop: send a controlled single-turn prompt to any OpenAI-compatible `/v1/chat/completions` endpoint, stream the response, and capture speed metrics to raw JSONL. This is the spine every other epic builds on.
 **Business Value**: Without a trustworthy, reproducible way to measure a single endpoint, no comparison is credible. This epic makes "measure a model" a one-command, data-driven operation.
 **Success Metrics**: One model, one prompt, real metrics (TTFT, prefill tok/s, decode tok/s, latency, tokens) written to `results/<run>.jsonl` (REQUIREMENTS §7 Phase 0 milestone).
 
 ## Epic Scope
-**Total Stories**: 6 | **Total Points**: 20 | **MVP Stories**: 6
+**Total Stories**: 7 | **Total Points**: 21 | **MVP Stories**: 7
 
 ## Features in This Epic
 
 ### Feature 1.1: Project Scaffold & Configuration
 
 #### Stories
+
+##### Story 01.1-000: Project identity rename
+**User Story**: As a reproducer, I want the project named `local-code-bench` so that the repo clearly supports local, cloud, and Codex coding benchmarks rather than appearing Claude-only.
+**Priority**: Must Have
+**Story Points**: 1
+
+**Acceptance Criteria**:
+- **Given** the Python package metadata **When** I inspect it **Then** the project name is `local-code-bench` and the import package is `local_code_bench`.
+- **Given** repo documentation **When** I read it **Then** it frames Codex as an MVP benchmark target and Claude Code agent-loop benchmarking as deferred.
+- **Given** the scaffold **When** I run verification **Then** `uv sync`, `uv run pytest`, `uv run ruff check .`, and `uv run bench --help` pass.
+
+**Technical Notes**: Keep the CLI command name `bench`. The GitHub repository should be renamed to `fxmartin/local-code-bench` and the local `origin` URL updated.
+
+**Definition of Done**:
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
+
+**Dependencies**: None
+**Risk Level**: Low
 
 ##### Story 01.1-001: `uv` project scaffold
 **User Story**: As a developer, I want a standard `uv`-managed Python project skeleton so that the harness has a clean, reproducible dependency and entrypoint setup.
@@ -36,7 +56,7 @@
 **Risk Level**: Low
 
 ##### Story 01.1-002: `models.yaml` schema & loader
-**User Story**: As a reproducer, I want every backend defined in `configs/models.yaml` so that adding a model is data, not code.
+**User Story**: As a reproducer, I want every endpoint backend defined in `configs/models.yaml` so that adding a model is data, not code.
 **Priority**: Must Have
 **Story Points**: 3
 
@@ -44,6 +64,7 @@
 - **Given** a `models.yaml` entry with name, type (`openai`/`anthropic`), base URL, model id, pinned revision, and price-per-1k-tokens **When** the loader parses it **Then** it returns a validated, typed config object.
 - **Given** a malformed/missing-field entry **When** the loader parses it **Then** it raises a clear, actionable validation error naming the offending field.
 - **Given** a valid config with 5 backends **When** loaded **Then** a 6th can be added by editing YAML only, with no code change (REQUIREMENTS P0-1).
+- **Given** Codex agent mode in MVP **When** the config layer is implemented **Then** it leaves room for a separate `configs/agents.yaml` loader rather than mixing agent targets into endpoint provider config.
 
 **Technical Notes**: Validate with a typed model (e.g. pydantic or dataclass + manual validation). Price table is dated data per backend for the cost calc in Epic-03.
 
@@ -138,4 +159,4 @@
 **Risk Level**: Low
 
 ## Epic Progress
-**Completed**: 1 / 6 stories · 2 / 20 points
+**Completed**: 2 / 7 stories · 3 / 21 points

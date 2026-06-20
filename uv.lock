@@ -21,8 +21,8 @@ wheels = [
 ]
 
 [[package]]
-name = "local-claude-code"
-version = "0.1.0"
+name = "local-code-bench"
+version = "0.2.0"
 source = { editable = "." }
 
 [package.dev-dependencies]

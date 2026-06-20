@@ -2,7 +2,7 @@
 
 ## Epic Overview
 **Epic ID**: Epic-02
-**Description**: Add the automated-correctness half of the v1 thesis. Load the HumanEval and MBPP benchmarks, run each model's generated code against the benchmark's own unit tests inside an isolated sandbox, and score pass@1 at temperature 0. Speed without correctness is a vanity metric for a coding tool — this epic makes "did it actually work?" a number.
+**Description**: Add the automated-correctness half of the v1 thesis. Load the HumanEval and MBPP benchmarks, run each endpoint model's generated code or Codex agent workspace output against the benchmark's own unit tests inside an isolated sandbox, and score pass@1 at temperature 0 where endpoint generation is used. Speed without correctness is a vanity metric for a coding tool — this epic makes "did it actually work?" a number.
 **Business Value**: Filters out fast-but-wrong models and produces externally comparable, credible correctness numbers on a public repo.
 **Success Metrics**: pass@1 scored for one backend on the full HumanEval suite (REQUIREMENTS §7 Phase 1 milestone).
 
@@ -25,7 +25,7 @@
 - **Given** no network/offline **When** the dataset is already cached **Then** loading succeeds from cache.
 - **Given** the suite version **When** a run starts **Then** the version is recorded in run metadata (REQUIREMENTS P0-9).
 
-**Technical Notes**: Fetch once, cache locally (`.cache/`, gitignored). Keep the loader interface shared with MBPP so the runner is suite-agnostic.
+**Technical Notes**: Fetch once, cache locally (`.cache/`, gitignored). Keep the loader interface shared with MBPP so endpoint and Codex agent runners are suite-agnostic.
 
 **Definition of Done**:
 - [ ] Code implemented and peer reviewed
@@ -64,11 +64,11 @@
 **Story Points**: 5
 
 **Acceptance Criteria**:
-- **Given** generated code + its test **When** executed **Then** it runs in a temp dir in a subprocess with a wall-clock timeout, no network access, and no write access outside the temp dir.
+- **Given** generated code or an agent-edited solution + its test **When** executed **Then** it runs in a temp dir in a subprocess with a wall-clock timeout, no network access, and no write access outside the temp dir.
 - **Given** code that infinite-loops **When** executed **Then** the timeout fires, the process is killed, and the task is recorded as failed (not hung).
 - **Given** a completed sandbox run **When** it finishes **Then** the temp dir is cleaned up regardless of outcome.
 
-**Technical Notes**: Subprocess with `timeout`; pin the sandbox Python. This story implements the security-critical NFR-SEC-001. Network blocking enforced for the child process.
+**Technical Notes**: Subprocess with `timeout`; pin the sandbox Python. This story implements the security-critical NFR-SEC-001. Network blocking is for the scored generated code, not necessarily for the Codex process that produces edits.
 
 **Definition of Done**:
 - [ ] Code implemented and peer reviewed

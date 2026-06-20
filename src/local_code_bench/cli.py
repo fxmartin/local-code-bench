@@ -24,7 +24,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.version:
-        from local_claude_code import __version__
+        from local_code_bench import __version__
 
         print(__version__)
         return 0

@@ -1,14 +1,14 @@
 [project]
-name = "local-claude-code"
+name = "local-code-bench"
 version = "0.2.0"
-description = "Benchmark harness for local & cloud coding models on Apple Silicon"
+description = "Benchmark harness for local, cloud, and agentic coding models on Apple Silicon"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = []
 
 [project.scripts]
-bench = "local_claude_code.cli:main"
+bench = "local_code_bench.cli:main"
 
 [dependency-groups]
 dev = [
@@ -25,7 +25,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/local_claude_code"]
+packages = ["src/local_code_bench"]
 
 [tool.ruff]
 line-length = 100
