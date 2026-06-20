@@ -28,9 +28,9 @@
 **Technical Notes**: Python 3.x via `uv`. Single package under `src/`. No framework. Wire `ruff` to the global CLI-tools standard.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: None
 **Risk Level**: Low
@@ -138,4 +138,4 @@
 **Risk Level**: Low
 
 ## Epic Progress
-**Completed**: 0 / 6 stories · 0 / 20 points
+**Completed**: 1 / 6 stories · 2 / 20 points
