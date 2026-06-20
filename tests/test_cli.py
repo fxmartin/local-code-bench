@@ -33,4 +33,4 @@ def test_bench_help_entrypoint_exits_successfully() -> None:
 def test_main_version_matches_package_metadata(capsys) -> None:
     assert main(["--version"]) == 0
 
-    assert capsys.readouterr().out.strip() == "0.3.0"
+    assert capsys.readouterr().out.strip() == "0.4.0"
