@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.5.2 (2026-06-20)
+
+### Bug Fixes
+
+- Derive runtime version from package metadata
+  ([#4](https://github.com/fxmartin/local-code-bench/pull/4),
+  [`f73e444`](https://github.com/fxmartin/local-code-bench/commit/f73e444f633be44a253f3551c6ef7223d19176ad))
+
+
 ## v0.5.1 (2026-06-20)
 
 ### Bug Fixes
