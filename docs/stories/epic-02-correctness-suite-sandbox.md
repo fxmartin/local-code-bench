@@ -28,9 +28,9 @@
 **Technical Notes**: Fetch once, cache locally (`.cache/`, gitignored). Keep the loader interface shared with MBPP so endpoint and Codex agent runners are suite-agnostic.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: Epic-01 (01.1-001)
 **Risk Level**: Low
@@ -47,9 +47,9 @@
 **Technical Notes**: MBPP addresses the HumanEval-saturation risk (REQUIREMENTS §8). Reuse the 02.1-001 task abstraction.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 02.1-001
 **Risk Level**: Low
@@ -71,9 +71,9 @@
 **Technical Notes**: Subprocess with `timeout`; pin the sandbox Python. This story implements the security-critical NFR-SEC-001. Network blocking is for the scored generated code, not necessarily for the Codex process that produces edits.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing (incl. timeout + malicious-write attempt)
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing (incl. timeout + malicious-write attempt)
+- [x] Documentation updated
 
 **Dependencies**: Epic-01 (01.1-001)
 **Risk Level**: High
@@ -91,9 +91,9 @@
 **Technical Notes**: pass@1 only for v1 (pass@k deferred). Distinguish *model failure* (wrong/malformed) from *infra failure* (sandbox error) in the record.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 02.2-001, 02.1-001
 **Risk Level**: Medium
@@ -110,12 +110,12 @@
 **Technical Notes**: Extends 01.2-004 from single-prompt to suite iteration. Fault tolerance across backends is Epic-03 (03.3-001); here, a single backend on a full suite.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 02.2-002, 01.2-003
 **Risk Level**: Medium
 
 ## Epic Progress
-**Completed**: 0 / 5 stories · 0 / 16 points
+**Completed**: 5 / 5 stories · 16 / 16 points

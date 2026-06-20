@@ -28,9 +28,9 @@
 **Technical Notes**: Reuses Epic-02's task abstraction and sandbox cleanup expectations. Do not mix agent workspaces with endpoint JSONL output files.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 02.1-001, 02.1-002
 **Risk Level**: Medium
@@ -48,9 +48,9 @@
 **Technical Notes**: Use `codex exec` non-interactive mode. Prefer `--sandbox workspace-write`; never use dangerous bypass flags in benchmark runs.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing with a fake `codex` executable
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing with a fake `codex` executable
+- [x] Documentation updated
 
 **Dependencies**: 06.1-001, 01.2-003
 **Risk Level**: Medium
@@ -68,9 +68,9 @@
 **Technical Notes**: Endpoint token metrics and agent wall-clock metrics are not interchangeable; keep them as separate result fields.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 06.1-002, 02.2-001, 02.2-002
 **Risk Level**: Medium
@@ -88,12 +88,12 @@
 **Technical Notes**: Agent selection belongs in runner/config code, not in endpoint provider adapters.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 06.1-003, 03.3-002
 **Risk Level**: Low
 
 ## Epic Progress
-**Completed**: 0 / 4 stories · 0 / 13 points
+**Completed**: 4 / 4 stories · 13 / 13 points

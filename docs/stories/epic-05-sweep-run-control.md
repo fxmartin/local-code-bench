@@ -27,9 +27,9 @@
 **Technical Notes**: Mirrors the Part 2 "sweep mode." Reuses Epic-01 metrics; only the prompt construction is new (REQUIREMENTS P1-1).
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: Epic-01 (01.2-002), Epic-03 (03.1-*)
 **Risk Level**: Low
@@ -46,9 +46,9 @@
 **Technical Notes**: Table only; charts remain v2 (P2-4). Feeds the project's headline conclusion.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 05.1-001, Epic-04 (04.1-001 generator patterns)
 **Risk Level**: Low
@@ -69,12 +69,12 @@
 **Technical Notes**: Completes REQUIREMENTS P1-3 (subset was 03.3-002). Keyed on (run id, model, task id) from existing JSONL.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 01.2-003, 03.3-002
 **Risk Level**: Low
 
 ## Epic Progress
-**Completed**: 0 / 3 stories · 0 / 9 points
+**Completed**: 3 / 3 stories · 9 / 9 points

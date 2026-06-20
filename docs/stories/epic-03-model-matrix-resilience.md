@@ -27,9 +27,9 @@
 **Technical Notes**: Reuses Epic-01's adapter. Secrets via env/`.env` only, never committed (gitleaks already enforced).
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: Epic-01 (01.2-001)
 **Risk Level**: Low
@@ -46,9 +46,9 @@
 **Technical Notes**: The only non-OpenAI endpoint — explicit special case noted in REQUIREMENTS §5 P0-2. Streaming for TTFT parity.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing (mocked)
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing (mocked)
+- [x] Documentation updated
 
 **Dependencies**: Epic-01 (01.2-002)
 **Risk Level**: Medium
@@ -66,9 +66,9 @@
 **Technical Notes**: Bring-up *script* only (allowed); no orchestration. Verify the MoE actually fits 48 GB early — record an OOM as a finding, not a crash.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing (config/contract level; live server manual)
-- [ ] Documentation updated (bring-up steps)
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing (config/contract level; live server manual)
+- [x] Documentation updated (bring-up steps)
 
 **Dependencies**: Epic-01 (01.2-001)
 **Risk Level**: Medium
@@ -90,9 +90,9 @@
 **Technical Notes**: Pure function of tokens × price data — unit-testable without any live call (NFR-QUAL-001).
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 01.2-003
 **Risk Level**: Low
@@ -109,9 +109,9 @@
 **Technical Notes**: Implements REQUIREMENTS P0-9. Metadata travels with the JSONL so re-scoring (Epic-04) is self-describing.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 01.2-003
 **Risk Level**: Low
@@ -133,9 +133,9 @@
 **Technical Notes**: This is the Phase 2 milestone behavior. Weak local models emitting malformed code is a *signal*, not a bug (REQUIREMENTS §8).
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing (injected timeout/error/malformed)
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing (injected timeout/error/malformed)
+- [x] Documentation updated
 
 **Dependencies**: 02.2-003, 03.1-001..003
 **Risk Level**: Medium
@@ -152,12 +152,12 @@
 **Technical Notes**: Partial of REQUIREMENTS P1-3 (resume is Epic-05). Keep selection logic in the runner, not the adapters.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 02.2-003
 **Risk Level**: Low
 
 ## Epic Progress
-**Completed**: 0 / 7 stories · 0 / 22 points
+**Completed**: 7 / 7 stories · 22 / 22 points

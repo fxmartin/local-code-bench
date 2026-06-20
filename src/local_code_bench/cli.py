@@ -7,10 +7,15 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from local_code_bench.config import ConfigError, load_models
+from local_code_bench.agents import run_codex_task
+from local_code_bench.config import ConfigError, load_agents, load_models
+from local_code_bench.leaderboard import generate_leaderboard
 from local_code_bench.metrics import CompletionMeasurement, capture_stream_metrics
-from local_code_bench.provider import ChatRequest, OpenAIStreamingProvider, ProviderError
+from local_code_bench.provider import ChatRequest, ProviderError, provider_for_model
 from local_code_bench.results import append_jsonl, new_run_path
+from local_code_bench.runner import run_endpoint_suite, select_models
+from local_code_bench.sweep import summarize_sweep, sweep_prompts
+from local_code_bench.tasks import TaskLoadError, limit_tasks, load_suite
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -41,6 +46,16 @@ def build_parser() -> argparse.ArgumentParser:
         default="results",
         help="directory for raw JSONL run output",
     )
+    parser.add_argument("--mode", choices=["endpoint", "agent", "sweep", "leaderboard"], default="endpoint")
+    parser.add_argument("--suite", choices=["humaneval", "mbpp"], help="benchmark suite to run")
+    parser.add_argument("--limit", type=int, help="limit benchmark tasks")
+    parser.add_argument("--skip", help="comma-separated model names to skip")
+    parser.add_argument("--resume", action="store_true", help="resume an existing JSONL run")
+    parser.add_argument("--run-file", help="explicit JSONL run file for suite/resume modes")
+    parser.add_argument("--agent", help="configured agent name for agent mode")
+    parser.add_argument("--agents-config", default="configs/agents.yaml", help="path to agents YAML")
+    parser.add_argument("--input", nargs="*", help="input JSONL files for leaderboard/sweep summaries")
+    parser.add_argument("--output", help="output file for generated leaderboard")
     return parser
 
 
@@ -53,6 +68,59 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         print(__version__)
         return 0
+
+    try:
+        if args.mode == "leaderboard":
+            inputs = [Path(item) for item in args.input or []]
+            if not inputs:
+                parser.error("--mode leaderboard requires --input")
+            output = Path(args.output or "LEADERBOARD.md")
+            generate_leaderboard(inputs, output)
+            print(f"wrote {output}")
+            return 0
+
+        if args.mode == "sweep":
+            if args.input:
+                from local_code_bench.results import read_jsonl
+
+                records = [record for item in args.input for record in read_jsonl(item)]
+                print(summarize_sweep(records))
+                return 0
+            question = args.prompt or "Write a Python function that returns 1."
+            for size, prompt in sweep_prompts(question):
+                print(f"{size}\t{len(prompt.split())}\t{prompt[:80]}")
+            return 0
+
+        if args.mode == "agent":
+            if not args.agent or not args.suite:
+                parser.error("--mode agent requires --agent and --suite")
+            result_path = Path(args.run_file) if args.run_file else new_run_path(args.results_dir, prefix=args.agent)
+            agents = load_agents(args.agents_config)
+            if args.agent not in agents:
+                available = ", ".join(sorted(agents))
+                raise ConfigError(f"unknown agent '{args.agent}'. Available agents: {available}")
+            tasks = limit_tasks(load_suite(args.suite), args.limit)
+            for task in tasks:
+                run_codex_task(agent=agents[args.agent], task=task, result_path=result_path)
+            print(f"agent={args.agent} tasks={len(tasks)} results={result_path}")
+            return 0
+
+        if args.suite:
+            models = select_models(load_models(args.config), include=args.model, skip=args.skip)
+            tasks = limit_tasks(load_suite(args.suite), args.limit)
+            result_path = Path(args.run_file) if args.run_file else new_run_path(args.results_dir, prefix=args.suite)
+            summary = run_endpoint_suite(
+                models=models,
+                tasks=tasks,
+                result_path=result_path,
+                resume=args.resume,
+            )
+            print(f"suite={args.suite} results={result_path} summary={summary}")
+            return 0
+
+    except (ConfigError, ProviderError, TaskLoadError, ValueError) as exc:
+        print(f"bench: error: {exc}", file=sys.stderr)
+        return 2
 
     if args.model or args.prompt:
         if not args.model or not args.prompt:
@@ -99,7 +167,7 @@ def run_single_prompt(
         available = ", ".join(sorted(models)) or "(none)"
         raise ConfigError(f"unknown model '{model_name}'. Available models: {available}") from exc
 
-    provider = OpenAIStreamingProvider(model)
+    provider = provider_for_model(model)
     measurement = capture_stream_metrics(
         provider.stream_chat(ChatRequest(prompt=prompt, temperature=0.0)),
         prompt,
