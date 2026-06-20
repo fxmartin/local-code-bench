@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from importlib.metadata import version
 
 import pytest
 
@@ -33,4 +34,4 @@ def test_bench_help_entrypoint_exits_successfully() -> None:
 def test_main_version_matches_package_metadata(capsys) -> None:
     assert main(["--version"]) == 0
 
-    assert capsys.readouterr().out.strip() == "0.4.0"
+    assert capsys.readouterr().out.strip() == version("local-code-bench")
