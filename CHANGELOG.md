@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.5.1 (2026-06-20)
+
+### Bug Fixes
+
+- Align runtime version with release ([#3](https://github.com/fxmartin/local-code-bench/pull/3),
+  [`8f26470`](https://github.com/fxmartin/local-code-bench/commit/8f264709abe6a98eeb0410b95882b1cad17c8f18))
+
+
 ## v0.5.0 (2026-06-20)
 
 ### Features
