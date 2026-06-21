@@ -29,7 +29,7 @@ def generate_leaderboard(result_paths: list[Path], output_path: Path) -> str:
             "",
             "## Agent Runs",
             "",
-            "| Agent | pass@1 | Median Wall Time | Sandbox | Failures | Cost |",
+            "| Agent | pass@1 | Median Wall Time | Sandbox | Failures | Cost / Tokens |",
             "|---|---:|---:|---|---:|---|",
         ]
     )
@@ -78,8 +78,22 @@ def _agent_rows(records: list[dict[str, object]]) -> list[str]:
         walls = [float(item["wall_time_seconds"]) for item in items if isinstance(item.get("wall_time_seconds"), int | float)]
         sandbox = str(items[0].get("sandbox_mode", "unknown"))
         failures = attempts - passed
-        rows.append(f"| {agent} | {passed}/{attempts} | {_fmt(_median(walls))} | {sandbox} | {failures} | unavailable |")
+        rows.append(
+            f"| {agent} | {passed}/{attempts} | {_fmt(_median(walls))} | "
+            f"{sandbox} | {failures} | {_agent_cost_or_tokens(items)} |"
+        )
     return rows
+
+
+def _agent_cost_or_tokens(records: list[dict[str, object]]) -> str:
+    totals = []
+    for record in records:
+        tokens = record.get("tokens")
+        if isinstance(tokens, dict) and isinstance(tokens.get("total"), int | float):
+            totals.append(float(tokens["total"]))
+    if not totals:
+        return "unavailable"
+    return f"{_fmt_int(_median(totals))} tok"
 
 
 def _metric(record: dict[str, object], key: str) -> float:
@@ -96,6 +110,10 @@ def _median(values: list[float]) -> float:
 
 def _fmt(value: float) -> str:
     return f"{value:.3f}"
+
+
+def _fmt_int(value: float) -> str:
+    return f"{round(value):,}"
 
 
 def _dedupe_latest(records: list[dict[str, object]]) -> list[dict[str, object]]:

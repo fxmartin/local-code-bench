@@ -40,6 +40,8 @@ def test_generate_leaderboard_from_endpoint_and_agent_records(tmp_path) -> None:
             "passed": True,
             "wall_time_seconds": 7.0,
             "sandbox_mode": "workspace-write",
+            "tokens": {"total": 1234, "estimated": False},
+            "cost_status": "tokens_available",
         },
     )
 
@@ -47,6 +49,7 @@ def test_generate_leaderboard_from_endpoint_and_agent_records(tmp_path) -> None:
 
     assert "| m1 | 1/1 |" in content
     assert "| codex | 1/1 |" in content
+    assert "1,234 tok" in content
 
 
 def test_sweep_prompt_and_summary() -> None:

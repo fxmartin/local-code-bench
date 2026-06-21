@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from local_code_bench.agents import build_codex_command, materialize_task_workspace
+from local_code_bench.agents import build_codex_command, extract_codex_total_tokens, materialize_task_workspace
 from local_code_bench.agents import run_codex_task
 from local_code_bench.config import AgentConfig
 from local_code_bench.results import read_jsonl
@@ -34,11 +34,13 @@ def test_run_codex_task_with_fake_executable_scores_solution(tmp_path) -> None:
     fake = tmp_path / "codex"
     fake.write_text(
         "#!/usr/bin/env python3\n"
+        "import sys\n"
         "from pathlib import Path\n"
         "Path('solution.py').write_text('def add(a, b):\\n    return a + b\\n')\n"
         "args = __import__('sys').argv\n"
         "if '--output-last-message' in args:\n"
-        "    Path(args[args.index('--output-last-message') + 1]).write_text('done')\n",
+        "    Path(args[args.index('--output-last-message') + 1]).write_text('done')\n"
+        "sys.stderr.write('tokens used\\n1,234\\n')\n",
         encoding="utf-8",
     )
     fake.chmod(0o755)
@@ -63,5 +65,13 @@ def test_run_codex_task_with_fake_executable_scores_solution(tmp_path) -> None:
 
     assert record["passed"] is True
     assert record["final_message"] == "done"
+    assert record["tokens"] == {"total": 1234, "estimated": False}
+    assert record["cost_status"] == "tokens_available"
     assert read_jsonl(result_path)[0]["passed"] is True
     assert messages == ["codex suite/1: passed"]
+
+
+def test_extract_codex_total_tokens_from_stderr() -> None:
+    stderr = "some log\n\ntokens used\n13,029\n"
+
+    assert extract_codex_total_tokens(stderr) == 13029

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -107,7 +108,7 @@ def run_codex_task(
             "stderr": completed.stderr,
             "final_message": _read_optional(workspace.final_message),
             "command": command,
-            "cost_status": "unavailable",
+            **_agent_cost_fields(completed.stderr),
         }
     except subprocess.TimeoutExpired as exc:
         record = {
@@ -122,7 +123,7 @@ def run_codex_task(
             "exit_code": None,
             "stdout": exc.stdout or "",
             "stderr": exc.stderr or "",
-            "cost_status": "unavailable",
+            **_agent_cost_fields(exc.stderr or ""),
         }
     except FileNotFoundError as exc:
         record = {
@@ -153,3 +154,23 @@ def _read_optional(path: Path) -> str:
     if not path.exists():
         return ""
     return path.read_text(encoding="utf-8")
+
+
+def _agent_cost_fields(stderr: str) -> dict[str, object]:
+    total_tokens = extract_codex_total_tokens(stderr)
+    if total_tokens is None:
+        return {"cost_status": "unavailable"}
+    return {
+        "tokens": {
+            "total": total_tokens,
+            "estimated": False,
+        },
+        "cost_status": "tokens_available",
+    }
+
+
+def extract_codex_total_tokens(stderr: str) -> int | None:
+    match = re.search(r"tokens used\s*:?\s*\n?\s*([\d,]+)", stderr, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return int(match.group(1).replace(",", ""))
