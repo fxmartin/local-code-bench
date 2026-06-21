@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from local_code_bench.config import ModelConfig, TokenPrices
 from local_code_bench.provider import (
     AnthropicStreamingProvider,
+    ChatRequest,
     OpenAIStreamingProvider,
     ProviderError,
     _api_key,
@@ -15,6 +18,55 @@ from local_code_bench.provider import (
     parse_openai_sse_lines,
     provider_for_model,
 )
+
+
+class _FakeResponse:
+    def __init__(self, lines: list[bytes]) -> None:
+        self._lines = lines
+
+    def __enter__(self) -> _FakeResponse:
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        return False
+
+    def __iter__(self):
+        return iter(self._lines)
+
+
+def _openai_model() -> ModelConfig:
+    return ModelConfig(
+        name="cloud",
+        type="openai",
+        base_url="https://example.test/v1",
+        model_id="qwen",
+        pinned_revision="manual",
+        price_per_1k_tokens=TokenPrices(input=0.0, output=0.0),
+    )
+
+
+def _capture_openai_body(monkeypatch, request: ChatRequest) -> dict:
+    captured: dict = {}
+
+    def fake_urlopen(http_request, timeout=None):
+        captured["body"] = json.loads(http_request.data.decode("utf-8"))
+        return _FakeResponse([b'data: {"choices":[{"delta":{"content":"x"}}]}\n', b"data: [DONE]\n"])
+
+    monkeypatch.setattr("local_code_bench.provider.urllib.request.urlopen", fake_urlopen)
+    list(OpenAIStreamingProvider(_openai_model()).stream_chat(request))
+    return captured["body"]
+
+
+def test_openai_provider_sends_max_tokens_when_set(monkeypatch) -> None:
+    body = _capture_openai_body(monkeypatch, ChatRequest(prompt="hi", max_tokens=256))
+
+    assert body["max_tokens"] == 256
+
+
+def test_openai_provider_omits_max_tokens_when_unset(monkeypatch) -> None:
+    body = _capture_openai_body(monkeypatch, ChatRequest(prompt="hi"))
+
+    assert "max_tokens" not in body
 
 
 def test_parse_openai_sse_lines_extracts_content_and_usage() -> None:
@@ -116,6 +168,38 @@ def test_provider_for_model_selects_adapter() -> None:
     assert isinstance(provider_for_model(anthropic), AnthropicStreamingProvider)
     with pytest.raises(ProviderError, match="unsupported provider type"):
         provider_for_model(unsupported)
+
+
+def test_provider_for_model_honors_timeout_env(monkeypatch) -> None:
+    monkeypatch.setenv("BENCH_PROVIDER_TIMEOUT_SECONDS", "12.5")
+    model = ModelConfig(
+        name="openai",
+        type="openai",
+        base_url="https://example.com",
+        model_id="gpt",
+        pinned_revision="manual",
+        price_per_1k_tokens=TokenPrices(input=1, output=1),
+    )
+
+    provider = provider_for_model(model)
+
+    assert isinstance(provider, OpenAIStreamingProvider)
+    assert provider._timeout_seconds == 12.5
+
+
+def test_provider_for_model_rejects_invalid_timeout_env(monkeypatch) -> None:
+    monkeypatch.setenv("BENCH_PROVIDER_TIMEOUT_SECONDS", "bad")
+    model = ModelConfig(
+        name="openai",
+        type="openai",
+        base_url="https://example.com",
+        model_id="gpt",
+        pinned_revision="manual",
+        price_per_1k_tokens=TokenPrices(input=1, output=1),
+    )
+
+    with pytest.raises(ProviderError, match="BENCH_PROVIDER_TIMEOUT_SECONDS must be a positive number"):
+        provider_for_model(model)
 
 
 def test_parse_anthropic_sse_lines_extracts_content_and_usage() -> None:

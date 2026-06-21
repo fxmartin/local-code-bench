@@ -26,6 +26,7 @@ class ProviderError(RuntimeError):
 class ChatRequest:
     prompt: str
     temperature: float = 0.0
+    max_tokens: int | None = None
 
 
 class OpenAIStreamingProvider:
@@ -43,13 +44,15 @@ class OpenAIStreamingProvider:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
-        body = {
+        body: dict[str, Any] = {
             "model": self._model.model_id,
             "messages": [{"role": "user", "content": request.prompt}],
             "temperature": request.temperature,
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if request.max_tokens is not None:
+            body["max_tokens"] = request.max_tokens
         endpoint = f"{self._model.base_url}/chat/completions"
         http_request = urllib.request.Request(
             endpoint,
@@ -89,7 +92,7 @@ class AnthropicStreamingProvider:
         }
         body = {
             "model": self._model.model_id,
-            "max_tokens": 4096,
+            "max_tokens": request.max_tokens or 4096,
             "temperature": request.temperature,
             "stream": True,
             "messages": [{"role": "user", "content": request.prompt}],

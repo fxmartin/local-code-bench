@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from pathlib import Path
 
@@ -14,6 +15,10 @@ from local_code_bench.provider import ChatRequest, ProviderError, provider_for_m
 from local_code_bench.results import append_jsonl, read_jsonl
 from local_code_bench.scoring import score_completion
 from local_code_bench.tasks import BenchmarkTask
+
+# Coding-suite solutions are short; cap generation when a model config does not
+# set its own max_tokens so verbose models cannot waste decode time and cost.
+DEFAULT_ENDPOINT_MAX_TOKENS = 1024
 
 
 def select_models(
@@ -56,6 +61,8 @@ def run_endpoint_suite(
     result_path: Path,
     resume: bool = False,
     progress: Callable[[str], None] | None = None,
+    max_tokens: int | None = None,
+    concurrency_override: int | None = None,
 ) -> dict[str, int]:
     model_list = list(models)
     task_list = list(tasks)
@@ -64,48 +71,117 @@ def run_endpoint_suite(
     done = completed_pairs(result_path) if resume else set()
     summary = {"passed": 0, "failed": 0, "infra_failed": 0, "skipped": 0}
     total = len(model_list) * len(task_list)
-    current = 0
+    state = _ProgressState(current=0, total=total, progress=progress)
     for model in model_list:
+        model_max_tokens = _resolve_max_tokens(model, max_tokens)
         try:
             provider = provider_for_model(model)
         except ProviderError as exc:
             for task in task_list:
-                current += 1
-                if (model.name, task.task_id) in done:
-                    summary["skipped"] += 1
-                    _emit_progress(progress, current, total, model.name, task.task_id, "skipped")
+                if _skip_done(model, task, done, summary, state):
                     continue
                 record = failure_record(model, task, str(exc), infra=True)
                 append_jsonl(result_path, record)
                 summary["infra_failed"] += 1
-                _emit_progress(progress, current, total, model.name, task.task_id, "infra-failed")
+                state.emit(model.name, task.task_id, "infra-failed")
             continue
-        for task in task_list:
-            current += 1
-            if (model.name, task.task_id) in done:
-                summary["skipped"] += 1
-                _emit_progress(progress, current, total, model.name, task.task_id, "skipped")
-                continue
-            try:
-                measurement = capture_stream_metrics(
-                    provider.stream_chat(ChatRequest(prompt=task.prompt, temperature=0.0)),
-                    task.prompt,
-                )
-                score = score_completion(task, measurement.response)
-                record = endpoint_record(model, task, measurement, score.passed, score.reason)
-                summary["passed" if score.passed else "failed"] += 1
-                status = "passed" if score.passed else "failed"
-            except ProviderError as exc:
-                record = failure_record(model, task, str(exc), infra=True)
-                summary["infra_failed"] += 1
-                status = "infra-failed"
-            except Exception as exc:
-                record = failure_record(model, task, f"scoring failed: {exc}", infra=False)
-                summary["failed"] += 1
-                status = "failed"
-            append_jsonl(result_path, record)
-            _emit_progress(progress, current, total, model.name, task.task_id, status)
+
+        concurrency = _resolve_concurrency(model, concurrency_override)
+        if concurrency <= 1:
+            for task in task_list:
+                if _skip_done(model, task, done, summary, state):
+                    continue
+                record, summary_key, status = _execute_task(provider, model, task, model_max_tokens)
+                append_jsonl(result_path, record)
+                summary[summary_key] += 1
+                state.emit(model.name, task.task_id, status)
+            continue
+
+        pending = [task for task in task_list if not _skip_done(model, task, done, summary, state)]
+        # Workers only run network + scoring (the slow part) in parallel; every
+        # write, counter, and progress emit stays on this thread, so result
+        # records and the summary need no extra locking.
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            futures = {
+                pool.submit(_execute_task, provider, model, task, model_max_tokens): task
+                for task in pending
+            }
+            for future in as_completed(futures):
+                task = futures[future]
+                record, summary_key, status = future.result()
+                append_jsonl(result_path, record)
+                summary[summary_key] += 1
+                state.emit(model.name, task.task_id, status)
     return summary
+
+
+def _execute_task(
+    provider: object,
+    model: ModelConfig,
+    task: BenchmarkTask,
+    max_tokens: int | None,
+) -> tuple[dict[str, object], str, str]:
+    try:
+        measurement = capture_stream_metrics(
+            provider.stream_chat(  # type: ignore[attr-defined]
+                ChatRequest(prompt=task.prompt, temperature=0.0, max_tokens=max_tokens)
+            ),
+            task.prompt,
+        )
+        score = score_completion(task, measurement.response)
+        record = endpoint_record(model, task, measurement, score.passed, score.reason)
+        return record, ("passed" if score.passed else "failed"), ("passed" if score.passed else "failed")
+    except ProviderError as exc:
+        return failure_record(model, task, str(exc), infra=True), "infra_failed", "infra-failed"
+    except Exception as exc:
+        return failure_record(model, task, f"scoring failed: {exc}", infra=False), "failed", "failed"
+
+
+def _skip_done(
+    model: ModelConfig,
+    task: BenchmarkTask,
+    done: set[tuple[str, str]],
+    summary: dict[str, int],
+    state: _ProgressState,
+) -> bool:
+    if (model.name, task.task_id) in done:
+        summary["skipped"] += 1
+        state.emit(model.name, task.task_id, "skipped")
+        return True
+    return False
+
+
+def _resolve_max_tokens(model: ModelConfig, override: int | None) -> int | None:
+    if override is not None:
+        return override
+    if model.max_tokens is not None:
+        return model.max_tokens
+    return DEFAULT_ENDPOINT_MAX_TOKENS
+
+
+def _resolve_concurrency(model: ModelConfig, override: int | None) -> int:
+    if override is not None:
+        return override
+    return model.concurrency
+
+
+class _ProgressState:
+    """Sequential progress counter shared across a suite run."""
+
+    def __init__(
+        self,
+        *,
+        current: int,
+        total: int,
+        progress: Callable[[str], None] | None,
+    ) -> None:
+        self.current = current
+        self.total = total
+        self._progress = progress
+
+    def emit(self, model_name: str, task_id: str, status: str) -> None:
+        self.current += 1
+        _emit_progress(self._progress, self.current, self.total, model_name, task_id, status)
 
 
 def endpoint_record(

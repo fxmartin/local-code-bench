@@ -65,6 +65,12 @@ Use these instead of their traditional counterparts. They're installed and expec
 - **Correctness**: HumanEval + MBPP, **pass@1 at temperature 0**, scored against the
   benchmark's own unit tests run in an isolated sandbox.
 - **Speed**: per-turn TTFT / prefill tok/s / decode tok/s / total latency from the stream.
+- **Throughput**: a full suite is generation-bound, so endpoint suite runs take two
+  per-model knobs in `configs/models.yaml`. `concurrency` parallelizes requests for a
+  model (cloud APIs scale server-side; **local MLX servers stay at 1** so shared-GPU
+  contention cannot distort the prefill/decode measurements). `max_tokens` caps per-task
+  generation (default 1024 for suite runs). Both are overridable with `--concurrency` /
+  `--max-tokens`. Full strategy in `docs/EVALUATION-METHODOLOGY.md`.
 - **Cost**: endpoint tokens × dated price table in `configs/models.yaml` ($0 for local);
   Codex agent cost is marked unavailable unless reliable usage data is exposed.
 - **Outputs**: raw `results/<run>.jsonl` (re-scorable offline) → generated `LEADERBOARD.md`.

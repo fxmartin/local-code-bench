@@ -55,6 +55,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--suite", choices=["humaneval", "mbpp"], help="benchmark suite to run")
     parser.add_argument("--limit", type=int, help="limit benchmark tasks")
     parser.add_argument("--skip", help="comma-separated model names to skip")
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        help="override per-model in-flight requests for endpoint suite runs (keep 1 for local servers)",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        help="override generation cap for endpoint suite runs",
+    )
     parser.add_argument("--resume", action="store_true", help="resume an existing JSONL run")
     parser.add_argument("--run-file", help="explicit JSONL run file for suite/resume modes")
     parser.add_argument("--cache-dir", default=".cache/benchmarks", help="benchmark dataset cache")
@@ -154,6 +164,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 result_path=result_path,
                 resume=args.resume,
                 progress=lambda message: print(message, flush=True),
+                max_tokens=args.max_tokens,
+                concurrency_override=args.concurrency,
             )
             print(f"suite={args.suite} results={result_path} summary={summary}")
             return 0

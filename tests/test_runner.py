@@ -12,13 +12,24 @@ class FakeProvider:
         yield StreamEvent(content="def add(a, b):\n    return a + b", prompt_tokens=3, completion_tokens=8)
 
 
+class RecordingProvider:
+    """Records the max_tokens carried on each request; safe to share across threads."""
+
+    def __init__(self) -> None:
+        self.max_tokens: list[int | None] = []
+
+    def stream_chat(self, request):
+        self.max_tokens.append(request.max_tokens)
+        yield StreamEvent(content="def add(a, b):\n    return a + b", prompt_tokens=3, completion_tokens=8)
+
+
 class FailingProvider:
     def stream_chat(self, request):
         raise ProviderError("stream down")
         yield
 
 
-def model(name: str) -> ModelConfig:
+def model(name: str, *, concurrency: int = 1, max_tokens: int | None = None) -> ModelConfig:
     return ModelConfig(
         name=name,
         type="openai",
@@ -26,12 +37,14 @@ def model(name: str) -> ModelConfig:
         model_id=name,
         pinned_revision="test",
         price_per_1k_tokens=TokenPrices(input=1.0, output=2.0),
+        concurrency=concurrency,
+        max_tokens=max_tokens,
     )
 
 
-def task() -> BenchmarkTask:
+def task(task_id: str = "t1") -> BenchmarkTask:
     return BenchmarkTask(
-        task_id="t1",
+        task_id=task_id,
         suite="humaneval",
         prompt="make add",
         test_code="assert add(1, 2) == 3",
@@ -131,3 +144,45 @@ def test_run_endpoint_suite_records_scoring_failure(tmp_path, monkeypatch) -> No
 
     assert summary["failed"] == 1
     assert "scoring failed: bad tests" in path.read_text(encoding="utf-8")
+
+
+def test_run_endpoint_suite_concurrency_writes_one_record_per_task(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: FakeProvider())
+    path = tmp_path / "run.jsonl"
+    tasks = [task(f"t{n}") for n in range(5)]
+
+    summary = run_endpoint_suite(
+        models=[model("a", concurrency=4)],
+        tasks=tasks,
+        result_path=path,
+    )
+
+    assert summary["passed"] == 5
+    assert completed_pairs(path) == {("a", f"t{n}") for n in range(5)}
+
+
+def test_run_endpoint_suite_passes_max_tokens_to_request(tmp_path, monkeypatch) -> None:
+    provider = RecordingProvider()
+    monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: provider)
+    path = tmp_path / "run.jsonl"
+    tasks = [task(f"t{n}") for n in range(3)]
+
+    run_endpoint_suite(
+        models=[model("a", concurrency=3)],
+        tasks=tasks,
+        result_path=path,
+        max_tokens=512,
+    )
+
+    assert provider.max_tokens == [512, 512, 512]
+
+
+def test_run_endpoint_suite_defaults_max_tokens_cap(tmp_path, monkeypatch) -> None:
+    provider = RecordingProvider()
+    monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: provider)
+    path = tmp_path / "run.jsonl"
+
+    run_endpoint_suite(models=[model("a")], tasks=[task()], result_path=path)
+
+    # No model or CLI cap set, so the runner applies its default endpoint cap.
+    assert provider.max_tokens == [1024]

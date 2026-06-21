@@ -106,6 +106,38 @@ uv run bench --suite humaneval --model local-example --limit 10
 uv run bench --suite mbpp --skip openrouter-glm-4.6 --run-file results/mbpp.jsonl --resume
 ```
 
+### Throughput: Concurrency And Token Caps
+
+Endpoint suite runs are governed by two per-model knobs in `configs/models.yaml`,
+because a full HumanEval or MBPP pass is generation-bound, not scoring-bound.
+
+`concurrency` sets how many requests are in flight for a model during a suite
+run. Cloud APIs scale server-side, so running requests in parallel cuts wall
+time roughly in proportion to the worker count without distorting the per-request
+TTFT, prefill, and decode numbers each stream reports. The cloud entries ship at
+`concurrency: 10` (Anthropic at 8). Local MLX servers stay at `concurrency: 1`
+on purpose: concurrent requests share one GPU and would corrupt the prefill and
+decode tok/s measurements this harness exists to take. Keep local backends serial
+and lean on `--mode sweep` plus a small task subset for their speed profile.
+
+`max_tokens` caps generation per task. Coding-suite solutions are short, so an
+uncapped verbose model wastes decode time and inflates cost on every task. The
+cloud entries cap at `max_tokens: 1024`. When a model config sets no cap, the
+runner applies a default of 1024 for suite runs. The Anthropic provider keeps its
+4096 fallback when neither the request nor config specifies a value.
+
+Both knobs can be overridden per run from the CLI, which is handy for a quick
+local sanity check or a one-off heavier cloud sweep:
+
+```bash
+uv run bench --suite humaneval --model openrouter-glm-4.6 --concurrency 16 --max-tokens 768
+```
+
+A serial, uncapped cloud run of full HumanEval can take hours; the same run at
+`concurrency: 10` with a 1024-token cap finishes in minutes with identical
+scoring. See [`docs/EVALUATION-METHODOLOGY.md`](docs/EVALUATION-METHODOLOGY.md)
+for the full fast-evaluation strategy across speed, quality, and contamination.
+
 Use `OPENROUTER_API_KEY` for the OpenRouter entries and `ANTHROPIC_API_KEY` for
 the Anthropic baseline. API keys are read from the shell environment or a local
 `.env` file and are not written to result records. `.env` is gitignored.
@@ -146,21 +178,23 @@ uv run bench --mode sweep --input results/sweep.jsonl
 
 ## Verification Status
 
-Last automated verification: 2026-06-21T14:44:05Z.
+Last automated verification: 2026-06-21.
 
 ```bash
-uv run pytest        # 66 passed, 86.26% coverage, 80% coverage gate reached
+uv run pytest        # 75 passed, 87.29% coverage, 80% coverage gate reached
 uv run ruff check .  # All checks passed
 ```
 
 Manual, environment-dependent validation is tracked in
 [`docs/MANUAL_TESTS.md`](docs/MANUAL_TESTS.md).
 
-Automated verification covers config parsing, real HumanEval/MBPP cache loading,
-stream metric math, OpenAI/Anthropic stream parsing, macOS `sandbox-exec` scoring
-guards, offline re-score, endpoint resume/fault handling, fake Codex execution,
-leaderboard generation, sweep execution with mocked providers, and pytest-cov
-coverage reporting with an 80% minimum gate.
+Automated verification covers config parsing (including per-model concurrency and
+max_tokens), real HumanEval/MBPP cache loading, stream metric math, OpenAI/Anthropic
+stream parsing including the generation cap, macOS `sandbox-exec` scoring guards,
+offline re-score, endpoint resume/fault handling, concurrent suite execution that
+writes one record per task, fake Codex execution, leaderboard generation, sweep
+execution with mocked providers, and pytest-cov coverage reporting with an 80%
+minimum gate.
 
 Live validation still requires FX's local/cloud runtime environment: running the
 full configured model matrix, killing a local MLX server mid-run, and measuring

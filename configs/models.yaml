@@ -1,9 +1,19 @@
+# Per-model serving knobs:
+#   concurrency  in-flight requests for endpoint suite runs (default 1).
+#                Cloud APIs scale server-side, so parallel requests cut wall
+#                time without distorting per-request timing. Local MLX servers
+#                MUST stay at 1: concurrent requests share one GPU and corrupt
+#                the prefill/decode tok/s measurements this harness exists to take.
+#   max_tokens   hard generation cap for endpoint suite runs (default 1024 when
+#                unset). Coding solutions are short; capping trims wasted decode
+#                time and cost on verbose models.
 models:
   - name: local-example
     type: openai
     base_url: http://localhost:8000/v1
     model_id: local-coding-model
     pinned_revision: manual
+    concurrency: 1
     price_per_1k_tokens:
       input: 0.0
       output: 0.0
@@ -13,6 +23,8 @@ models:
     model_id: z-ai/glm-4.6
     pinned_revision: openrouter-2026-06-20
     api_key_env: OPENROUTER_API_KEY
+    concurrency: 10
+    max_tokens: 1024
     price_per_1k_tokens:
       input: 0.00043
       output: 0.00174
@@ -22,6 +34,8 @@ models:
     model_id: moonshotai/kimi-k2
     pinned_revision: openrouter-2026-06-20
     api_key_env: OPENROUTER_API_KEY
+    concurrency: 10
+    max_tokens: 1024
     price_per_1k_tokens:
       input: 0.00057
       output: 0.00230
@@ -31,6 +45,8 @@ models:
     model_id: claude-sonnet-4-6
     pinned_revision: claude-sonnet-4-6
     api_key_env: ANTHROPIC_API_KEY
+    concurrency: 8
+    max_tokens: 1024
     price_per_1k_tokens:
       input: 0.003
       output: 0.015
@@ -39,6 +55,7 @@ models:
     base_url: http://localhost:8000/v1
     model_id: mlx-community/Qwen3.6-27B-4bit
     pinned_revision: manual-2026-06-21
+    concurrency: 1
     price_per_1k_tokens:
       input: 0.0
       output: 0.0
@@ -47,6 +64,7 @@ models:
     base_url: http://localhost:8002/v1
     model_id: manjunathshiva/Qwen3.6-35B-A3B-tq3-g32
     pinned_revision: manual-2026-06-21
+    concurrency: 1
     price_per_1k_tokens:
       input: 0.0
       output: 0.0

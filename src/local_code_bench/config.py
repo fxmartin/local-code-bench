@@ -30,6 +30,8 @@ class ModelConfig:
     pinned_revision: str
     price_per_1k_tokens: TokenPrices
     api_key_env: str | None = None
+    concurrency: int = 1
+    max_tokens: int | None = None
 
 
 AgentType = Literal["codex"]
@@ -117,6 +119,8 @@ def _parse_model(entry: Any, index: int) -> ModelConfig:
             output=_required_number(prices, "output", index, "price_per_1k_tokens"),
         ),
         api_key_env=_optional_str(entry, "api_key_env", index),
+        concurrency=_optional_positive_int(entry, "concurrency", index, default=1),
+        max_tokens=_optional_positive_int(entry, "max_tokens", index, default=None),
     )
 
 
@@ -165,6 +169,22 @@ def _optional_str(
         return None
     if not isinstance(value, str) or not value.strip():
         raise ConfigError(f"{root}[{index}].{field} must be a non-empty string when set")
+    return value
+
+
+def _optional_positive_int(
+    entry: dict[str, Any],
+    field: str,
+    index: int,
+    *,
+    default: int | None,
+    root: str = "models",
+) -> int | None:
+    value = entry.get(field)
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ConfigError(f"{root}[{index}].{field} must be a positive integer when set")
     return value
 
 

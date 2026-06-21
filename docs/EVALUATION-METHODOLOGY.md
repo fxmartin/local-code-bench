@@ -1,0 +1,159 @@
+# Evaluation Methodology: Fast, Relevant, Comparable
+
+This document records how `local-code-bench` keeps evaluation runs fast without
+giving up the comparability that justifies the project. It exists because the
+first real benchmark attempt took roughly four hours to complete a single
+HumanEval pass against one cloud model, which is not a workable iteration loop.
+
+The root cause was not benchmark size. It was throughput. The two fixes that
+matter are now in the harness, and the broader strategy below explains where to
+spend effort next.
+
+## The Core Insight
+
+A full HumanEval (164 tasks) or MBPP (about 500 tasks) pass is **generation
+bound, not scoring bound**. The expensive step is the model producing a
+completion. Running the unit tests afterward is cheap. So the levers that cut
+wall time all act on generation, not on the suite.
+
+There are two distinct questions the harness answers, and they have different
+fast paths:
+
+1. How fast is a model to serve for agentic coding? This is a speed question.
+2. How good are its answers? This is a quality question.
+
+Treating these separately is what makes a fast loop possible.
+
+## Speed: Sweep Mode, Local, Serial, Small
+
+For the speed verdict, do not run a correctness suite at all. The reference
+articles this project is modeled on argue that local agentic coding is prefill
+bound, so the deciding metric for a local setup is prefill tok/s at agent-length
+context, not pass@1.
+
+`--mode sweep` already operationalizes this. It pads a prompt across a context
+ladder (2k, 8k, 16k, 24k tokens) and records TTFT, latency, prefill tok/s, and
+decode tok/s for each size. That is four streams per model instead of hundreds,
+so it finishes in minutes.
+
+```bash
+uv run bench --mode sweep --model local-dflash-qwen --run-file results/sweep.jsonl
+uv run bench --mode sweep --input results/sweep.jsonl   # summary table
+```
+
+Local models stay serial here for a reason explained below.
+
+## Quality: Cloud-Concurrent Suites, Capped Generation
+
+For the quality comparison, run the correctness suite, but make the cloud path
+fast. Two knobs in `configs/models.yaml` do this, and both are now wired into the
+endpoint runner.
+
+### Concurrency
+
+`concurrency` sets how many requests are in flight for a model during a suite
+run. Cloud providers scale server-side, so parallel requests cut wall time
+roughly in proportion to the worker count while each individual stream still
+reports honest per-request timing. A serial, four-hour HumanEval pass drops to
+single-digit minutes at `concurrency: 10` with identical scoring.
+
+The runner parallelizes per model with a thread pool. Only the slow work, the
+network call and scoring, runs on worker threads. Every result write, counter
+update, and progress emit stays on the main thread, so result records and the
+run summary need no extra locking and one record is written per task. For
+`concurrency: 1` the path stays serial and byte-identical to the original
+behavior, which keeps the fault-tolerance and resume guarantees intact.
+
+### Why Local Stays Serial
+
+This is the important nuance. Firing concurrent requests at a single local MLX
+server makes them compete for one GPU. That contention distorts the prefill and
+decode tok/s numbers, which is the entire measurement this harness exists to
+take. So local backends are pinned to `concurrency: 1`. Concurrency is a
+per-backend knob, not a global one: parallel for cloud, serial for local. The
+default model config encodes exactly this split.
+
+### Generation Cap
+
+`max_tokens` caps generation per task. Coding-suite solutions are short, so an
+uncapped verbose model spends decode time and money emitting prose, reasoning,
+and markdown that scoring then discards. Cloud entries cap at `max_tokens: 1024`.
+When no cap is configured, suite runs apply a default of 1024. Both the cap and
+the concurrency can be overridden per run:
+
+```bash
+uv run bench --suite humaneval --model openrouter-glm-4.6 --concurrency 16 --max-tokens 768
+```
+
+## Choosing The Right Benchmark For Quality
+
+Public leaderboard numbers from the internet are a loose external anchor, not a
+primary signal, for two reasons. First, they are not comparable: different
+harness, prompt template, sampling, and test set. Second, and more important for
+this project, they do not cover the served, quantized configurations under test.
+The published score is for the full-precision base model, while this harness
+serves a 4-bit DFlash target and a quantized MoE. Quantization and serving change
+output quality, and that gap is part of what is being measured. Use net numbers
+to sanity-check the ballpark, never to rank.
+
+Building a brand-new benchmark from scratch is also the wrong default. A
+contamination-free, well-calibrated suite is a research project on its own and
+would carry no external validity. There is one narrow exception, noted below.
+
+The pragmatic path is to reuse a stronger public dataset through this harness, so
+quality and speed are measured together and comparably. Recommended progression,
+roughly in order of leverage:
+
+- **EvalPlus (HumanEval+ / MBPP+).** Same task IDs and the same generation cost
+  as the vanilla suites, but far more unit tests per task. It catches
+  wrong-but-passing solutions that plain HumanEval rubber-stamps. Vanilla
+  HumanEval and MBPP are saturated and partly leaked, so they barely discriminate
+  at the top end. This is the single highest-leverage quality upgrade and is close
+  to a drop-in swap into the existing sandbox scorer.
+- **A small LiveCodeBench slice for contamination resistance.** Problems are time
+  stamped and published after model cutoffs, so a model that wins by memorization
+  on HumanEval is exposed. Take a recent window and run a subset.
+- **A tiny private tripwire set.** The one home-grown piece worth building: eight
+  to ten tasks written in-house and never published. Not for ranking, but as a
+  contamination check. If a model aces public suites and face-plants on the
+  private set, that is signal the leaderboards cannot give.
+
+Skip LLM-as-judge for code. Execution-based scoring is more reliable and the
+sandbox already provides it. Reserve judging for qualities that tests cannot
+capture, such as explanation, which is out of scope here.
+
+## Keeping Quality Runs Small: Anchor Subsets
+
+Even on the fast cloud path, a full suite per model is more than is needed for a
+ranking. Replace a random `--limit N` (which takes the first N tasks and is both
+biased and noisy) with an anchor subset: a fixed set of roughly 20 to 50 items,
+chosen so their aggregate pass rate predicts the full suite score within a few
+points and with known error bars. This is the tinyBenchmarks / IRT anchor-point
+technique. The pragmatic version, until the IRT machinery is in place, is a hand
+curated set of historically discriminating tasks promoted into a dedicated
+subset. The goal is a "still usable?" quality signal in tens of generations, not
+hundreds.
+
+## Tiering: Spend Generation Where It Is Cheap
+
+Putting it together, the harness runs each evaluation where its cost is lowest:
+
+- **Local models:** sweep for speed (serial, tiny) plus a small anchor subset for
+  a correctness sanity check. Never the full suite, because local generation is
+  slow and cannot be parallelized on one box.
+- **Cloud models:** the full or anchored suite, fast, because requests run
+  concurrently and generation is capped. This is where the quality ranking lives.
+- **Codex agent:** the heavy agentic suites (for example Aider polyglot or
+  SWE-bench style multi-file edits) belong only here, run once, since they are
+  slow by nature and measure a different capability.
+
+## Status
+
+Implemented in the harness today: per-model `concurrency`, per-model and default
+`max_tokens` caps, parallel cloud suite execution with one record per task, and
+CLI overrides (`--concurrency`, `--max-tokens`). Sweep mode predates this work and
+already covers the speed path.
+
+Documented here as the roadmap, not yet implemented: EvalPlus suites, a
+LiveCodeBench slice, the private tripwire set, and formal anchor-subset selection.
+These are dataset and scoring additions that build on the throughput work above.

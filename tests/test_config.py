@@ -57,6 +57,64 @@ def test_default_models_config_loads() -> None:
     assert models["anthropic-claude-baseline"].pinned_revision == "claude-sonnet-4-6"
 
 
+def test_load_models_parses_concurrency_and_max_tokens(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(
+        """
+models:
+  - name: cloud
+    type: openai
+    base_url: http://localhost:8000/v1
+    model_id: qwen
+    pinned_revision: abc123
+    concurrency: 12
+    max_tokens: 512
+    price_per_1k_tokens:
+      input: 0.01
+      output: 0.02
+  - name: local
+    type: openai
+    base_url: http://localhost:8000/v1
+    model_id: qwen-local
+    pinned_revision: abc123
+    price_per_1k_tokens:
+      input: 0.0
+      output: 0.0
+""",
+        encoding="utf-8",
+    )
+
+    models = load_models(config_path)
+
+    assert models["cloud"].concurrency == 12
+    assert models["cloud"].max_tokens == 512
+    # Defaults keep local servers serial and uncapped at config level.
+    assert models["local"].concurrency == 1
+    assert models["local"].max_tokens is None
+
+
+def test_load_models_rejects_non_positive_concurrency(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(
+        """
+models:
+  - name: cloud
+    type: openai
+    base_url: http://localhost:8000/v1
+    model_id: qwen
+    pinned_revision: abc123
+    concurrency: 0
+    price_per_1k_tokens:
+      input: 0.01
+      output: 0.02
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="concurrency"):
+        load_models(config_path)
+
+
 def test_load_agents_validates_codex_config(tmp_path) -> None:
     config_path = tmp_path / "agents.yaml"
     config_path.write_text(
