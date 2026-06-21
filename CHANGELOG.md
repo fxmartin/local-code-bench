@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.6.0 (2026-06-21)
+
+### Chores
+
+- Sync lockfile version
+  ([`8c6861b`](https://github.com/fxmartin/local-code-bench/commit/8c6861bdb3523207048b0f5bc5e5d1c9f5d024d6))
+
+### Features
+
+- Load API keys from dotenv
+  ([`4b081f3`](https://github.com/fxmartin/local-code-bench/commit/4b081f333b70ad91c14432c9be1165bd79e75286))
+
+
 ## v0.5.3 (2026-06-20)
 
 ### Bug Fixes
