@@ -48,3 +48,10 @@ models:
 
     with pytest.raises(ConfigError, match="model_id"):
         load_models(config_path)
+
+
+def test_default_models_config_loads() -> None:
+    models = load_models("configs/models.yaml")
+
+    assert "openrouter-glm-4.6" in models
+    assert models["anthropic-claude-baseline"].pinned_revision == "20250514"

@@ -29,7 +29,7 @@ models:
     type: anthropic
     base_url: https://api.anthropic.com/v1
     model_id: claude-sonnet-4-20250514
-    pinned_revision: 20250514
+    pinned_revision: "20250514"
     api_key_env: ANTHROPIC_API_KEY
     price_per_1k_tokens:
       input: 0.003
