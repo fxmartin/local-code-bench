@@ -56,3 +56,30 @@ def test_score_completion_extracts_python_fence() -> None:
 
     assert extract_code(score.extracted_code) == score.extracted_code
     assert score.passed is True
+
+
+def test_extract_code_supports_unlabeled_fence_with_function() -> None:
+    assert extract_code("```\ndef add(a, b):\n    return a + b\n```") == (
+        "def add(a, b):\n    return a + b"
+    )
+
+
+def test_extract_code_returns_empty_when_no_code_block_matches() -> None:
+    assert extract_code("```text\nnot code\n```") == ""
+
+
+def test_score_completion_fails_when_code_cannot_be_extracted() -> None:
+    task = BenchmarkTask(
+        task_id="x",
+        suite="humaneval",
+        prompt="",
+        test_code="assert True",
+        entry_point="solution",
+        version="test",
+    )
+
+    score = score_completion(task, "```text\nnot code\n```")
+
+    assert score.passed is False
+    assert score.reason == "code extraction failed"
+    assert score.sandbox is None

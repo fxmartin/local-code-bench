@@ -3,7 +3,9 @@ from __future__ import annotations
 import gzip
 import json
 
-from local_code_bench.tasks import load_humaneval, load_mbpp
+import pytest
+
+from local_code_bench.tasks import TaskLoadError, limit_tasks, load_humaneval, load_mbpp, load_suite
 
 
 def test_load_humaneval_from_cache(tmp_path) -> None:
@@ -77,3 +79,55 @@ def test_load_mbpp_extracts_wrapped_entry_point_from_tests(tmp_path) -> None:
 
     assert tasks[0].entry_point == "similar_elements"
     assert "Define a Python function named `similar_elements`" in tasks[0].prompt
+
+
+def test_load_suite_reports_unknown_suite() -> None:
+    with pytest.raises(TaskLoadError, match="unknown suite"):
+        load_suite("unknown")
+
+
+def test_limit_tasks_rejects_negative_limit() -> None:
+    with pytest.raises(TaskLoadError, match="limit must be non-negative"):
+        limit_tasks([], -1)
+
+
+def test_load_humaneval_rejects_wrong_cache_size(tmp_path) -> None:
+    cache = tmp_path / "benchmarks"
+    cache.mkdir()
+    path = cache / "HumanEval.jsonl.gz"
+    with gzip.open(path, "wt", encoding="utf-8") as file:
+        file.write(
+            json.dumps(
+                {
+                    "task_id": "HumanEval/0",
+                    "prompt": "def add(a, b):\n",
+                    "entry_point": "add",
+                    "test": "def check(fn):\n    assert fn(1, 2) == 3",
+                }
+            )
+            + "\n"
+        )
+
+    with pytest.raises(TaskLoadError, match="expected 164"):
+        load_humaneval(cache_dir=cache)
+
+
+def test_load_mbpp_rejects_invalid_cache_shape(tmp_path) -> None:
+    cache = tmp_path / "benchmarks"
+    cache.mkdir()
+    (cache / "sanitized-mbpp.json").write_text(json.dumps({"data": "bad"}), encoding="utf-8")
+
+    with pytest.raises(TaskLoadError, match="must be a list"):
+        load_mbpp(cache_dir=cache)
+
+
+def test_load_mbpp_rejects_missing_tests(tmp_path) -> None:
+    cache = tmp_path / "benchmarks"
+    cache.mkdir()
+    (cache / "sanitized-mbpp.json").write_text(
+        json.dumps([{"task_id": 3, "prompt": "Write something."}]),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TaskLoadError, match="missing test_list"):
+        load_mbpp(cache_dir=cache)

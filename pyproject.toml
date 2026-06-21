@@ -16,6 +16,7 @@ bench = "local_code_bench.cli:main"
 [dependency-groups]
 dev = [
     "pytest>=8.4.0",
+    "pytest-cov>=7.1.0",
     "ruff>=0.12.0",
 ]
 
@@ -33,6 +34,18 @@ packages = ["src/local_code_bench"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.pytest.ini_options]
+addopts = "--cov=local_code_bench --cov-report=term-missing"
+
+[tool.coverage.run]
+branch = true
+source = ["local_code_bench"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = false
 
 # ---------------------------------------------------------------------------
 # Automated releases — python-semantic-release

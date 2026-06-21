@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from local_code_bench.config import ConfigError, load_models
+from local_code_bench.config import ConfigError, load_agents, load_models
 
 
 def test_load_models_validates_endpoint_config(tmp_path) -> None:
@@ -54,4 +54,45 @@ def test_default_models_config_loads() -> None:
     models = load_models("configs/models.yaml")
 
     assert "openrouter-glm-4.6" in models
-    assert models["anthropic-claude-baseline"].pinned_revision == "20250514"
+    assert models["anthropic-claude-baseline"].pinned_revision == "claude-sonnet-4-6"
+
+
+def test_load_agents_validates_codex_config(tmp_path) -> None:
+    config_path = tmp_path / "agents.yaml"
+    config_path.write_text(
+        """
+agents:
+  - name: codex
+    type: codex
+    command: codex
+    sandbox: workspace-write
+    timeout_seconds: 30
+    model: gpt-5
+    profile: default
+""",
+        encoding="utf-8",
+    )
+
+    agents = load_agents(config_path)
+
+    assert agents["codex"].timeout_seconds == 30.0
+    assert agents["codex"].model == "gpt-5"
+    assert agents["codex"].profile == "default"
+
+
+def test_load_agents_reports_invalid_timeout(tmp_path) -> None:
+    config_path = tmp_path / "agents.yaml"
+    config_path.write_text(
+        """
+agents:
+  - name: codex
+    type: codex
+    command: codex
+    sandbox: workspace-write
+    timeout_seconds: 0
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="timeout_seconds"):
+        load_agents(config_path)

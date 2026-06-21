@@ -7,8 +7,9 @@ from importlib.metadata import version
 import pytest
 
 from local_code_bench.cli import main
-from local_code_bench.config import AgentConfig
-from local_code_bench.results import append_jsonl
+from local_code_bench.config import AgentConfig, ModelConfig, TokenPrices
+from local_code_bench.metrics import StreamEvent
+from local_code_bench.results import append_jsonl, read_jsonl
 from local_code_bench.tasks import BenchmarkTask
 
 
@@ -70,3 +71,154 @@ def test_agent_mode_resume_skips_completed_task(tmp_path, monkeypatch, capsys) -
 
     assert exit_code == 0
     assert "[1/1] codex suite/1: skipped" in capsys.readouterr().out
+
+
+def test_leaderboard_mode_writes_requested_output(tmp_path, capsys) -> None:
+    result_path = tmp_path / "run.jsonl"
+    output_path = tmp_path / "LEADERBOARD.md"
+    append_jsonl(
+        result_path,
+        {
+            "run_mode": "endpoint",
+            "model": "m",
+            "task_id": "suite/1",
+            "passed": True,
+            "metrics": {"latency_seconds": 1.0},
+        },
+    )
+
+    exit_code = main(
+        [
+            "--mode",
+            "leaderboard",
+            "--input",
+            str(result_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert f"wrote {output_path}" in capsys.readouterr().out
+    assert "| m | 1/1 |" in output_path.read_text(encoding="utf-8")
+
+
+def test_sweep_summary_mode_reads_stored_records(tmp_path, capsys) -> None:
+    result_path = tmp_path / "sweep.jsonl"
+    append_jsonl(
+        result_path,
+        {
+            "run_mode": "sweep",
+            "model": "m",
+            "context_tokens": 2000,
+            "metrics": {"ttft_seconds": 1.25, "prefill_tokens_per_second": 50.0},
+        },
+    )
+
+    exit_code = main(["--mode", "sweep", "--input", str(result_path)])
+
+    assert exit_code == 0
+    assert "| m | 2000 | 1.250 | 50.000 |" in capsys.readouterr().out
+
+
+def test_rescore_mode_scores_stored_endpoint_record(tmp_path, monkeypatch, capsys) -> None:
+    input_path = tmp_path / "endpoint.jsonl"
+    output_path = tmp_path / "rescored.jsonl"
+    append_jsonl(
+        input_path,
+        {
+            "run_mode": "endpoint",
+            "model": "m",
+            "task_id": "suite/1",
+            "raw_response": "def add(a, b):\n    return a + b\n",
+        },
+    )
+    task = BenchmarkTask("suite/1", "humaneval", "prompt", "assert add(1, 2) == 3", "add", "v")
+    monkeypatch.setattr("local_code_bench.cli.load_suite", lambda _suite, cache_dir: [task])
+
+    exit_code = main(
+        [
+            "--mode",
+            "rescore",
+            "--suite",
+            "humaneval",
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert "rescored={'rescored': 1, 'missing_task': 0}" in capsys.readouterr().out
+    assert read_jsonl(output_path)[0]["passed"] is True
+
+
+def test_endpoint_suite_mode_passes_selection_and_resume_to_runner(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    model = ModelConfig(
+        name="m",
+        type="openai",
+        base_url="http://example.test/v1",
+        model_id="m",
+        pinned_revision="test",
+        price_per_1k_tokens=TokenPrices(input=0, output=0),
+    )
+    task = BenchmarkTask("suite/1", "humaneval", "prompt", "assert True", "solution", "v")
+    run_file = tmp_path / "run.jsonl"
+    captured: dict[str, object] = {}
+    monkeypatch.setattr("local_code_bench.cli.load_models", lambda _path: {"m": model})
+    monkeypatch.setattr("local_code_bench.cli.load_suite", lambda _suite, cache_dir: [task])
+
+    def fake_run_endpoint_suite(**kwargs):
+        captured.update(kwargs)
+        return {"passed": 1, "failed": 0, "infra_failed": 0, "skipped": 0}
+
+    monkeypatch.setattr("local_code_bench.cli.run_endpoint_suite", fake_run_endpoint_suite)
+
+    exit_code = main(
+        [
+            "--suite",
+            "humaneval",
+            "--model",
+            "m",
+            "--run-file",
+            str(run_file),
+            "--resume",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["models"] == [model]
+    assert captured["tasks"] == [task]
+    assert captured["result_path"] == run_file
+    assert captured["resume"] is True
+    assert f"suite=humaneval results={run_file}" in capsys.readouterr().out
+
+
+def test_single_prompt_mode_streams_and_writes_result(tmp_path, monkeypatch, capsys) -> None:
+    model = ModelConfig(
+        name="m",
+        type="openai",
+        base_url="http://example.test/v1",
+        model_id="m",
+        pinned_revision="test",
+        price_per_1k_tokens=TokenPrices(input=0, output=0),
+    )
+
+    class FakeProvider:
+        def stream_chat(self, request):
+            assert request.prompt == "hello"
+            yield StreamEvent(content="world", prompt_tokens=1, completion_tokens=1)
+
+    monkeypatch.setattr("local_code_bench.cli.load_models", lambda _path: {"m": model})
+    monkeypatch.setattr("local_code_bench.cli.provider_for_model", lambda _model: FakeProvider())
+
+    exit_code = main(["--model", "m", "--prompt", "hello", "--results-dir", str(tmp_path)])
+
+    records = read_jsonl(next(tmp_path.glob("m-*.jsonl")))
+    assert exit_code == 0
+    assert records[0]["raw_response"] == "world"
+    assert records[0]["tokens"] == {"prompt": 1, "completion": 1, "estimated": False}
+    assert "model=m prompt_tokens=1 completion_tokens=1" in capsys.readouterr().out

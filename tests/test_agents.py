@@ -25,7 +25,15 @@ def test_materialize_task_workspace_is_deterministic_enough(tmp_path) -> None:
 def test_build_codex_command_uses_explicit_sandbox(tmp_path) -> None:
     task = BenchmarkTask("suite/1", "humaneval", "prompt", "assert True", "solution", "v")
     workspace = materialize_task_workspace(task, parent=tmp_path)
-    agent = AgentConfig("codex", "codex", "codex", "workspace-write", 10, model="gpt-5")
+    agent = AgentConfig(
+        "codex",
+        "codex",
+        "codex",
+        "workspace-write",
+        10,
+        model="gpt-5",
+        profile="default",
+    )
 
     command = build_codex_command(agent, workspace)
 
@@ -33,6 +41,7 @@ def test_build_codex_command_uses_explicit_sandbox(tmp_path) -> None:
     assert "--output-last-message" in command
     assert "--skip-git-repo-check" in command
     assert "--model" in command
+    assert "--profile" in command
 
 
 def test_run_codex_task_with_fake_executable_scores_solution(tmp_path) -> None:
@@ -89,3 +98,26 @@ def test_completed_agent_pairs_reads_existing_results(tmp_path) -> None:
     append_jsonl(result_path, {"run_mode": "agent", "agent": "codex", "task_id": "suite/1"})
 
     assert completed_agent_pairs(result_path) == {("codex", "suite/1")}
+
+
+def test_completed_agent_pairs_missing_file_is_empty(tmp_path) -> None:
+    assert completed_agent_pairs(tmp_path / "missing.jsonl") == set()
+
+
+def test_run_codex_task_records_executable_not_found(tmp_path) -> None:
+    task = BenchmarkTask("suite/1", "humaneval", "prompt", "assert True", "solution", "v")
+    agent = AgentConfig("codex", "codex", str(tmp_path / "missing-codex"), "workspace-write", 10)
+    result_path = tmp_path / "agent.jsonl"
+    messages: list[str] = []
+
+    record = run_codex_task(agent=agent, task=task, result_path=result_path, progress=messages.append)
+
+    assert record["passed"] is False
+    assert record["failure_reason"] == f"codex executable not found: {agent.command}"
+    assert record["cost_status"] == "unavailable"
+    assert read_jsonl(result_path)[0]["failure_reason"] == record["failure_reason"]
+    assert messages == ["codex suite/1: failed"]
+
+
+def test_extract_codex_total_tokens_returns_none_without_usage() -> None:
+    assert extract_codex_total_tokens("no usage here") is None

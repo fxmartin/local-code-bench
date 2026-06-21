@@ -2,6 +2,48 @@
 
 Benchmark harness for local, cloud, and agentic coding models on Apple Silicon.
 
+## Why This Exists
+
+`local-code-bench` is a reproducible benchmark harness for comparing coding
+models across the execution modes that matter for agentic software work:
+
+- cloud frontier models, such as Claude or the current leading hosted coding
+  models
+- cloud non-frontier models, such as hosted Qwen, GLM, and similar open-weight
+  or lower-cost API models
+- local open source models running on Apple Silicon through MLX within a 48 GB
+  memory budget
+- full agent runs, where the model edits code in a sandbox and is scored by the
+  same task tests used for endpoint-only runs
+
+The goal is not just to know whether a model can solve a HumanEval or MBPP task.
+The harness records the result and the serving characteristics that decide
+whether a model is practical for coding loops: time to first token, total
+latency, prompt/prefill throughput, decode throughput, token counts, and cost
+where a provider exposes pricing. That makes it possible to compare answer
+quality and speed side by side instead of treating local and cloud runs as
+separate experiments.
+
+## Local Backend Choice
+
+For local MLX serving, the current focus is **TurboQuant** and **DFlash** rather
+than Ollama or LM Studio.
+
+TurboQuant and DFlash are closer to the workload this repo is trying to measure:
+they expose OpenAI-compatible HTTP endpoints while keeping control over MLX
+loading, quantized model choices, draft/verify behavior, prompt processing, and
+serving parameters. That matters because this harness needs to compare local
+models on both output quality and low-level throughput, including input token/s,
+output token/s, and prefill behavior.
+
+Ollama and LM Studio are useful general-purpose local model tools, but they are
+less suitable as the primary benchmark path here. They add product-level
+abstractions around model management and serving, can hide implementation
+details that affect timing, and are not optimized for the specific MLX
+experiments this repo is running on a 48 GB Apple Silicon machine. They remain
+reasonable compatibility targets later, but TurboQuant and DFlash give the
+harness a cleaner path for reproducible local-vs-cloud measurements right now.
+
 ## Development
 
 Install the project and development tools:
@@ -86,10 +128,21 @@ uv run bench --mode sweep --input results/sweep.jsonl
 
 ## Verification Status
 
+Last automated verification: 2026-06-21T14:44:05Z.
+
+```bash
+uv run pytest        # 66 passed, 86.26% coverage, 80% coverage gate reached
+uv run ruff check .  # All checks passed
+```
+
+Manual, environment-dependent validation is tracked in
+[`docs/MANUAL_TESTS.md`](docs/MANUAL_TESTS.md).
+
 Automated verification covers config parsing, real HumanEval/MBPP cache loading,
 stream metric math, OpenAI/Anthropic stream parsing, macOS `sandbox-exec` scoring
 guards, offline re-score, endpoint resume/fault handling, fake Codex execution,
-leaderboard generation, and sweep execution with mocked providers.
+leaderboard generation, sweep execution with mocked providers, and pytest-cov
+coverage reporting with an 80% minimum gate.
 
 Live validation still requires FX's local/cloud runtime environment: running the
 full configured model matrix, killing a local MLX server mid-run, and measuring

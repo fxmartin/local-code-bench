@@ -12,6 +12,12 @@ class FakeProvider:
         yield StreamEvent(content="def add(a, b):\n    return a + b", prompt_tokens=3, completion_tokens=8)
 
 
+class FailingProvider:
+    def stream_chat(self, request):
+        raise ProviderError("stream down")
+        yield
+
+
 def model(name: str) -> ModelConfig:
     return ModelConfig(
         name=name,
@@ -38,6 +44,17 @@ def test_select_models_include_and_skip() -> None:
     models = {"a": model("a"), "b": model("b")}
 
     assert [item.name for item in select_models(models, include="a,b", skip="b")] == ["a"]
+
+
+def test_select_models_reports_unknown_include() -> None:
+    models = {"a": model("a")}
+
+    try:
+        select_models(models, include="missing")
+    except ValueError as exc:
+        assert "unknown model(s): missing" in str(exc)
+    else:
+        raise AssertionError("expected unknown model error")
 
 
 def test_run_endpoint_suite_writes_records_and_resumes(tmp_path, monkeypatch) -> None:
@@ -83,3 +100,34 @@ def test_run_endpoint_suite_records_provider_init_failure(tmp_path, monkeypatch)
     assert summary["infra_failed"] == 1
     assert "server down" in path.read_text(encoding="utf-8")
     assert messages == ["[1/1] a t1: infra-failed"]
+
+
+def test_run_endpoint_suite_records_provider_stream_failure(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: FailingProvider())
+    path = tmp_path / "run.jsonl"
+    messages: list[str] = []
+
+    summary = run_endpoint_suite(
+        models=[model("a")],
+        tasks=[task()],
+        result_path=path,
+        progress=messages.append,
+    )
+
+    assert summary["infra_failed"] == 1
+    assert "stream down" in path.read_text(encoding="utf-8")
+    assert messages == ["[1/1] a t1: infra-failed"]
+
+
+def test_run_endpoint_suite_records_scoring_failure(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: FakeProvider())
+    monkeypatch.setattr(
+        "local_code_bench.runner.score_completion",
+        lambda _task, _completion: (_ for _ in ()).throw(RuntimeError("bad tests")),
+    )
+    path = tmp_path / "run.jsonl"
+
+    summary = run_endpoint_suite(models=[model("a")], tasks=[task()], result_path=path)
+
+    assert summary["failed"] == 1
+    assert "scoring failed: bad tests" in path.read_text(encoding="utf-8")

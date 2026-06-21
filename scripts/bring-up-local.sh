@@ -13,7 +13,7 @@ case "$backend" in
     example="dflash serve --model qwen3.6-27b --port ${port}"
     ;;
   turboquant)
-    port="${TURBOQUANT_PORT:-8001}"
+    port="${TURBOQUANT_PORT:-8002}"
     command_var="TURBOQUANT_COMMAND"
     example="turboquant-serve --model qwen3.6-35b-a3b --port ${port}"
     ;;
@@ -24,15 +24,7 @@ case "$backend" in
 esac
 
 is_ready() {
-  python3 - "$port" <<'PY'
-import socket
-import sys
-
-port = int(sys.argv[1])
-with socket.socket() as sock:
-    sock.settimeout(0.5)
-    raise SystemExit(0 if sock.connect_ex(("127.0.0.1", port)) == 0 else 1)
-PY
+  curl -fsS --max-time 2 "http://127.0.0.1:${port}/v1/models" >/dev/null
 }
 
 if is_ready; then
@@ -50,10 +42,19 @@ fi
 
 log_file="${TMPDIR:-/tmp}/local-code-bench-${backend}.log"
 echo "starting $backend: $command"
-nohup bash -lc "$command" >"$log_file" 2>&1 &
+if command -v launchctl >/dev/null 2>&1; then
+  label="local-code-bench.${backend}"
+  launch_path="$HOME/.local/bin:/run/current-system/sw/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+  launchctl remove "$label" >/dev/null 2>&1 || true
+  launchctl submit -l "$label" -o "$log_file" -e "$log_file" -- /bin/zsh -c "export HOME='$HOME'; export PATH='$launch_path'; exec $command"
+else
+  nohup bash -lc "trap '' HUP; exec $command" >"$log_file" 2>&1 < /dev/null &
+fi
 
 for _ in {1..60}; do
   if is_ready; then
+    sleep 3
+    is_ready || break
     echo "$backend ready on port $port"
     exit 0
   fi

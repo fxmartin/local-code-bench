@@ -4,12 +4,16 @@ import pytest
 
 from local_code_bench.config import ModelConfig, TokenPrices
 from local_code_bench.provider import (
+    AnthropicStreamingProvider,
     OpenAIStreamingProvider,
     ProviderError,
     _api_key,
+    _decode_lines,
     _load_env_file,
+    _redact,
     parse_anthropic_sse_lines,
     parse_openai_sse_lines,
+    provider_for_model,
 )
 
 
@@ -29,6 +33,31 @@ def test_parse_openai_sse_lines_extracts_content_and_usage() -> None:
     assert events[-1].completion_tokens == 1
 
 
+def test_parse_openai_sse_lines_ignores_noise_and_supports_text_choices() -> None:
+    events = list(
+        parse_openai_sse_lines(
+            [
+                "\n",
+                ": keepalive\n",
+                "event: ping\n",
+                'data: {"choices":[{"text":"legacy text"}]}\n',
+                'data: {"usage":{"prompt_tokens":"bad","completion_tokens":2}}\n',
+                "data: [DONE]\n",
+                'data: {"choices":[{"delta":{"content":"ignored after done"}}]}\n',
+            ]
+        )
+    )
+
+    assert [event.content for event in events] == ["legacy text", ""]
+    assert events[-1].prompt_tokens is None
+    assert events[-1].completion_tokens == 2
+
+
+def test_parse_openai_sse_lines_reports_malformed_json() -> None:
+    with pytest.raises(ProviderError, match="malformed stream JSON"):
+        list(parse_openai_sse_lines(["data: {bad json}\n"]))
+
+
 def test_openai_provider_rejects_non_openai_model() -> None:
     model = ModelConfig(
         name="claude",
@@ -41,6 +70,52 @@ def test_openai_provider_rejects_non_openai_model() -> None:
 
     with pytest.raises(ProviderError, match="not openai"):
         OpenAIStreamingProvider(model)
+
+
+def test_anthropic_provider_rejects_non_anthropic_model() -> None:
+    model = ModelConfig(
+        name="openai",
+        type="openai",
+        base_url="https://example.com",
+        model_id="gpt",
+        pinned_revision="manual",
+        price_per_1k_tokens=TokenPrices(input=1, output=1),
+    )
+
+    with pytest.raises(ProviderError, match="not anthropic"):
+        AnthropicStreamingProvider(model)
+
+
+def test_provider_for_model_selects_adapter() -> None:
+    openai = ModelConfig(
+        name="openai",
+        type="openai",
+        base_url="https://example.com",
+        model_id="gpt",
+        pinned_revision="manual",
+        price_per_1k_tokens=TokenPrices(input=1, output=1),
+    )
+    anthropic = ModelConfig(
+        name="anthropic",
+        type="anthropic",
+        base_url="https://example.com",
+        model_id="claude",
+        pinned_revision="manual",
+        price_per_1k_tokens=TokenPrices(input=1, output=1),
+    )
+    unsupported = ModelConfig(
+        name="bad",
+        type="bad",
+        base_url="https://example.com",
+        model_id="bad",
+        pinned_revision="manual",
+        price_per_1k_tokens=TokenPrices(input=1, output=1),
+    )
+
+    assert isinstance(provider_for_model(openai), OpenAIStreamingProvider)
+    assert isinstance(provider_for_model(anthropic), AnthropicStreamingProvider)
+    with pytest.raises(ProviderError, match="unsupported provider type"):
+        provider_for_model(unsupported)
 
 
 def test_parse_anthropic_sse_lines_extracts_content_and_usage() -> None:
@@ -60,6 +135,12 @@ def test_parse_anthropic_sse_lines_extracts_content_and_usage() -> None:
     assert events[-1].completion_tokens == 2
 
 
+def test_parse_anthropic_sse_lines_ignores_noise_and_reports_malformed_json() -> None:
+    assert list(parse_anthropic_sse_lines(["event: ping\n"])) == []
+    with pytest.raises(ProviderError, match="malformed stream JSON"):
+        list(parse_anthropic_sse_lines(["data: {bad json}\n"]))
+
+
 def test_api_key_loads_from_dotenv(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
@@ -76,3 +157,40 @@ def test_api_key_loads_from_dotenv(tmp_path, monkeypatch) -> None:
     )
 
     assert _api_key(model) == "dotenv-secret"
+
+
+def test_api_key_none_when_model_has_no_env() -> None:
+    model = ModelConfig(
+        name="local",
+        type="openai",
+        base_url="http://localhost:8000/v1",
+        model_id="local",
+        pinned_revision="manual",
+        price_per_1k_tokens=TokenPrices(input=0, output=0),
+    )
+
+    assert _api_key(model) is None
+
+
+def test_api_key_reports_missing_env(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    _load_env_file.cache_clear()
+    model = ModelConfig(
+        name="openrouter",
+        type="openai",
+        base_url="https://openrouter.ai/api/v1",
+        model_id="test",
+        pinned_revision="manual",
+        price_per_1k_tokens=TokenPrices(input=1, output=1),
+        api_key_env="OPENROUTER_API_KEY",
+    )
+
+    with pytest.raises(ProviderError, match="requires environment variable OPENROUTER_API_KEY"):
+        _api_key(model)
+
+
+def test_decode_lines_and_redact_helpers() -> None:
+    assert list(_decode_lines([b"hello\n", "world\n"])) == ["hello\n", "world\n"]
+    assert _redact("secret leaked", "secret") == "[REDACTED] leaked"
+    assert _redact("plain", None) == "plain"

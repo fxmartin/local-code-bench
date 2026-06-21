@@ -28,8 +28,8 @@ models:
   - name: anthropic-claude-baseline
     type: anthropic
     base_url: https://api.anthropic.com/v1
-    model_id: claude-sonnet-4-20250514
-    pinned_revision: "20250514"
+    model_id: claude-sonnet-4-6
+    pinned_revision: claude-sonnet-4-6
     api_key_env: ANTHROPIC_API_KEY
     price_per_1k_tokens:
       input: 0.003
@@ -37,16 +37,16 @@ models:
   - name: local-dflash-qwen
     type: openai
     base_url: http://localhost:8000/v1
-    model_id: qwen3.6-27b-dflash
-    pinned_revision: manual
+    model_id: mlx-community/Qwen3.6-27B-4bit
+    pinned_revision: manual-2026-06-21
     price_per_1k_tokens:
       input: 0.0
       output: 0.0
   - name: local-turboquant-qwen-moe
     type: openai
-    base_url: http://localhost:8001/v1
-    model_id: qwen3.6-35b-a3b-turboquant
-    pinned_revision: manual
+    base_url: http://localhost:8002/v1
+    model_id: manjunathshiva/Qwen3.6-35B-A3B-tq3-g32
+    pinned_revision: manual-2026-06-21
     price_per_1k_tokens:
       input: 0.0
       output: 0.0
