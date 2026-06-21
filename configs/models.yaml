@@ -24,7 +24,13 @@ models:
     pinned_revision: openrouter-2026-06-20
     api_key_env: OPENROUTER_API_KEY
     concurrency: 10
-    max_tokens: 1024
+    # GLM-4.6 reasons in a separate stream and can exhaust any token budget before
+    # emitting code. For a coding benchmark we want the direct answer, so disable
+    # reasoning at the provider; the code answer then fits a small cap and runs fast.
+    max_tokens: 2048
+    extra_body:
+      reasoning:
+        enabled: false
     price_per_1k_tokens:
       input: 0.00043
       output: 0.00174
@@ -35,7 +41,10 @@ models:
     pinned_revision: openrouter-2026-06-20
     api_key_env: OPENROUTER_API_KEY
     concurrency: 10
-    max_tokens: 1024
+    max_tokens: 2048
+    extra_body:
+      reasoning:
+        enabled: false
     price_per_1k_tokens:
       input: 0.00057
       output: 0.00230
@@ -46,7 +55,7 @@ models:
     pinned_revision: claude-sonnet-4-6
     api_key_env: ANTHROPIC_API_KEY
     concurrency: 8
-    max_tokens: 1024
+    max_tokens: 2048
     price_per_1k_tokens:
       input: 0.003
       output: 0.015

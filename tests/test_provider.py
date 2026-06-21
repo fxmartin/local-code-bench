@@ -45,7 +45,7 @@ def _openai_model() -> ModelConfig:
     )
 
 
-def _capture_openai_body(monkeypatch, request: ChatRequest) -> dict:
+def _capture_openai_body(monkeypatch, request: ChatRequest, model: ModelConfig | None = None) -> dict:
     captured: dict = {}
 
     def fake_urlopen(http_request, timeout=None):
@@ -53,7 +53,7 @@ def _capture_openai_body(monkeypatch, request: ChatRequest) -> dict:
         return _FakeResponse([b'data: {"choices":[{"delta":{"content":"x"}}]}\n', b"data: [DONE]\n"])
 
     monkeypatch.setattr("local_code_bench.provider.urllib.request.urlopen", fake_urlopen)
-    list(OpenAIStreamingProvider(_openai_model()).stream_chat(request))
+    list(OpenAIStreamingProvider(model or _openai_model()).stream_chat(request))
     return captured["body"]
 
 
@@ -67,6 +67,22 @@ def test_openai_provider_omits_max_tokens_when_unset(monkeypatch) -> None:
     body = _capture_openai_body(monkeypatch, ChatRequest(prompt="hi"))
 
     assert "max_tokens" not in body
+
+
+def test_openai_provider_merges_extra_body(monkeypatch) -> None:
+    model = ModelConfig(
+        name="cloud",
+        type="openai",
+        base_url="https://example.test/v1",
+        model_id="qwen",
+        pinned_revision="manual",
+        price_per_1k_tokens=TokenPrices(input=0.0, output=0.0),
+        extra_body={"reasoning": {"enabled": False}},
+    )
+
+    body = _capture_openai_body(monkeypatch, ChatRequest(prompt="hi"), model)
+
+    assert body["reasoning"] == {"enabled": False}
 
 
 def test_parse_openai_sse_lines_extracts_content_and_usage() -> None:

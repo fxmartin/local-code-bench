@@ -93,6 +93,53 @@ models:
     assert models["local"].max_tokens is None
 
 
+def test_load_models_parses_extra_body(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(
+        """
+models:
+  - name: cloud
+    type: openai
+    base_url: http://localhost:8000/v1
+    model_id: qwen
+    pinned_revision: abc123
+    extra_body:
+      reasoning:
+        enabled: false
+    price_per_1k_tokens:
+      input: 0.01
+      output: 0.02
+""",
+        encoding="utf-8",
+    )
+
+    models = load_models(config_path)
+
+    assert models["cloud"].extra_body == {"reasoning": {"enabled": False}}
+
+
+def test_load_models_rejects_non_mapping_extra_body(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(
+        """
+models:
+  - name: cloud
+    type: openai
+    base_url: http://localhost:8000/v1
+    model_id: qwen
+    pinned_revision: abc123
+    extra_body: "nope"
+    price_per_1k_tokens:
+      input: 0.01
+      output: 0.02
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="extra_body"):
+        load_models(config_path)
+
+
 def test_load_models_rejects_non_positive_concurrency(tmp_path) -> None:
     config_path = tmp_path / "models.yaml"
     config_path.write_text(

@@ -146,10 +146,20 @@ decode tok/s measurements this harness exists to take. Keep local backends seria
 and lean on `--mode sweep` plus a small task subset for their speed profile.
 
 `max_tokens` caps generation per task. Coding-suite solutions are short, so an
-uncapped verbose model wastes decode time and inflates cost on every task. The
-cloud entries cap at `max_tokens: 1024`. When a model config sets no cap, the
-runner applies a default of 1024 for suite runs. The Anthropic provider keeps its
-4096 fallback when neither the request nor config specifies a value.
+uncapped verbose model wastes decode time and inflates cost on every task. When a
+model config sets no cap, the runner applies a default of 1024 for suite runs, and
+the Anthropic provider keeps a 4096 fallback when neither request nor config
+specifies a value.
+
+One caveat learned the hard way: reasoning models that think in the output stream
+(GLM-4.6, Kimi K2, and similar) emit their analysis before the final code block, so
+a tight cap truncates the answer mid-reasoning and scoring sees no code, producing
+false failures. Give those models headroom; the shipped cloud configs use 2048 to
+8192 for exactly this reason. Terse code models can stay near 1024. Note that some
+reasoning models (GLM-4.6 on OpenRouter) engage extended reasoning
+nondeterministically even at temperature 0, so a task can occasionally exhaust even
+a large budget; disabling reasoning at the provider is the alternative if you want
+fast, deterministic coding scores rather than reasoned ones.
 
 Both knobs can be overridden per run from the CLI, which is handy for a quick
 local sanity check or a one-off heavier cloud sweep:

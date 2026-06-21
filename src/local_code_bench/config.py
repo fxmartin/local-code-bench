@@ -32,6 +32,7 @@ class ModelConfig:
     api_key_env: str | None = None
     concurrency: int = 1
     max_tokens: int | None = None
+    extra_body: dict[str, Any] | None = None
 
 
 AgentType = Literal["codex"]
@@ -121,6 +122,7 @@ def _parse_model(entry: Any, index: int) -> ModelConfig:
         api_key_env=_optional_str(entry, "api_key_env", index),
         concurrency=_optional_positive_int(entry, "concurrency", index, default=1),
         max_tokens=_optional_positive_int(entry, "max_tokens", index, default=None),
+        extra_body=_optional_mapping(entry, "extra_body", index),
     )
 
 
@@ -185,6 +187,21 @@ def _optional_positive_int(
         return default
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ConfigError(f"{root}[{index}].{field} must be a positive integer when set")
+    return value
+
+
+def _optional_mapping(
+    entry: dict[str, Any],
+    field: str,
+    index: int,
+    *,
+    root: str = "models",
+) -> dict[str, Any] | None:
+    value = entry.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ConfigError(f"{root}[{index}].{field} must be a mapping when set")
     return value
 
 

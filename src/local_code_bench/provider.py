@@ -53,6 +53,8 @@ class OpenAIStreamingProvider:
         }
         if request.max_tokens is not None:
             body["max_tokens"] = request.max_tokens
+        if self._model.extra_body:
+            body.update(self._model.extra_body)
         endpoint = f"{self._model.base_url}/chat/completions"
         http_request = urllib.request.Request(
             endpoint,
@@ -97,6 +99,8 @@ class AnthropicStreamingProvider:
             "stream": True,
             "messages": [{"role": "user", "content": request.prompt}],
         }
+        if self._model.extra_body:
+            body.update(self._model.extra_body)
         http_request = urllib.request.Request(
             f"{self._model.base_url}/messages",
             data=json.dumps(body).encode("utf-8"),

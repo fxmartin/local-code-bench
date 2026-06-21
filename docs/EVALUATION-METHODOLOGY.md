@@ -148,6 +148,35 @@ write_jsonl('.cache/benchmarks/HumanEvalPlus.jsonl', list(get_human_eval_plus().
 Plus-input sets are large, so the per-task sandbox timeout is tunable with
 `--timeout` (default 5s). Raise it if tasks start timing out.
 
+## Reasoning Models: Disable Reasoning Or Budget For It
+
+Live canary runs surfaced a calibration trap. Reasoning models such as GLM-4.6 on
+OpenRouter stream their chain-of-thought in a separate `reasoning` field and only
+emit the answer in `content` after reasoning finishes. The scorer reads `content`,
+which is correct, but if a token cap is exhausted during reasoning the answer never
+arrives and the task fails with empty content. Worse, these models engage extended
+reasoning nondeterministically even at temperature 0, so the same task can pass on
+one run and fail on the next as it flips between answering directly and reasoning
+past the budget. Chasing this with ever larger `max_tokens` is a losing game.
+
+The cleaner fix for a coding benchmark is to disable reasoning at the provider, so
+the model returns the answer directly: fast, cheap, and deterministic. Each model
+config takes an `extra_body` mapping that is merged verbatim into the request body,
+which keeps provider-specific knobs out of the code. The shipped GLM-4.6 and Kimi K2
+entries use it to turn reasoning off:
+
+```yaml
+extra_body:
+  reasoning:
+    enabled: false
+```
+
+The exact field is provider and model specific (OpenRouter also exposes
+`reasoning: {exclude: true}` and `reasoning_effort`), so confirm it takes effect on
+a live run. If you would rather measure reasoned scores, drop `extra_body` and give
+the model a generous `max_tokens` (8192 or more) instead, accepting the slower,
+costlier, occasionally flaky runs that come with it.
+
 What was validated offline: the differential engine itself, against synthetic
 records run through the real sandbox, confirming it passes a correct solution,
 fails one that is wrong only on a plus input, and honors float tolerance. What
