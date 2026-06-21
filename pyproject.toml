@@ -49,7 +49,8 @@ tag_format = "v{version}"
 major_on_zero = false
 allow_zero_version = true
 # Keep uv.lock in the release commit after pyproject.toml version bumps.
-build_command = "uv lock"
+# PSR's GitHub Action runs in its own container, so install uv inside that runtime.
+build_command = "python -m pip install uv && uv lock"
 assets = ["uv.lock"]
 # Release commit is a valid conventional commit; [skip ci] avoids re-triggering.
 commit_message = "chore(release): {version} [skip ci]"
