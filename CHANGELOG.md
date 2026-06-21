@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.7.0 (2026-06-21)
+
+### Features
+
+- Show per-task benchmark progress
+  ([`de1c0a7`](https://github.com/fxmartin/local-code-bench/commit/de1c0a7188d95a88f334b4009a626c988c635de5))
+
+
 ## v0.6.1 (2026-06-21)
 
 ### Bug Fixes
