@@ -85,5 +85,40 @@ def summarize_sweep(records: list[dict[str, object]]) -> str:
         for size, ttft, prefill in sorted(items):
             lines.append(f"| {model} | {size} | {ttft:.3f} | {prefill:.3f} |")
     lines.append("")
+    power_lines = _power_table(records)
+    if power_lines:
+        lines.extend(power_lines)
+        lines.append("")
     lines.append("Finding: compare dense vs MoE rows on this hardware before claiming an advantage.")
     return "\n".join(lines)
+
+
+def _power_table(records: list[dict[str, object]]) -> list[str]:
+    rows: list[tuple[str, float, float, float, float, int]] = []
+    for record in records:
+        if record.get("record_type") != "power" or not record.get("available"):
+            continue
+        model = record.get("model")
+        if not isinstance(model, str):
+            continue
+        rows.append(
+            (
+                model,
+                float(record.get("avg_gpu_w", 0.0) or 0.0),
+                float(record.get("max_gpu_w", 0.0) or 0.0),
+                float(record.get("avg_combined_w", 0.0) or 0.0),
+                float(record.get("energy_j", 0.0) or 0.0),
+                int(record.get("samples", 0) or 0),
+            )
+        )
+    if not rows:
+        return []
+    table = [
+        "| Model | Avg GPU W | Max GPU W | Avg Combined W | Energy J | Samples |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+    for model, avg_gpu, max_gpu, avg_combined, energy, samples in sorted(rows):
+        table.append(
+            f"| {model} | {avg_gpu:.2f} | {max_gpu:.2f} | {avg_combined:.2f} | {energy:.1f} | {samples} |"
+        )
+    return table

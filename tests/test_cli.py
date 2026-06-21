@@ -6,7 +6,7 @@ from importlib.metadata import version
 
 import pytest
 
-from local_code_bench.cli import build_parser, main
+from local_code_bench.cli import _parse_context_sizes, build_parser, main
 from local_code_bench.config import AgentConfig, ModelConfig, TokenPrices
 from local_code_bench.metrics import StreamEvent
 from local_code_bench.results import append_jsonl, read_jsonl
@@ -44,6 +44,35 @@ def test_parser_accepts_evalplus_suites_and_timeout() -> None:
 def test_parser_warmup_defaults_on_and_can_disable() -> None:
     assert build_parser().parse_args([]).warmup is True
     assert build_parser().parse_args(["--no-warmup"]).warmup is False
+
+
+def test_parse_context_sizes_valid() -> None:
+    assert _parse_context_sizes("2000, 8000,16000") == (2000, 8000, 16000)
+
+
+def test_parse_context_sizes_rejects_non_positive() -> None:
+    with pytest.raises(ValueError, match="positive"):
+        _parse_context_sizes("2000,0")
+
+
+def test_parse_context_sizes_rejects_garbage() -> None:
+    with pytest.raises(ValueError, match="invalid --context-sizes"):
+        _parse_context_sizes("2000,abc")
+
+
+def test_sweep_prompt_print_honors_context_sizes(capsys) -> None:
+    code = main(["--mode", "sweep", "--prompt", "do x", "--context-sizes", "100,200"])
+
+    assert code == 0
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert [line.split("\t")[0] for line in lines] == ["100", "200"]
+
+
+def test_sweep_invalid_context_sizes_errors(capsys) -> None:
+    code = main(["--mode", "sweep", "--prompt", "do x", "--context-sizes", "nope"])
+
+    assert code == 2
+    assert "context-sizes" in capsys.readouterr().err
 
 
 def test_bench_help_entrypoint_exits_successfully() -> None:

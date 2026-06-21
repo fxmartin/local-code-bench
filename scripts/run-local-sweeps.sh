@@ -35,7 +35,8 @@ Optional:
   WARMUP_TIMEOUT=300
   STOP_TIMEOUT_SECONDS=20
   KEEP_LOCAL_SWEEP_SERVERS=1
-  POWER=1
+  POWER=1                              # needs passwordless sudo for powermetrics
+  SWEEP_CONTEXT_SIZES=2000,8000,16000  # cap the ladder to stay out of swap (default 2000,8000,16000,24000)
 EOF
 }
 
@@ -160,13 +161,18 @@ run_sweep_for_backend() {
   run_file="$(run_file_for_backend "$backend")"
   mkdir -p "$(dirname "$run_file")"
 
-  local power_args=()
+  local extra_args=()
   if [[ "${POWER:-0}" == "1" ]]; then
-    power_args=(--power)
+    extra_args+=(--power)
+  fi
+  if [[ -n "${SWEEP_CONTEXT_SIZES:-}" ]]; then
+    extra_args+=(--context-sizes "$SWEEP_CONTEXT_SIZES")
   fi
 
   echo "running sweep for $backend -> $run_file"
-  uv run bench --mode sweep --model "$model" --run-file "$run_file" "${power_args[@]}"
+  # ${arr[@]+"${arr[@]}"} expands safely when the array is empty under `set -u`
+  # (macOS system bash 3.2 errors on a plain "${arr[@]}" for an empty array).
+  uv run bench --mode sweep --model "$model" --run-file "$run_file" ${extra_args[@]+"${extra_args[@]}"}
 }
 
 trap cleanup EXIT INT TERM

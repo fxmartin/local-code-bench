@@ -68,6 +68,45 @@ def test_sweep_prompt_and_summary() -> None:
     assert "| m | 2000 | 1.000 | 100.000 |" in summary
 
 
+def test_summarize_sweep_includes_power_rows_when_present() -> None:
+    summary = summarize_sweep(
+        [
+            {
+                "model": "m",
+                "context_tokens": 2000,
+                "metrics": {"ttft_seconds": 1.0, "prefill_tokens_per_second": 100.0},
+            },
+            {
+                "record_type": "power",
+                "model": "m",
+                "available": True,
+                "avg_gpu_w": 17.0,
+                "max_gpu_w": 20.5,
+                "avg_combined_w": 21.0,
+                "energy_j": 210.0,
+                "samples": 10,
+            },
+        ]
+    )
+
+    assert "| Model | Avg GPU W | Max GPU W | Avg Combined W | Energy J | Samples |" in summary
+    assert "| m | 17.00 | 20.50 | 21.00 | 210.0 | 10 |" in summary
+
+
+def test_summarize_sweep_omits_power_table_when_absent() -> None:
+    summary = summarize_sweep(
+        [
+            {
+                "model": "m",
+                "context_tokens": 2000,
+                "metrics": {"ttft_seconds": 1.0, "prefill_tokens_per_second": 100.0},
+            }
+        ]
+    )
+
+    assert "Avg GPU W" not in summary
+
+
 def test_run_sweep_executes_provider_and_writes_records(tmp_path, monkeypatch) -> None:
     class FakeProvider:
         def stream_chat(self, request):

@@ -194,8 +194,10 @@ under sudo:
 sudo -v && uv run bench --suite canary --model local-dflash-qwen --power
 ```
 
-Pair the energy figure with the token counts already in the task records to derive
-tokens per joule offline.
+When a sweep run file carries power records, the `--mode sweep --input` summary adds
+a per-model power table (avg/max GPU watts, avg combined watts, energy in joules)
+beneath the prefill table, so you see watts next to tok/s. Pair the energy figure
+with the token counts in the task records to derive tokens per joule.
 
 Use `OPENROUTER_API_KEY` for the OpenRouter entries and `ANTHROPIC_API_KEY` for
 the Anthropic baseline. API keys are read from the shell environment or a local
@@ -238,12 +240,25 @@ uv run bench --mode sweep --prompt "Return 1"
 uv run bench --mode sweep --input results/sweep.jsonl
 ```
 
+The sweep pads the prompt across a context ladder (default `2000,8000,16000,24000`)
+and records TTFT and prefill tok/s at each size. Override the ladder with
+`--context-sizes` to keep a model below the context length where it starts swapping
+on constrained memory:
+
+```bash
+uv run bench --mode sweep --model local-turboquant-qwen-moe --context-sizes 2000,8000,16000
+```
+
+`scripts/run-local-sweeps.sh` automates the dense-vs-MoE comparison safely: it brings
+up one local server at a time (refusing to proceed if the other is still resident),
+sweeps it, then swaps. It honors `SWEEP_CONTEXT_SIZES` and `POWER=1`.
+
 ## Verification Status
 
 Last automated verification: 2026-06-21.
 
 ```bash
-uv run pytest        # 98 passed, 85.96% coverage, 80% coverage gate reached
+uv run pytest        # 105 passed, 86.50% coverage, 80% coverage gate reached
 uv run ruff check .  # All checks passed
 ```
 

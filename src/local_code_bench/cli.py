@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from local_code_bench.agents import completed_agent_pairs, run_codex_task
-from local_code_bench.config import ConfigError, load_agents, load_models
+from local_code_bench.config import ConfigError, ModelConfig, load_agents, load_models
 from local_code_bench.leaderboard import generate_leaderboard
 from local_code_bench.metrics import CompletionMeasurement, capture_stream_metrics
 from local_code_bench.power import PowerSampler
@@ -16,7 +16,7 @@ from local_code_bench.provider import ChatRequest, ProviderError, provider_for_m
 from local_code_bench.results import append_jsonl, new_run_path
 from local_code_bench.rescore import rescore_endpoint_records
 from local_code_bench.runner import run_endpoint_suite, select_models
-from local_code_bench.sweep import run_sweep, summarize_sweep, sweep_prompts
+from local_code_bench.sweep import CONTEXT_SIZES, run_sweep, summarize_sweep, sweep_prompts
 from local_code_bench.tasks import TaskLoadError, limit_tasks, load_suite
 
 
@@ -89,6 +89,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="record GPU/CPU power and energy via macOS powermetrics (needs passwordless sudo)",
     )
+    parser.add_argument(
+        "--context-sizes",
+        help=(
+            "comma-separated context token sizes for sweep mode "
+            "(default 2000,8000,16000,24000; lower the top to stay out of swap)"
+        ),
+    )
     parser.add_argument("--resume", action="store_true", help="resume an existing JSONL run")
     parser.add_argument("--run-file", help="explicit JSONL run file for suite/resume modes")
     parser.add_argument("--cache-dir", default=".cache/benchmarks", help="benchmark dataset cache")
@@ -140,17 +147,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(summarize_sweep(records))
                 return 0
             question = args.prompt or "Write a Python function that returns 1."
+            sweep_sizes = _parse_context_sizes(args.context_sizes) if args.context_sizes else CONTEXT_SIZES
             if args.model:
                 models = select_models(load_models(args.config), include=args.model, skip=args.skip)
                 result_path = (
                     Path(args.run_file) if args.run_file else new_run_path(args.results_dir, prefix="sweep")
                 )
                 with PowerSampler(enabled=args.power) as sampler:
-                    summary = run_sweep(models=models, question=question, result_path=result_path)
-                _emit_power(sampler, result_path, requested=args.power)
+                    summary = run_sweep(
+                        models=models,
+                        question=question,
+                        result_path=result_path,
+                        sizes=sweep_sizes,
+                    )
+                _emit_power(sampler, result_path, models=models, requested=args.power)
                 print(f"sweep={summary} results={result_path}")
                 return 0
-            for size, prompt in sweep_prompts(question):
+            for size, prompt in sweep_prompts(question, sweep_sizes):
                 print(f"{size}\t{len(prompt.split())}\t{prompt[:80]}")
             return 0
 
@@ -196,7 +209,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     timeout_seconds=args.timeout,
                     warmup=args.warmup,
                 )
-            _emit_power(sampler, result_path, requested=args.power)
+            _emit_power(sampler, result_path, models=models, requested=args.power)
             print(f"suite={args.suite} results={result_path} summary={summary}")
             return 0
 
@@ -281,10 +294,40 @@ def run_single_prompt(
     return result_path, measurement
 
 
-def _emit_power(sampler: PowerSampler, result_path: Path, *, requested: bool) -> None:
+def _parse_context_sizes(raw: str) -> tuple[int, ...]:
+    sizes: list[int] = []
+    for part in raw.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        try:
+            value = int(token)
+        except ValueError as exc:
+            raise ValueError(f"invalid --context-sizes value: {token!r}") from exc
+        if value <= 0:
+            raise ValueError("--context-sizes values must be positive integers")
+        sizes.append(value)
+    if not sizes:
+        raise ValueError("--context-sizes must list at least one positive integer")
+    return tuple(sizes)
+
+
+def _emit_power(
+    sampler: PowerSampler,
+    result_path: Path,
+    *,
+    models: list[ModelConfig],
+    requested: bool,
+) -> None:
     summary = sampler.result()
     if summary.available:
-        append_jsonl(result_path, summary.as_record())
+        record = summary.as_record()
+        names = [model.name for model in models]
+        record["models"] = names
+        if len(names) == 1:
+            # A single-model run (the local sweep case) can attribute power directly.
+            record["model"] = names[0]
+        append_jsonl(result_path, record)
         print(
             "power: avg_gpu={a}W max_gpu={m}W avg_combined={c}W energy={e}J over {d}s".format(
                 a=summary.avg_gpu_w,
