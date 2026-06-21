@@ -48,8 +48,9 @@ tag_format = "v{version}"
 # Flip to true (or cut v1.0.0 manually) when the MVP acceptance bar is met.
 major_on_zero = false
 allow_zero_version = true
-# GitHub Release + git tag only — no package is built or uploaded.
-build_command = ""
+# Keep uv.lock in the release commit after pyproject.toml version bumps.
+build_command = "uv lock"
+assets = ["uv.lock"]
 # Release commit is a valid conventional commit; [skip ci] avoids re-triggering.
 commit_message = "chore(release): {version} [skip ci]"
 

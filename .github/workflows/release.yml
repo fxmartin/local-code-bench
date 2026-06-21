@@ -33,6 +33,9 @@ jobs:
       - name: Pin branch to triggering SHA
         run: git reset --hard ${{ github.sha }}
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+
       - name: Python Semantic Release
         id: release
         uses: python-semantic-release/python-semantic-release@v10.5.3
