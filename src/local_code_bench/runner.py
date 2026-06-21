@@ -64,6 +64,7 @@ def run_endpoint_suite(
     max_tokens: int | None = None,
     concurrency_override: int | None = None,
     timeout_seconds: float | None = None,
+    warmup: bool = False,
 ) -> dict[str, int]:
     model_list = list(models)
     task_list = list(tasks)
@@ -86,6 +87,9 @@ def run_endpoint_suite(
                 summary["infra_failed"] += 1
                 state.emit(model.name, task.task_id, "infra-failed")
             continue
+
+        if warmup and any((model.name, task.task_id) not in done for task in task_list):
+            _warmup_provider(provider, model.name, progress)
 
         concurrency = _resolve_concurrency(model, concurrency_override)
         if concurrency <= 1:
@@ -118,6 +122,25 @@ def run_endpoint_suite(
                 summary[summary_key] += 1
                 state.emit(model.name, task.task_id, status)
     return summary
+
+
+def _warmup_provider(
+    provider: object,
+    model_name: str,
+    progress: Callable[[str], None] | None,
+) -> None:
+    """Send one discarded request so cold-start model loading is not billed to the
+    first measured task. Failures are ignored; the real tasks surface any error."""
+
+    if progress is not None:
+        progress(f"warming up {model_name}")
+    try:
+        for _ in provider.stream_chat(  # type: ignore[attr-defined]
+            ChatRequest(prompt="ping", temperature=0.0, max_tokens=1)
+        ):
+            pass
+    except Exception:
+        pass
 
 
 def _execute_task(

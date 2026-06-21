@@ -23,12 +23,30 @@ case "$backend" in
     ;;
 esac
 
-is_ready() {
-  curl -fsS --max-time 2 "http://127.0.0.1:${port}/v1/models" >/dev/null
+# Process is listening and answering the models endpoint.
+server_up() {
+  curl -fsS --max-time 2 "http://127.0.0.1:${port}/v1/models" >/dev/null 2>&1
 }
 
-if is_ready; then
-  echo "$backend ready on port $port"
+# Truly ready: a real completion returns. The first call after boot forces the
+# weights to load, so this blocks through the cold start (up to WARMUP_TIMEOUT)
+# rather than letting the first benchmark task absorb it. That is the whole point:
+# when this returns, the model is resident and warm.
+warm() {
+  server_up || return 1
+  local model=""
+  if command -v jq >/dev/null 2>&1; then
+    model="$(curl -fsS --max-time 5 "http://127.0.0.1:${port}/v1/models" | jq -r '.data[0].id // empty' 2>/dev/null || true)"
+  fi
+  : "${model:=warmup}"
+  curl -fsS --max-time "${WARMUP_TIMEOUT:-300}" \
+    -H 'Content-Type: application/json' \
+    -d "{\"model\":\"${model}\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":1}" \
+    "http://127.0.0.1:${port}/v1/chat/completions" >/dev/null 2>&1
+}
+
+if warm; then
+  echo "$backend warm on port $port"
   exit 0
 fi
 
@@ -51,15 +69,22 @@ else
   nohup bash -lc "trap '' HUP; exec $command" >"$log_file" 2>&1 < /dev/null &
 fi
 
+# First wait for the process to start listening, then force a warmup completion
+# that blocks through weight loading so "warm" means genuinely ready to serve.
 for _ in {1..60}; do
-  if is_ready; then
-    sleep 3
-    is_ready || break
-    echo "$backend ready on port $port"
-    exit 0
-  fi
+  server_up && break
   sleep 1
 done
 
-echo "$backend did not become ready on port $port; see $log_file" >&2
+if ! server_up; then
+  echo "$backend did not start listening on port $port; see $log_file" >&2
+  exit 1
+fi
+
+if warm; then
+  echo "$backend warm on port $port"
+  exit 0
+fi
+
+echo "$backend is listening but failed a warmup completion on port $port; see $log_file" >&2
 exit 1

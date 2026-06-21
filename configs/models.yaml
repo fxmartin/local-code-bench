@@ -65,6 +65,10 @@ models:
     model_id: mlx-community/Qwen3.6-27B-4bit
     pinned_revision: manual-2026-06-21
     concurrency: 1
+    # Qwen3.6 reasons inline (in code comments) and can overrun the 1024 default,
+    # truncating the solution. 2048 gives it room. To go faster instead, try
+    # disabling thinking via extra_body if the MLX server honors it.
+    max_tokens: 2048
     price_per_1k_tokens:
       input: 0.0
       output: 0.0
@@ -74,6 +78,7 @@ models:
     model_id: manjunathshiva/Qwen3.6-35B-A3B-tq3-g32
     pinned_revision: manual-2026-06-21
     concurrency: 1
+    max_tokens: 2048
     price_per_1k_tokens:
       input: 0.0
       output: 0.0

@@ -173,6 +173,10 @@ A serial, uncapped cloud run of full HumanEval can take hours; the same run at
 scoring. See [`docs/EVALUATION-METHODOLOGY.md`](docs/EVALUATION-METHODOLOGY.md)
 for the full fast-evaluation strategy across speed, quality, and contamination.
 
+Before timing a model, the runner sends one discarded warmup request so a local
+server's cold-start weight load is not billed to the first measured task. It is on
+by default; pass `--no-warmup` to skip it.
+
 Use `OPENROUTER_API_KEY` for the OpenRouter entries and `ANTHROPIC_API_KEY` for
 the Anthropic baseline. API keys are read from the shell environment or a local
 `.env` file and are not written to result records. `.env` is gitignored.
@@ -184,7 +188,10 @@ printf 'ANTHROPIC_API_KEY=sk-ant-...\n' >> .env
 
 Local MLX servers are configured as OpenAI-compatible endpoints;
 `scripts/bring-up-local.sh dflash` and `scripts/bring-up-local.sh turboquant`
-print the expected manual server commands.
+print the expected manual server commands. The script's readiness gate issues a
+real completion (not just a `/v1/models` ping), so it blocks through the cold-start
+weight load and only reports the backend "warm" once the model is actually resident
+and able to serve. Tune the load wait with `WARMUP_TIMEOUT` (default 300s).
 
 ## Agent Mode
 
@@ -216,7 +223,7 @@ uv run bench --mode sweep --input results/sweep.jsonl
 Last automated verification: 2026-06-21.
 
 ```bash
-uv run pytest        # 86 passed, 87.02% coverage, 80% coverage gate reached
+uv run pytest        # 92 passed, 86.94% coverage, 80% coverage gate reached
 uv run ruff check .  # All checks passed
 ```
 

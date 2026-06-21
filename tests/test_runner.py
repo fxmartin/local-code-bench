@@ -188,6 +188,37 @@ def test_run_endpoint_suite_defaults_max_tokens_cap(tmp_path, monkeypatch) -> No
     assert provider.max_tokens == [1024]
 
 
+def test_run_endpoint_suite_warmup_sends_discarded_request(tmp_path, monkeypatch) -> None:
+    provider = RecordingProvider()
+    monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: provider)
+
+    summary = run_endpoint_suite(
+        models=[model("a")],
+        tasks=[task()],
+        result_path=tmp_path / "run.jsonl",
+        warmup=True,
+    )
+
+    # First call is the discarded warmup (max_tokens=1), then the real task.
+    assert provider.max_tokens == [1, 1024]
+    # The warmup is not scored: still exactly one task recorded.
+    assert summary["passed"] == 1
+
+
+def test_run_endpoint_suite_warmup_errors_do_not_abort(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: FailingProvider())
+
+    summary = run_endpoint_suite(
+        models=[model("a")],
+        tasks=[task()],
+        result_path=tmp_path / "run.jsonl",
+        warmup=True,
+    )
+
+    # Warmup failure is swallowed; the real task still runs and is recorded.
+    assert summary["infra_failed"] == 1
+
+
 def test_run_endpoint_suite_passes_timeout_to_scorer(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: FakeProvider())
     captured: dict[str, float | None] = {}

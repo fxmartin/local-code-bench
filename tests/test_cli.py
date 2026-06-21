@@ -41,6 +41,11 @@ def test_parser_accepts_evalplus_suites_and_timeout() -> None:
     assert args.timeout == 30.0
 
 
+def test_parser_warmup_defaults_on_and_can_disable() -> None:
+    assert build_parser().parse_args([]).warmup is True
+    assert build_parser().parse_args(["--no-warmup"]).warmup is False
+
+
 def test_bench_help_entrypoint_exits_successfully() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "local_code_bench.cli", "--help"],

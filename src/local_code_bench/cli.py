@@ -77,6 +77,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         help="per-task sandbox scoring timeout in seconds (raise for large EvalPlus input sets)",
     )
+    parser.add_argument(
+        "--warmup",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="send a discarded warmup request per model before timing (avoids cold-start skew)",
+    )
     parser.add_argument("--resume", action="store_true", help="resume an existing JSONL run")
     parser.add_argument("--run-file", help="explicit JSONL run file for suite/resume modes")
     parser.add_argument("--cache-dir", default=".cache/benchmarks", help="benchmark dataset cache")
@@ -179,6 +185,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 max_tokens=args.max_tokens,
                 concurrency_override=args.concurrency,
                 timeout_seconds=args.timeout,
+                warmup=args.warmup,
             )
             print(f"suite={args.suite} results={result_path} summary={summary}")
             return 0

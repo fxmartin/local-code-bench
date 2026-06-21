@@ -43,6 +43,16 @@ uv run bench --mode sweep --input results/sweep.jsonl   # summary table
 
 Local models stay serial here for a reason explained below.
 
+### Cold Start
+
+An MLX server loads model weights on its first request, not at boot, so a fresh
+server bills the entire load (two minutes was observed for the MoE) to whatever
+runs first. Two guards keep that out of the measurements. The runner sends a
+discarded warmup request per model before timing (default on, `--no-warmup` to
+skip), and `scripts/bring-up-local.sh` gates readiness on a real completion that
+blocks through the load, so "warm" means the weights are resident. Without these,
+the first measured task silently absorbs the cold start and skews its TTFT.
+
 ## Quality: Cloud-Concurrent Suites, Capped Generation
 
 For the quality comparison, run the correctness suite, but make the cloud path
