@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.8.0 (2026-06-21)
+
+### Chores
+
+- Sync lockfile version
+  ([`2cc2431`](https://github.com/fxmartin/local-code-bench/commit/2cc243198ab89969b34174c250028822fbb89f4b))
+
+### Features
+
+- Capture codex agent token usage
+  ([`bba55cd`](https://github.com/fxmartin/local-code-bench/commit/bba55cd5e7375cbd76575f20e8bcd473ce7fe64b))
+
+
 ## v0.7.1 (2026-06-21)
 
 ### Bug Fixes
