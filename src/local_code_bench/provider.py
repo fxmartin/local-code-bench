@@ -111,10 +111,11 @@ class AnthropicStreamingProvider:
 
 
 def provider_for_model(model: ModelConfig) -> OpenAIStreamingProvider | AnthropicStreamingProvider:
+    timeout_seconds = _provider_timeout_seconds()
     if model.type == "openai":
-        return OpenAIStreamingProvider(model)
+        return OpenAIStreamingProvider(model, timeout_seconds=timeout_seconds)
     if model.type == "anthropic":
-        return AnthropicStreamingProvider(model)
+        return AnthropicStreamingProvider(model, timeout_seconds=timeout_seconds)
     raise ProviderError(f"unsupported provider type: {model.type}")
 
 
@@ -220,6 +221,19 @@ def _api_key(model: ModelConfig) -> str | None:
     if not api_key:
         raise ProviderError(f"{model.name} requires environment variable {model.api_key_env}")
     return api_key
+
+
+def _provider_timeout_seconds() -> float:
+    value = os.environ.get("BENCH_PROVIDER_TIMEOUT_SECONDS")
+    if value is None:
+        return 120.0
+    try:
+        timeout_seconds = float(value)
+    except ValueError as exc:
+        raise ProviderError("BENCH_PROVIDER_TIMEOUT_SECONDS must be a positive number") from exc
+    if timeout_seconds <= 0:
+        raise ProviderError("BENCH_PROVIDER_TIMEOUT_SECONDS must be a positive number")
+    return timeout_seconds
 
 
 @cache
