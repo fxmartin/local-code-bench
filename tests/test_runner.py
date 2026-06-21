@@ -186,3 +186,26 @@ def test_run_endpoint_suite_defaults_max_tokens_cap(tmp_path, monkeypatch) -> No
 
     # No model or CLI cap set, so the runner applies its default endpoint cap.
     assert provider.max_tokens == [1024]
+
+
+def test_run_endpoint_suite_passes_timeout_to_scorer(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: FakeProvider())
+    captured: dict[str, float | None] = {}
+
+    class _Score:
+        passed = True
+        reason = "passed"
+
+    def fake_score(_task, _completion, *, timeout_seconds=5.0):
+        captured["timeout"] = timeout_seconds
+        return _Score()
+
+    monkeypatch.setattr("local_code_bench.runner.score_completion", fake_score)
+    run_endpoint_suite(
+        models=[model("a")],
+        tasks=[task()],
+        result_path=tmp_path / "run.jsonl",
+        timeout_seconds=30.0,
+    )
+
+    assert captured["timeout"] == 30.0

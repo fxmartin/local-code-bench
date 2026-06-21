@@ -108,8 +108,8 @@ roughly in order of leverage:
   as the vanilla suites, but far more unit tests per task. It catches
   wrong-but-passing solutions that plain HumanEval rubber-stamps. Vanilla
   HumanEval and MBPP are saturated and partly leaked, so they barely discriminate
-  at the top end. This is the single highest-leverage quality upgrade and is close
-  to a drop-in swap into the existing sandbox scorer.
+  at the top end. This is the single highest-leverage quality upgrade. It is now
+  implemented (see below).
 - **A small LiveCodeBench slice for contamination resistance.** Problems are time
   stamped and published after model cutoffs, so a model that wins by memorization
   on HumanEval is exposed. Take a recent window and run a subset.
@@ -122,6 +122,40 @@ Skip LLM-as-judge for code. Execution-based scoring is more reliable and the
 sandbox already provides it. Reserve judging for qualities that tests cannot
 capture, such as explanation, which is out of scope here.
 
+## EvalPlus: Differential Testing In The Existing Sandbox
+
+The EvalPlus suites are wired as `--suite humaneval-plus` and `--suite mbpp-plus`.
+Rather than bolt on the upstream EvalPlus evaluator, the harness keeps scoring
+inside its own sandbox by generating a self-contained `test_code` per task. That
+generated test rebuilds the EvalPlus canonical solution in an isolated namespace
+(so it cannot shadow the candidate), then asserts the candidate matches the
+reference on every base and plus input, with float tolerance from each task's
+`atol` and deep-copied arguments so in-place mutation cannot leak between the two
+calls. A candidate that is right on the base inputs but wrong on a plus input
+fails, which is the entire point of the plus sets.
+
+The release file is not auto-downloaded, because the URL and version move and the
+file is large. Place `HumanEvalPlus.jsonl(.gz)` or `MbppPlus.jsonl(.gz)` in the
+cache dir (the names in `EVALPLUS_FILENAMES`), for example by exporting from the
+`evalplus` package:
+
+```bash
+pip install evalplus
+python -c "from evalplus.data import get_human_eval_plus, write_jsonl; \
+write_jsonl('.cache/benchmarks/HumanEvalPlus.jsonl', list(get_human_eval_plus().values()))"
+```
+
+Plus-input sets are large, so the per-task sandbox timeout is tunable with
+`--timeout` (default 5s). Raise it if tasks start timing out.
+
+What was validated offline: the differential engine itself, against synthetic
+records run through the real sandbox, confirming it passes a correct solution,
+fails one that is wrong only on a plus input, and honors float tolerance. What
+still needs live verification on FX's machine: that the fields in the downloaded
+EvalPlus release match the loader's expected names (`task_id`, `entry_point`,
+`prompt`, `canonical_solution`, `base_input`, `plus_input`, `atol`) for the
+installed version, and that full-scale runs complete within the chosen timeout.
+
 ## Keeping Quality Runs Small: Anchor Subsets
 
 Even on the fast cloud path, a full suite per model is more than is needed for a
@@ -129,10 +163,24 @@ ranking. Replace a random `--limit N` (which takes the first N tasks and is both
 biased and noisy) with an anchor subset: a fixed set of roughly 20 to 50 items,
 chosen so their aggregate pass rate predicts the full suite score within a few
 points and with known error bars. This is the tinyBenchmarks / IRT anchor-point
-technique. The pragmatic version, until the IRT machinery is in place, is a hand
-curated set of historically discriminating tasks promoted into a dedicated
-subset. The goal is a "still usable?" quality signal in tens of generations, not
-hundreds.
+technique. The goal is a "still usable?" quality signal in tens of generations,
+not hundreds.
+
+The harness ships this today as the `canary` suite:
+
+```bash
+uv run bench --suite canary --model openrouter-glm-4.6
+```
+
+`canary` is a fixed, deterministic 20-task spread of HumanEval, defined by
+`CANARY_HUMANEVAL_IDS` in `src/local_code_bench/tasks.py`. It reuses the real
+HumanEval prompts and unit tests, so a canary record is scored exactly like a full
+HumanEval record and the two are directly comparable. The current ID list is a
+hand-curated stand-in for a formal IRT-selected set. When the item-response
+machinery lands, regenerate the list from per-task discrimination data but keep
+the IDs stable so historical canary runs stay comparable. The set is HumanEval
+only for now; extending it to a cross-suite anchor is a matter of adding curated
+MBPP IDs alongside.
 
 ## Tiering: Spend Generation Where It Is Cheap
 
@@ -150,10 +198,12 @@ Putting it together, the harness runs each evaluation where its cost is lowest:
 ## Status
 
 Implemented in the harness today: per-model `concurrency`, per-model and default
-`max_tokens` caps, parallel cloud suite execution with one record per task, and
-CLI overrides (`--concurrency`, `--max-tokens`). Sweep mode predates this work and
-already covers the speed path.
+`max_tokens` caps, parallel cloud suite execution with one record per task, CLI
+overrides (`--concurrency`, `--max-tokens`, `--timeout`), the `canary` anchor
+subset (`--suite canary`), and the EvalPlus differential suites (`--suite
+humaneval-plus` / `mbpp-plus`, pending live dataset verification). Sweep mode
+predates this work and already covers the speed path.
 
-Documented here as the roadmap, not yet implemented: EvalPlus suites, a
-LiveCodeBench slice, the private tripwire set, and formal anchor-subset selection.
-These are dataset and scoring additions that build on the throughput work above.
+Documented here as the roadmap, not yet implemented: a LiveCodeBench slice, the
+private tripwire set, and formal IRT-based regeneration of the canary anchor IDs.
+These are dataset and scoring additions that build on the work above.

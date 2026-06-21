@@ -106,6 +106,31 @@ uv run bench --suite humaneval --model local-example --limit 10
 uv run bench --suite mbpp --skip openrouter-glm-4.6 --run-file results/mbpp.jsonl --resume
 ```
 
+For a fast quality check, `--suite canary` runs a fixed 20-task HumanEval anchor
+subset instead of the full 164, scored identically, so it is comparable to a full
+run but finishes in a fraction of the generations:
+
+```bash
+uv run bench --suite canary --model openrouter-glm-4.6
+```
+
+For a stronger quality signal, the EvalPlus suites (`humaneval-plus`, `mbpp-plus`)
+score each task by differential testing: the candidate is run against the EvalPlus
+canonical solution across the union of base and plus inputs, which catches
+wrong-but-passing solutions that the vanilla suites accept. The EvalPlus release
+file is not auto-downloaded; place it in the cache dir first:
+
+```bash
+pip install evalplus
+python -c "from evalplus.data import get_human_eval_plus, write_jsonl; \
+write_jsonl('.cache/benchmarks/HumanEvalPlus.jsonl', list(get_human_eval_plus().values()))"
+
+uv run bench --suite humaneval-plus --model openrouter-glm-4.6 --timeout 30
+```
+
+Plus-input sets are large, so raise `--timeout` (per-task sandbox scoring timeout,
+default 5s) if tasks start timing out.
+
 ### Throughput: Concurrency And Token Caps
 
 Endpoint suite runs are governed by two per-model knobs in `configs/models.yaml`,
@@ -181,7 +206,7 @@ uv run bench --mode sweep --input results/sweep.jsonl
 Last automated verification: 2026-06-21.
 
 ```bash
-uv run pytest        # 75 passed, 87.29% coverage, 80% coverage gate reached
+uv run pytest        # 86 passed, 87.02% coverage, 80% coverage gate reached
 uv run ruff check .  # All checks passed
 ```
 

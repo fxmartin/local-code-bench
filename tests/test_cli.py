@@ -6,7 +6,7 @@ from importlib.metadata import version
 
 import pytest
 
-from local_code_bench.cli import main
+from local_code_bench.cli import build_parser, main
 from local_code_bench.config import AgentConfig, ModelConfig, TokenPrices
 from local_code_bench.metrics import StreamEvent
 from local_code_bench.results import append_jsonl, read_jsonl
@@ -21,6 +21,24 @@ def test_main_help_prints_usage(capsys) -> None:
 
     output = capsys.readouterr().out
     assert "usage: bench" in output
+
+
+def test_parser_accepts_canary_suite() -> None:
+    args = build_parser().parse_args(["--suite", "canary"])
+
+    assert args.suite == "canary"
+
+
+def test_parser_rejects_unknown_suite() -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--suite", "nope"])
+
+
+def test_parser_accepts_evalplus_suites_and_timeout() -> None:
+    args = build_parser().parse_args(["--suite", "humaneval-plus", "--timeout", "30"])
+
+    assert args.suite == "humaneval-plus"
+    assert args.timeout == 30.0
 
 
 def test_bench_help_entrypoint_exits_successfully() -> None:

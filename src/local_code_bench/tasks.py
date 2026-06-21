@@ -11,13 +11,50 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-SuiteName = Literal["humaneval", "mbpp"]
+SuiteName = Literal["humaneval", "mbpp", "humaneval-plus", "mbpp-plus"]
 
 HUMANEVAL_URL = (
     "https://raw.githubusercontent.com/openai/human-eval/master/data/HumanEval.jsonl.gz"
 )
 MBPP_URL = (
     "https://raw.githubusercontent.com/google-research/google-research/master/mbpp/sanitized-mbpp.json"
+)
+
+# EvalPlus releases are not auto-downloaded (the URL/version moves and the file is
+# large). Drop the release jsonl(.gz) into the cache dir under these names, or
+# export it from the `evalplus` package. See docs/EVALUATION-METHODOLOGY.md.
+EVALPLUS_FILENAMES: dict[str, tuple[str, ...]] = {
+    "humaneval-plus": ("HumanEvalPlus.jsonl.gz", "HumanEvalPlus.jsonl"),
+    "mbpp-plus": ("MbppPlus.jsonl.gz", "MbppPlus.jsonl"),
+}
+
+
+# Hand-curated anchor subset: a fixed, deterministic spread of HumanEval tasks
+# used by the `canary` suite for a fast "still usable?" quality signal instead of
+# the full 164-task pass. It is a pragmatic stand-in for a formal tinyBenchmarks /
+# IRT anchor set; regenerate it with item-response selection when that lands and
+# keep the IDs stable so historical canary runs stay comparable.
+CANARY_HUMANEVAL_IDS: tuple[str, ...] = (
+    "HumanEval/0",
+    "HumanEval/2",
+    "HumanEval/7",
+    "HumanEval/11",
+    "HumanEval/16",
+    "HumanEval/23",
+    "HumanEval/28",
+    "HumanEval/35",
+    "HumanEval/40",
+    "HumanEval/51",
+    "HumanEval/63",
+    "HumanEval/72",
+    "HumanEval/83",
+    "HumanEval/92",
+    "HumanEval/101",
+    "HumanEval/113",
+    "HumanEval/126",
+    "HumanEval/138",
+    "HumanEval/150",
+    "HumanEval/161",
 )
 
 
@@ -40,7 +77,148 @@ def load_suite(name: str, *, cache_dir: str | Path = ".cache/benchmarks") -> lis
         return load_humaneval(cache_dir=cache_dir)
     if name == "mbpp":
         return load_mbpp(cache_dir=cache_dir)
-    raise TaskLoadError(f"unknown suite '{name}'. Available suites: humaneval, mbpp")
+    if name == "canary":
+        return load_canary(cache_dir=cache_dir)
+    if name in EVALPLUS_FILENAMES:
+        return load_evalplus(name, cache_dir=cache_dir)
+    raise TaskLoadError(
+        f"unknown suite '{name}'. Available suites: "
+        "humaneval, mbpp, canary, humaneval-plus, mbpp-plus"
+    )
+
+
+def load_canary(*, cache_dir: str | Path = ".cache/benchmarks") -> list[BenchmarkTask]:
+    """Return the curated HumanEval anchor subset, in its fixed canonical order."""
+
+    by_id = {task.task_id: task for task in load_humaneval(cache_dir=cache_dir)}
+    missing = [task_id for task_id in CANARY_HUMANEVAL_IDS if task_id not in by_id]
+    if missing:
+        raise TaskLoadError(f"canary references unknown HumanEval tasks: {', '.join(missing)}")
+    return [by_id[task_id] for task_id in CANARY_HUMANEVAL_IDS]
+
+
+def load_evalplus(
+    name: str,
+    *,
+    cache_dir: str | Path = ".cache/benchmarks",
+    max_inputs: int | None = None,
+) -> list[BenchmarkTask]:
+    """Load an EvalPlus suite (HumanEval+ / MBPP+) from a cached release jsonl.
+
+    Each task is scored by differential testing: the candidate is compared against
+    the EvalPlus canonical solution across the union of base and plus inputs. The
+    file is not auto-downloaded; place it in ``cache_dir`` (see EVALPLUS_FILENAMES).
+    """
+
+    if name not in EVALPLUS_FILENAMES:
+        raise TaskLoadError(f"'{name}' is not an EvalPlus suite")
+    path = _find_cached(Path(cache_dir), EVALPLUS_FILENAMES[name])
+    if path is None:
+        wanted = " or ".join(EVALPLUS_FILENAMES[name])
+        raise TaskLoadError(
+            f"{name} requires a cached EvalPlus release file ({wanted}) in {cache_dir}. "
+            "Download it from the evalplus releases or export it with the evalplus package."
+        )
+    rows = _read_jsonl_any(path)
+    tasks = [_parse_evalplus(row, name, index, max_inputs) for index, row in enumerate(rows)]
+    if not tasks:
+        raise TaskLoadError(f"{name} cache {path} contained no tasks")
+    return tasks
+
+
+def _parse_evalplus(row: Any, name: str, index: int, max_inputs: int | None) -> BenchmarkTask:
+    if not isinstance(row, dict):
+        raise TaskLoadError(f"{name}[{index}] must be a mapping")
+    task_id = str(row.get("task_id") or f"{name}/{index}")
+    entry_point = row.get("entry_point")
+    if not isinstance(entry_point, str) or not entry_point:
+        raise TaskLoadError(f"{name} task {task_id} missing entry_point")
+    prompt = str(row.get("prompt", ""))
+    canonical = row.get("canonical_solution")
+    if not isinstance(canonical, str) or not canonical.strip():
+        raise TaskLoadError(f"{name} task {task_id} missing canonical_solution")
+    base_inputs = row.get("base_input") or []
+    plus_inputs = row.get("plus_input") or []
+    if not isinstance(base_inputs, list) or not isinstance(plus_inputs, list):
+        raise TaskLoadError(f"{name} task {task_id} base_input/plus_input must be lists")
+    inputs = [*base_inputs, *plus_inputs]
+    if max_inputs is not None:
+        inputs = inputs[:max_inputs]
+    if not inputs:
+        raise TaskLoadError(f"{name} task {task_id} has no test inputs")
+    atol = row.get("atol", 0)
+    atol = float(atol) if isinstance(atol, int | float) and not isinstance(atol, bool) else 0.0
+    return build_evalplus_task(
+        task_id=task_id,
+        suite=name,  # type: ignore[arg-type]
+        prompt=prompt,
+        canonical_solution=canonical,
+        entry_point=entry_point,
+        inputs=inputs,
+        atol=atol,
+    )
+
+
+def build_evalplus_task(
+    *,
+    task_id: str,
+    suite: SuiteName,
+    prompt: str,
+    canonical_solution: str,
+    entry_point: str,
+    inputs: list[Any],
+    atol: float = 0.0,
+) -> BenchmarkTask:
+    """Build a differential-testing BenchmarkTask from EvalPlus fields.
+
+    The generated test_code rebuilds the canonical reference in an isolated
+    namespace (so it cannot shadow the candidate), then asserts the candidate
+    matches the reference on every input, with float tolerance and deep-copied
+    arguments so in-place mutation cannot leak between the two calls.
+    """
+
+    test_code = (
+        "import copy\n"
+        "import math\n"
+        f"ENTRY = {entry_point!r}\n"
+        f"ATOL = {atol!r}\n"
+        f"PROMPT = {prompt!r}\n"
+        f"CANON = {canonical_solution!r}\n"
+        f"INPUTS = {inputs!r}\n"
+        "_refns = {}\n"
+        "try:\n"
+        "    exec(PROMPT + '\\n' + CANON, _refns)\n"
+        "    if ENTRY not in _refns:\n"
+        "        raise KeyError(ENTRY)\n"
+        "except Exception:\n"
+        "    _refns = {}\n"
+        "    exec(CANON, _refns)\n"
+        "_ref = _refns[ENTRY]\n"
+        "_cand = globals()[ENTRY]\n"
+        "def _eq(a, b):\n"
+        "    if isinstance(a, float) or isinstance(b, float):\n"
+        "        try:\n"
+        "            return math.isclose(a, b, rel_tol=1e-9, abs_tol=ATOL or 1e-9)\n"
+        "        except TypeError:\n"
+        "            return a == b\n"
+        "    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):\n"
+        "        return len(a) == len(b) and all(_eq(x, y) for x, y in zip(a, b))\n"
+        "    return a == b\n"
+        "for _args in INPUTS:\n"
+        "    _expected = _ref(*copy.deepcopy(_args))\n"
+        "    _actual = _cand(*copy.deepcopy(_args))\n"
+        "    assert _eq(_actual, _expected), (\n"
+        "        'evalplus mismatch on %r: got %r expected %r' % (_args, _actual, _expected)\n"
+        "    )\n"
+    )
+    return BenchmarkTask(
+        task_id=task_id,
+        suite=suite,
+        prompt=prompt,
+        test_code=test_code,
+        entry_point=entry_point,
+        version=f"{suite}-differential",
+    )
 
 
 def load_humaneval(*, cache_dir: str | Path = ".cache/benchmarks") -> list[BenchmarkTask]:
@@ -149,6 +327,21 @@ def _ensure_cached(cache_dir: Path, filename: str, url: str) -> Path:
     return path
 
 
+def _find_cached(cache_dir: Path, filenames: tuple[str, ...]) -> Path | None:
+    for filename in filenames:
+        path = cache_dir / filename
+        if path.exists():
+            return path
+    return None
+
+
 def _read_jsonl_gz(path: Path) -> list[dict[str, Any]]:
     with gzip.open(path, "rt", encoding="utf-8") as file:
+        return [json.loads(line) for line in file if line.strip()]
+
+
+def _read_jsonl_any(path: Path) -> list[dict[str, Any]]:
+    if path.suffix == ".gz":
+        return _read_jsonl_gz(path)
+    with path.open("rt", encoding="utf-8") as file:
         return [json.loads(line) for line in file if line.strip()]

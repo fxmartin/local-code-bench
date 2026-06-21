@@ -63,7 +63,11 @@ Use these instead of their traditional counterparts. They're installed and expec
 - **Agent mode**: Codex CLI via `codex exec`, run non-interactively in an isolated
   task workspace and scored with the same benchmark tests where practical.
 - **Correctness**: HumanEval + MBPP, **pass@1 at temperature 0**, scored against the
-  benchmark's own unit tests run in an isolated sandbox.
+  benchmark's own unit tests run in an isolated sandbox. `--suite canary` runs a fixed
+  HumanEval anchor subset (`CANARY_HUMANEVAL_IDS`) for a fast quality signal, scored
+  identically and comparable to a full run. `--suite humaneval-plus` / `mbpp-plus` run
+  the EvalPlus suites via differential testing against the canonical solution (needs a
+  cached EvalPlus release file; `--timeout` tunes the per-task scoring budget).
 - **Speed**: per-turn TTFT / prefill tok/s / decode tok/s / total latency from the stream.
 - **Throughput**: a full suite is generation-bound, so endpoint suite runs take two
   per-model knobs in `configs/models.yaml`. `concurrency` parallelizes requests for a

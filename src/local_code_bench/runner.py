@@ -63,6 +63,7 @@ def run_endpoint_suite(
     progress: Callable[[str], None] | None = None,
     max_tokens: int | None = None,
     concurrency_override: int | None = None,
+    timeout_seconds: float | None = None,
 ) -> dict[str, int]:
     model_list = list(models)
     task_list = list(tasks)
@@ -91,7 +92,9 @@ def run_endpoint_suite(
             for task in task_list:
                 if _skip_done(model, task, done, summary, state):
                     continue
-                record, summary_key, status = _execute_task(provider, model, task, model_max_tokens)
+                record, summary_key, status = _execute_task(
+                    provider, model, task, model_max_tokens, timeout_seconds
+                )
                 append_jsonl(result_path, record)
                 summary[summary_key] += 1
                 state.emit(model.name, task.task_id, status)
@@ -103,7 +106,9 @@ def run_endpoint_suite(
         # records and the summary need no extra locking.
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
             futures = {
-                pool.submit(_execute_task, provider, model, task, model_max_tokens): task
+                pool.submit(
+                    _execute_task, provider, model, task, model_max_tokens, timeout_seconds
+                ): task
                 for task in pending
             }
             for future in as_completed(futures):
@@ -120,6 +125,7 @@ def _execute_task(
     model: ModelConfig,
     task: BenchmarkTask,
     max_tokens: int | None,
+    timeout_seconds: float | None = None,
 ) -> tuple[dict[str, object], str, str]:
     try:
         measurement = capture_stream_metrics(
@@ -128,7 +134,10 @@ def _execute_task(
             ),
             task.prompt,
         )
-        score = score_completion(task, measurement.response)
+        if timeout_seconds is not None:
+            score = score_completion(task, measurement.response, timeout_seconds=timeout_seconds)
+        else:
+            score = score_completion(task, measurement.response)
         record = endpoint_record(model, task, measurement, score.passed, score.reason)
         return record, ("passed" if score.passed else "failed"), ("passed" if score.passed else "failed")
     except ProviderError as exc:

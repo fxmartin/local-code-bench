@@ -52,7 +52,14 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["endpoint", "agent", "sweep", "leaderboard", "rescore"],
         default="endpoint",
     )
-    parser.add_argument("--suite", choices=["humaneval", "mbpp"], help="benchmark suite to run")
+    parser.add_argument(
+        "--suite",
+        choices=["humaneval", "mbpp", "canary", "humaneval-plus", "mbpp-plus"],
+        help=(
+            "benchmark suite to run (canary = curated HumanEval anchor subset; "
+            "humaneval-plus/mbpp-plus = EvalPlus differential suites)"
+        ),
+    )
     parser.add_argument("--limit", type=int, help="limit benchmark tasks")
     parser.add_argument("--skip", help="comma-separated model names to skip")
     parser.add_argument(
@@ -64,6 +71,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-tokens",
         type=int,
         help="override generation cap for endpoint suite runs",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        help="per-task sandbox scoring timeout in seconds (raise for large EvalPlus input sets)",
     )
     parser.add_argument("--resume", action="store_true", help="resume an existing JSONL run")
     parser.add_argument("--run-file", help="explicit JSONL run file for suite/resume modes")
@@ -166,6 +178,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 progress=lambda message: print(message, flush=True),
                 max_tokens=args.max_tokens,
                 concurrency_override=args.concurrency,
+                timeout_seconds=args.timeout,
             )
             print(f"suite={args.suite} results={result_path} summary={summary}")
             return 0
