@@ -36,6 +36,24 @@ serving parameters. That matters because this harness needs to compare local
 models on both output quality and low-level throughput, including input token/s,
 output token/s, and prefill behavior.
 
+The local backend pair is intentionally not the same model served two ways. It
+tracks the two Apple Silicon strategies described in the reference articles:
+
+- **DFlash** serves `mlx-community/Qwen3.6-27B-4bit`, a dense 27B target with a
+  purpose-built `z-lab/Qwen3.6-27B-DFlash` draft model. DFlash is lossless
+  speculative decoding: the draft proposes tokens and the target verifies them,
+  so decode throughput improves without changing the target model's output.
+- **TurboQuant** serves `manjunathshiva/Qwen3.6-35B-A3B-tq3-g32`, a sparse MoE
+  with about 35B total parameters but far fewer active parameters per token.
+  The reference benchmark argues that this matters most for long agent prompts,
+  where prefill dominates the wait time and speculative decoding alone cannot
+  help as much.
+
+That makes the local comparison "dense 27B + speculative decoding" versus
+"sparse MoE + quantized serving," not a pure serving-runtime shootout. If a
+future experiment needs to isolate only the server implementation, add a separate
+same-model pair rather than replacing these article-aligned baselines.
+
 Ollama and LM Studio are useful general-purpose local model tools, but they are
 less suitable as the primary benchmark path here. They add product-level
 abstractions around model management and serving, can hide implementation
