@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.7.1 (2026-06-21)
+
+### Bug Fixes
+
+- Improve mbpp prompts and leaderboard counts
+  ([`72e6b66`](https://github.com/fxmartin/local-code-bench/commit/72e6b669e3c04ff900c41f50a39585121c12ec94))
+
+### Chores
+
+- Sync lockfile version
+  ([`acff9d6`](https://github.com/fxmartin/local-code-bench/commit/acff9d63e307d166389e0881aa1ff0f7f8bf3f11))
+
+
 ## v0.7.0 (2026-06-21)
 
 ### Features
