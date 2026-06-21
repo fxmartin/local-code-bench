@@ -2,6 +2,27 @@
 
 <!-- version list -->
 
+## v0.9.1 (2026-06-21)
+
+### Bug Fixes
+
+- Install uv inside release container
+  ([`dab50ac`](https://github.com/fxmartin/local-code-bench/commit/dab50ac11d7a1df033f7727989af099f990f8d55))
+
+- Keep uv lockfile synced in releases
+  ([`ff3046a`](https://github.com/fxmartin/local-code-bench/commit/ff3046ac98e882fab841cedf1db5f826fb5be743))
+
+### Chores
+
+- Sync lockfile version
+  ([`c1781d3`](https://github.com/fxmartin/local-code-bench/commit/c1781d3680b88c7733fa84f5d75bcc1953a6ced0))
+
+### Documentation
+
+- Track benchmark leaderboard
+  ([`a6b3a24`](https://github.com/fxmartin/local-code-bench/commit/a6b3a24835e6c4b039d3073b87d66b34a39b35a9))
+
+
 ## v0.9.0 (2026-06-21)
 
 ### Chores
