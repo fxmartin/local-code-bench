@@ -78,6 +78,10 @@ models:
     model_id: manjunathshiva/Qwen3.6-35B-A3B-tq3-g32
     pinned_revision: manual-2026-06-21
     concurrency: 1
+    # Qwen3.6 MoE reasons in code comments and can overrun the budget on tricky
+    # tasks (e.g. HumanEval/113). Raising the cap did not help and this server build
+    # ignores chat_template_kwargs.enable_thinking, so we accept it as a real finding
+    # rather than chase it. 2048 is enough for the tasks where it does terminate.
     max_tokens: 2048
     price_per_1k_tokens:
       input: 0.0
