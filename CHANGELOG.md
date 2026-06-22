@@ -2,6 +2,24 @@
 
 <!-- version list -->
 
+## v0.11.0 (2026-06-22)
+
+### Bug Fixes
+
+- Start sweeps from clean run files; surface power in sweep summary
+  ([`cd3cea3`](https://github.com/fxmartin/local-code-bench/commit/cd3cea38dddcd68537b923d98e70843697207c6a))
+
+### Documentation
+
+- Record DFlash vs TurboQuant three-axis finding
+  ([`f484f08`](https://github.com/fxmartin/local-code-bench/commit/f484f08531fb723e1ae2a96285c81c667b5a7244))
+
+### Features
+
+- Surface power/energy per model in the sweep summary
+  ([`be44716`](https://github.com/fxmartin/local-code-bench/commit/be447160b9dceb1a7c3af00c3e6d29b33c8c8d90))
+
+
 ## v0.10.0 (2026-06-21)
 
 ### Bug Fixes
