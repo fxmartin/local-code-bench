@@ -149,5 +149,6 @@ docs/STORIES.md (overview and navigation)
 - `AGENTS.md` — Codex project instructions
 - `PROJECT-SEED.md` — Project seed data for downstream skills
 - `LEADERBOARD.md` — Generated benchmark rankings (created by the harness)
+- `docs/FINDINGS.md` — Recorded benchmark findings (e.g. DFlash vs TurboQuant on M3 Max)
 - `articles/` — The two-part Medium series this project is modeled on (local Claude
   Code setup; MoE vs speculative decoding benchmark methodology)
