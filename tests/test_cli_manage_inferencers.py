@@ -7,7 +7,11 @@ manager is patched, so no server is launched.
 
 from __future__ import annotations
 
-from local_code_bench.cli import main
+import argparse
+
+import pytest
+
+from local_code_bench.cli import _make_inferencer_confirm, main
 from local_code_bench.config import InferencerConfig, ModelConfig, TokenPrices
 from local_code_bench.inferencers import manager
 from local_code_bench.tasks import BenchmarkTask
@@ -133,6 +137,175 @@ def test_unknown_declared_inferencer_errors(tmp_path, monkeypatch, capsys) -> No
             "--run-file",
             str(tmp_path / "r.jsonl"),
             "--manage-inferencers",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "bench: error:" in capsys.readouterr().err
+
+
+def _status(name: str) -> manager.InferencerStatus:
+    return manager.InferencerStatus(
+        name=name,
+        installed=True,
+        lifecycle="server",
+        running=True,
+        pid=123,
+        port=8000,
+        healthy=True,
+        detail="",
+    )
+
+
+def test_confirm_auto_approves_with_yes() -> None:
+    confirm = _make_inferencer_confirm(argparse.Namespace(yes=True))
+
+    # --yes approves without ever touching stdin.
+    assert confirm([_status("dflash")]) is True
+
+
+def test_confirm_declines_when_stdin_not_a_tty(monkeypatch) -> None:
+    confirm = _make_inferencer_confirm(argparse.Namespace(yes=False))
+    monkeypatch.setattr("local_code_bench.cli.sys.stdin.isatty", lambda: False)
+
+    # Unattended run: never silently force-stop a server it cannot prompt about.
+    assert confirm([_status("dflash")]) is False
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [("y", True), ("yes", True), (" Y ", True), ("n", False), ("", False)],
+)
+def test_confirm_prompts_when_interactive(monkeypatch, reply, expected) -> None:
+    confirm = _make_inferencer_confirm(argparse.Namespace(yes=False))
+    monkeypatch.setattr("local_code_bench.cli.sys.stdin.isatty", lambda: True)
+    prompts: list[str] = []
+
+    def fake_input(prompt: str) -> str:
+        prompts.append(prompt)
+        return reply
+
+    monkeypatch.setattr("builtins.input", fake_input)
+
+    assert confirm([_status("dflash"), _status("turboquant")]) is expected
+    # The prompt names the running engines it is about to stop.
+    assert "dflash, turboquant" in prompts[0]
+
+
+def test_sweep_flow_starts_declared_inferencer(tmp_path, monkeypatch, capsys) -> None:
+    model = _model(inferencer="dflash")
+    monkeypatch.setattr("local_code_bench.cli.load_models", lambda _path: {model.name: model})
+    monkeypatch.setattr(
+        "local_code_bench.cli.load_inferencers", lambda _path: {"dflash": _dflash_cfg()}
+    )
+    monkeypatch.setattr("local_code_bench.cli.run_sweep", lambda **_kwargs: "ok")
+
+    captured: dict[str, object] = {}
+
+    def fake_start_exclusive(target_cfg, configs, state_dir, **kwargs):
+        captured["target"] = target_cfg
+        # Exercise the injected progress callback so its output reaches the run log.
+        kwargs["progress"]("starting dflash")
+        return None
+
+    monkeypatch.setattr(manager, "start_exclusive", fake_start_exclusive)
+
+    exit_code = main(
+        [
+            "--mode",
+            "sweep",
+            "--model",
+            "local",
+            "--run-file",
+            str(tmp_path / "sweep.jsonl"),
+            "--manage-inferencers",
+            "--yes",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["target"].name == "dflash"
+    out = capsys.readouterr().out
+    assert "starting dflash" in out
+    assert "sweep=ok" in out
+
+
+def test_sweep_flow_with_custom_context_sizes_and_power(tmp_path, monkeypatch, capsys) -> None:
+    """The story wires inferencer management into the full sweep path.
+
+    Exercise that path end-to-end with explicit `--context-sizes` (custom parsing,
+    including a blank entry that is skipped) and `--power` so the power summary is
+    emitted alongside the started inferencer.
+    """
+
+    from local_code_bench.power import PowerSummary
+
+    model = _model(inferencer="dflash")
+    monkeypatch.setattr("local_code_bench.cli.load_models", lambda _path: {model.name: model})
+    monkeypatch.setattr(
+        "local_code_bench.cli.load_inferencers", lambda _path: {"dflash": _dflash_cfg()}
+    )
+    monkeypatch.setattr(manager, "start_exclusive", lambda *a, **k: None)
+
+    captured: dict[str, object] = {}
+
+    def fake_run_sweep(*, sizes, **_kwargs):
+        captured["sizes"] = sizes
+        return "ok"
+
+    monkeypatch.setattr("local_code_bench.cli.run_sweep", fake_run_sweep)
+    monkeypatch.setattr(
+        "local_code_bench.cli.PowerSampler.result",
+        lambda _self: PowerSummary(
+            available=True,
+            samples=3,
+            duration_s=1.0,
+            avg_gpu_w=10.0,
+            max_gpu_w=12.0,
+            avg_cpu_w=5.0,
+            avg_combined_w=15.0,
+            energy_j=15.0,
+        ),
+    )
+
+    exit_code = main(
+        [
+            "--mode",
+            "sweep",
+            "--model",
+            "local",
+            "--run-file",
+            str(tmp_path / "sweep.jsonl"),
+            "--manage-inferencers",
+            "--yes",
+            "--context-sizes",
+            "1024, ,2048",
+            "--power",
+        ]
+    )
+
+    assert exit_code == 0
+    # The blank entry is skipped; the two positive sizes survive.
+    assert captured["sizes"] == (1024, 2048)
+    out = capsys.readouterr().out
+    assert "power: avg_gpu=10.0W" in out
+
+
+def test_context_sizes_must_list_a_positive_integer(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "local_code_bench.cli.load_models", lambda _path: {"local": _model(inferencer=None)}
+    )
+
+    exit_code = main(
+        [
+            "--mode",
+            "sweep",
+            "--model",
+            "local",
+            "--run-file",
+            str(tmp_path / "sweep.jsonl"),
+            "--context-sizes",
+            " , ",
         ]
     )
 
