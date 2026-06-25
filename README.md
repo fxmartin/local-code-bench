@@ -199,6 +199,23 @@ a per-model power table (avg/max GPU watts, avg combined watts, energy in joules
 beneath the prefill table, so you see watts next to tok/s. Pair the energy figure
 with the token counts in the task records to derive tokens per joule.
 
+### Auto-Starting A Local Inferencer
+
+A local model may declare the inference engine it needs via an `inferencer:` field in
+`configs/models.yaml` (e.g. `local-dflash-qwen` declares `dflash`). By default the
+harness assumes that server is already running. Pass `--manage-inferencers` to have a
+suite or sweep run bring the declared engine up **exclusively** first — every other
+running headless server is stopped (after confirmation) so exactly one engine holds the
+GPU and the timing numbers stay valid:
+
+```bash
+uv run bench --suite canary --model local-dflash-qwen --manage-inferencers --yes
+```
+
+`--yes` auto-confirms stopping the other engines (a non-interactive shell defaults to
+*no*); `--force` permits starting past a running GUI app such as LM Studio (which is
+never force-quit). Without `--manage-inferencers` the run behaviour is unchanged.
+
 Use `OPENROUTER_API_KEY` for the OpenRouter entries and `ANTHROPIC_API_KEY` for
 the Anthropic baseline. API keys are read from the shell environment or a local
 `.env` file and are not written to result records. `.env` is gitignored.

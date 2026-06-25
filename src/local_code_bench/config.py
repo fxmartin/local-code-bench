@@ -33,6 +33,7 @@ class ModelConfig:
     concurrency: int = 1
     max_tokens: int | None = None
     extra_body: dict[str, Any] | None = None
+    inferencer: str | None = None
 
 
 AgentType = Literal["codex"]
@@ -229,6 +230,7 @@ def _parse_model(entry: Any, index: int) -> ModelConfig:
         concurrency=_optional_positive_int(entry, "concurrency", index, default=1),
         max_tokens=_optional_positive_int(entry, "max_tokens", index, default=None),
         extra_body=_optional_mapping(entry, "extra_body", index),
+        inferencer=_optional_str(entry, "inferencer", index),
     )
 
 

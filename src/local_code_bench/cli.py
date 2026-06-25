@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from local_code_bench.agents import completed_agent_pairs, run_codex_task
-from local_code_bench.config import ConfigError, ModelConfig, load_agents, load_models
+from local_code_bench.config import (
+    ConfigError,
+    ModelConfig,
+    load_agents,
+    load_inferencers,
+    load_models,
+)
+from local_code_bench.inferencers import manager
 from local_code_bench.inferencers.manager import InferencerError
 from local_code_bench.leaderboard import generate_leaderboard
 from local_code_bench.metrics import CompletionMeasurement, capture_stream_metrics
@@ -104,6 +111,31 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--agents-config", default="configs/agents.yaml", help="path to agents YAML")
     parser.add_argument("--input", nargs="*", help="input JSONL files for leaderboard/sweep summaries")
     parser.add_argument("--output", help="output file for generated leaderboard")
+    parser.add_argument(
+        "--manage-inferencers",
+        action="store_true",
+        help="auto-start the inferencer a selected model declares (exclusively) before the run",
+    )
+    parser.add_argument(
+        "--inferencers-config",
+        default="configs/inferencers.yaml",
+        help="path to inferencer registry YAML (used with --manage-inferencers)",
+    )
+    parser.add_argument(
+        "--inferencer-state-dir",
+        default=".runtime/inferencers",
+        help="directory holding inferencer process state files",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="auto-confirm stopping other engines when auto-starting an inferencer",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="permit auto-start past a running GUI app (never force-quits it)",
+    )
     return parser
 
 
@@ -155,6 +187,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             sweep_sizes = _parse_context_sizes(args.context_sizes) if args.context_sizes else CONTEXT_SIZES
             if args.model:
                 models = select_models(load_models(args.config), include=args.model, skip=args.skip)
+                _maybe_manage_inferencers(args, models)
                 result_path = (
                     Path(args.run_file) if args.run_file else new_run_path(args.results_dir, prefix="sweep")
                 )
@@ -200,6 +233,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.suite:
             models = select_models(load_models(args.config), include=args.model, skip=args.skip)
+            _maybe_manage_inferencers(args, models)
             tasks = limit_tasks(load_suite(args.suite, cache_dir=args.cache_dir), args.limit)
             result_path = Path(args.run_file) if args.run_file else new_run_path(args.results_dir, prefix=args.suite)
             with PowerSampler(enabled=args.power) as sampler:
@@ -218,7 +252,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"suite={args.suite} results={result_path} summary={summary}")
             return 0
 
-    except (ConfigError, ProviderError, TaskLoadError, ValueError) as exc:
+    except (ConfigError, ProviderError, TaskLoadError, InferencerError, ValueError) as exc:
         print(f"bench: error: {exc}", file=sys.stderr)
         return 2
 
@@ -337,6 +371,61 @@ def run_single_prompt(
         },
     )
     return result_path, measurement
+
+
+def _maybe_manage_inferencers(args: argparse.Namespace, models: list[ModelConfig]) -> None:
+    """Opt-in: bring up each selected model's declared inferencer exclusively.
+
+    Strictly gated on `--manage-inferencers`; without it the default "assume the
+    server is already up" path is untouched. The injected `confirm` reuses the same
+    mutual-exclusion rule as every other surface, so exactly one engine stays active.
+    """
+
+    if not args.manage_inferencers:
+        return
+
+    declared = [model for model in models if model.inferencer is not None]
+    if not declared:
+        return
+
+    configs = load_inferencers(args.inferencers_config)
+    confirm = _make_inferencer_confirm(args)
+    for model in declared:
+        if model.inferencer not in configs:
+            available = ", ".join(sorted(configs)) or "(none)"
+            raise ConfigError(
+                f"model '{model.name}' declares unknown inferencer "
+                f"'{model.inferencer}'. Available: {available}"
+            )
+        manager.start_exclusive(
+            configs[model.inferencer],
+            configs,
+            args.inferencer_state_dir,
+            confirm=confirm,
+            force=args.force,
+            progress=lambda message: print(message, flush=True),
+        )
+
+
+def _make_inferencer_confirm(
+    args: argparse.Namespace,
+) -> Callable[[list[manager.InferencerStatus]], bool]:
+    """Build the y/N confirmation used before stopping other engines.
+
+    `--yes` auto-confirms; a non-interactive stdin defaults to no so an unattended
+    run never silently force-stops a server it cannot prompt about.
+    """
+
+    def confirm(others: list[manager.InferencerStatus]) -> bool:
+        if args.yes:
+            return True
+        if not sys.stdin.isatty():
+            return False
+        names = ", ".join(status.name for status in others)
+        reply = input(f"Stop running engine(s) {names} to start exclusively? [y/N] ")
+        return reply.strip().lower() in {"y", "yes"}
+
+    return confirm
 
 
 def _parse_context_sizes(raw: str) -> tuple[int, ...]:

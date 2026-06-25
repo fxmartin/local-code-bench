@@ -65,6 +65,8 @@ models:
     model_id: mlx-community/Qwen3.6-27B-4bit
     pinned_revision: manual-2026-06-21
     concurrency: 1
+    # Declares the engine `--manage-inferencers` auto-starts (port 8000 = dflash).
+    inferencer: dflash
     # Qwen3.6 reasons inline (in code comments) and can overrun the 1024 default,
     # truncating the solution. 2048 gives it room. To go faster instead, try
     # disabling thinking via extra_body if the MLX server honors it.
@@ -78,6 +80,8 @@ models:
     model_id: manjunathshiva/Qwen3.6-35B-A3B-tq3-g32
     pinned_revision: manual-2026-06-21
     concurrency: 1
+    # Declares the engine `--manage-inferencers` auto-starts (port 8002 = turboquant).
+    inferencer: turboquant
     # Qwen3.6 MoE reasons in code comments and can overrun the budget on tricky
     # tasks (e.g. HumanEval/113). Raising the cap did not help and this server build
     # ignores chat_template_kwargs.enable_thinking, so we accept it as a real finding
