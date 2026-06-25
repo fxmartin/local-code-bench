@@ -22,6 +22,9 @@ results/
 *.bench.json
 .cache/
 
+# Inferencer lifecycle runtime state (PID/state files + captured logs)
+.runtime/
+
 # Environment & secrets (OpenRouter / API keys)
 .env
 .env.*

@@ -36,9 +36,9 @@
 **Technical Notes**: Add `InferencerConfig` (and a `Lifecycle = Literal["server", "app"]`) beside `ModelConfig`/`AgentConfig` in `src/local_code_bench/config.py`, with `load_inferencers(path) -> dict[str, InferencerConfig]` reusing `_required_str`/`_optional_str`/`_optional_positive_int`. `health_url` may contain `{port}`; resolve via a small helper. Detection lives in a new `src/local_code_bench/inferencers/detect.py` exposing `is_installed(cfg)` and `detect_all(configs)`; guard `find_spec` against `ImportError`/`ModuleNotFoundError` (broken namespace packages → not installed) and use a module-level `_app_dirs()` so tests can monkeypatch it. Seed `configs/inferencers.yaml` with 10 engines — headless `server`: dflash (`binary: dflash`, 8000), turboquant (`binary: turboquant-serve`, 8002), mlx-lm (`module: mlx_lm`, 8080), llama-cpp (`binary: llama-server`, 8081), ollama (`binary: ollama`, 11434, custom `stop: ["ollama","stop"]`), mlc-llm (`module: mlc_llm`, 8082), vllm-mlx (`module: vllm`, 8001 — off 8000 to avoid colliding with dflash), exo (`binary: exo`, 52415); detect-only `app`: lm-studio (`app: "LM Studio.app"`, 1234), gpt4all (`app: "GPT4All.app"`, 4891). Most health URLs are `http://127.0.0.1:{port}/v1/models`; ollama uses `/api/tags`. Unit-test with monkeypatched `shutil.which`/`find_spec`/`_app_dirs`, mirroring `tests/test_config.py`.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 01.1-002 (models.yaml + config loader), 01.2-003 (config validation patterns)
 **Risk Level**: Low
@@ -171,4 +171,4 @@
 **Risk Level**: Medium
 
 ## Epic Progress
-**Completed**: 0 / 6 stories · 0 / 22 points
+**Completed**: 1 / 6 stories · 3 / 22 points

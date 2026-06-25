@@ -49,6 +49,30 @@ class AgentConfig:
     profile: str | None = None
 
 
+Lifecycle = Literal["server", "app"]
+DetectKind = Literal["binary", "module", "app"]
+
+
+@dataclass(frozen=True)
+class InferencerConfig:
+    """A macOS inference engine the harness can detect and (for servers) manage."""
+
+    name: str
+    lifecycle: Lifecycle
+    detect_kind: DetectKind
+    detect_target: str
+    port: int
+    health_url: str
+    start: tuple[str, ...] | None = None
+    stop: tuple[str, ...] | None = None
+
+
+def resolve_health_url(cfg: InferencerConfig) -> str:
+    """Substitute `{port}` in an inferencer's health URL template."""
+
+    return cfg.health_url.format(port=cfg.port)
+
+
 def load_models(path: str | Path) -> dict[str, ModelConfig]:
     """Load and validate endpoint model configs from YAML."""
 
@@ -94,6 +118,88 @@ def load_agents(path: str | Path) -> dict[str, AgentConfig]:
             raise ConfigError(f"agents[{index}].name duplicates '{agent.name}'")
         agents[agent.name] = agent
     return agents
+
+
+def load_inferencers(path: str | Path) -> dict[str, InferencerConfig]:
+    """Load and validate inference-engine configs from YAML."""
+
+    config_path = Path(path)
+    try:
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ConfigError(f"inferencer config not found: {config_path}") from exc
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"invalid YAML in {config_path}: {exc}") from exc
+    if not isinstance(raw, dict) or not isinstance(raw.get("inferencers"), list):
+        raise ConfigError("inferencers.yaml field 'inferencers' must be a list")
+    inferencers: dict[str, InferencerConfig] = {}
+    for index, entry in enumerate(raw["inferencers"]):
+        inferencer = _parse_inferencer(entry, index)
+        if inferencer.name in inferencers:
+            raise ConfigError(f"inferencers[{index}].name duplicates '{inferencer.name}'")
+        inferencers[inferencer.name] = inferencer
+    return inferencers
+
+
+def _parse_inferencer(entry: Any, index: int) -> InferencerConfig:
+    if not isinstance(entry, dict):
+        raise ConfigError(f"inferencers[{index}] must be a mapping")
+
+    lifecycle = _required_str(entry, "lifecycle", index, root="inferencers")
+    if lifecycle not in {"server", "app"}:
+        raise ConfigError(f"inferencers[{index}].lifecycle must be 'server' or 'app'")
+
+    detect = entry.get("detect")
+    if not isinstance(detect, dict):
+        raise ConfigError(f"inferencers[{index}].detect must be a mapping")
+    kinds = [kind for kind in ("binary", "module", "app") if kind in detect]
+    if len(kinds) != 1:
+        raise ConfigError(
+            f"inferencers[{index}].detect must have exactly one of binary/module/app"
+        )
+    detect_kind = kinds[0]
+    detect_target = _required_str(detect, detect_kind, index, root="inferencers")
+
+    port = entry.get("port")
+    if isinstance(port, bool) or not isinstance(port, int) or port < 1:
+        raise ConfigError(f"inferencers[{index}].port must be a positive integer")
+
+    start = _optional_command(entry, "start", index)
+    stop = _optional_command(entry, "stop", index)
+    if lifecycle == "server" and start is None:
+        raise ConfigError(f"inferencers[{index}] server lifecycle requires a 'start' command")
+    if lifecycle == "app" and (start is not None or stop is not None):
+        raise ConfigError(f"inferencers[{index}] app lifecycle must not define start/stop")
+
+    return InferencerConfig(
+        name=_required_str(entry, "name", index, root="inferencers"),
+        lifecycle=lifecycle,  # type: ignore[arg-type]
+        detect_kind=detect_kind,  # type: ignore[arg-type]
+        detect_target=detect_target,
+        port=port,
+        health_url=_required_str(entry, "health_url", index, root="inferencers"),
+        start=start,
+        stop=stop,
+    )
+
+
+def _optional_command(
+    entry: dict[str, Any],
+    field: str,
+    index: int,
+) -> tuple[str, ...] | None:
+    value = entry.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, list) or not value:
+        raise ConfigError(
+            f"inferencers[{index}].{field} must be a non-empty list of strings when set"
+        )
+    if not all(isinstance(arg, str) and arg.strip() for arg in value):
+        raise ConfigError(
+            f"inferencers[{index}].{field} must be a non-empty list of strings when set"
+        )
+    return tuple(value)
 
 
 def _parse_model(entry: Any, index: int) -> ModelConfig:
