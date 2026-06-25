@@ -7,13 +7,14 @@
 **Success Metrics**: From one command FX can list which engines are installed, see which is running and healthy, start a chosen engine (being prompted to stop any others first), stop it cleanly, watch a live status table, browse and control the same state from a localhost web page, and run a benchmark that auto-starts exactly the engine its model declares — with the timing-integrity invariant (one active server) enforced in a single place regardless of entry surface.
 
 ## Epic Scope
-**Total Stories**: 6 | **Total Points**: 22 | **MVP Stories**: 0 (Should Have / v1.x)
+**Total Stories**: 7 | **Total Points**: 25 | **MVP Stories**: 0 (Should Have / v1.x)
 
 ## Decisions Locked With FX
 - **Form factor**: CLI manager core + localhost web view on top — one surface-agnostic library reused by both, not two implementations.
 - **Engine scope**: full lifecycle for the headless servers (DFlash, TurboQuant, MLX-LM, llama.cpp, Ollama, MLC-LLM, vLLM-mlx, Exo); **detect-only** status for the GUI apps (LM Studio, GPT4All), which cannot be cleanly started/stopped headlessly. DFlash and TurboQuant are the project's existing reference local backends, already configured in `configs/models.yaml` at ports 8000 and 8002.
 - **Benchmark link**: wired in (opt-in) — a model may declare the inferencer it needs and a run can auto-start it exclusively.
 - **GUI apps / Ollama daemon**: warn-and-refuse by default (never force-quit a user's GUI), with an explicit `--force` escape hatch.
+- **Manual installation only**: the harness **never installs, downloads, or auto-provisions** any inference engine. Detection stays strictly read-only (`shutil.which` / `find_spec` / `.app` presence); lifecycle covers only start/stop of engines FX has already installed by hand. Every inferencer therefore carries a reference `url` (official website or GitHub), and when an engine is not installed the harness points FX to that link rather than running any install command.
 
 ## Features in This Epic
 
@@ -172,7 +173,38 @@
 **Dependencies**: 08.3-001
 **Risk Level**: Medium
 
+### Feature 8.7: New Engine Onboarding
+
+#### Stories
+
+##### Story 08.7-001: Register MTPLX (native MTP) and add reference URLs with manual-install guidance
+**User Story**: As FX, I want MTPLX — the native Multi-Token-Prediction MLX runtime — registered as a manageable inferencer, and every engine to carry a website/GitHub link, so that I can benchmark MTP speculative decoding under the harness's controlled protocol while the harness only ever *detects* engines I have installed by hand and points me to each project's own install page.
+**Priority**: Should Have
+**Story Points**: 3
+
+**Context**: MTPLX (`github.com/youssofal/mtplx`) is an MLX-native MTP speculative-decoding runtime for Apple Silicon: a model drafts several tokens ahead with its own built-in MTP heads, verifies them in one batched forward pass, and keeps only what passes exact rejection sampling — no external drafter. It exposes an OpenAI- and Anthropic-compatible server (`mtplx serve --port <p>` → `/v1/models`, `/health`, `/v1/chat/completions`, `/v1/messages`), so it drops into the existing endpoint protocol exactly like dflash/turboquant. Public reports claim ~23% higher decode tok/s vs oMLX and up to 2.24× decode on Qwen 3.6 27B at coding temperatures; the harness exists precisely to validate such claims under fixed seed/temp, pinned revisions, and a one-active-server invariant rather than the uncontrolled side-by-side in the source video (`articles/MTPLX-vs-oMLX-MTP-transcript.md`). This story sits in the speculative-decoding-vs-MoE thesis as a third acceleration family alongside DFlash (spec decoding) and TurboQuant (MoE).
+
+**Acceptance Criteria**:
+- **Given** `configs/inferencers.yaml` **When** it is loaded **Then** it includes an `mtplx` entry: `lifecycle: server`, `detect: { binary: mtplx }`, `health_url: http://127.0.0.1:{port}/v1/models`, `start: ["mtplx", "serve", "--port", "<port>"]`, on a port that does **not** collide with an existing engine (MTPLX defaults to 8000, which dflash already owns — remap to **8003**).
+- **Given** the `InferencerConfig` schema **When** an entry is parsed **Then** it accepts an **optional `url`** field (official website or GitHub); a missing `url` is allowed (default none) and does not break loading, and every existing engine entry is backfilled with its reference link.
+- **Given** MTPLX is **not** installed on this machine **When** detection runs **Then** it reports not-installed (read-only `shutil.which`, no install attempted) and any surface that surfaces the result presents the engine's `url` as the place to install it manually.
+- **Given** `bench inferencer list` (and `status`) **When** run **Then** the per-engine `url` is shown, and the output makes clear the harness does not install engines — installation is manual, link-guided.
+- **Given** MTPLX is installed and started exclusively **When** a benchmark targets an MTPLX model **Then** the existing endpoint protocol measures it unchanged (TTFT / prefill / decode tok/s), at local `concurrency: 1`, scored by the same suite as any other local engine.
+- **Given** the model-artifact constraint **When** an MTPLX run is configured **Then** the harness documents that MTPLX requires its **own pre-built MTP models** (the `Youssofal` Hugging Face catalog: Qwen 3.5/3.6, Gemma 4) verified by `mtplx inspect`, so an MTPLX row in `configs/models.yaml` points at an MTPLX-specific repo and a strict same-artifact A/B against other engines is **not** claimed — the run metadata records the differing model build.
+- **Given** MTPLX's optional per-machine auto-tuning step **When** documented **Then** it is described as a **manual** pre-step FX runs once outside the harness (the harness neither triggers tuning nor depends on it).
+
+**Technical Notes**: Schema change is additive — add an `optional` `url: str | None` to `InferencerConfig`/`load_inferencers` in `config.py` via the existing `_optional_str` helper; no validation beyond "string if present". Backfill `url` on all current entries: dflash and turboquant → the reference Medium series in `articles/` (confirm canonical project links with FX before pinning), mlx-lm → `https://github.com/ml-explore/mlx-lm`, llama-cpp → `https://github.com/ggml-org/llama.cpp`, ollama → `https://ollama.com`, mlc-llm → `https://github.com/mlc-ai/mlc-llm`, vllm-mlx → `https://github.com/vllm-project/vllm`, exo → `https://github.com/exo-explore/exo`, lm-studio → `https://lmstudio.ai`, gpt4all → `https://github.com/nomic-ai/gpt4all`, mtplx → `https://github.com/youssofal/mtplx`. MTPLX is a `server`-lifecycle binary (`mtplx`), so it reuses the existing `manager.py` start/stop/health path with no new lifecycle code — only the registry row plus the `url` field and a list/status output tweak. Add an MTPLX model entry to `configs/models.yaml` (`inferencer: mtplx`, `concurrency: 1`, `cost: $0` local) pointing at a `Youssofal/...-MTPLX` repo. Extend the loader tests in `tests/test_config.py` for the new `url` field (present / absent) and the duplicate-port guard if one is added; assert detection stays read-only. No engine is installed in CI — detection is monkeypatched as in 08.1-001.
+
+**Definition of Done**:
+- [ ] Code implemented and peer reviewed
+- [ ] Tests written and passing
+- [ ] Documentation updated (manual-install note + per-engine links; MTPLX model-artifact + tuning caveat)
+
+**Dependencies**: 08.1-001 (registry + detection), 08.4-001 (`bench inferencer` CLI surface), 08.5-001 (model `inferencer` field for auto-start)
+**Risk Level**: Low
+
 ## Epic Progress
-**Completed**: 6 / 6 stories · 22 / 22 points
-- 08.1-001 ✅ · 08.2-001 ✅ · 08.3-001 ✅ · 08.4-001 ✅ · 08.5-001 ✅ · 08.6-001 ✅
+**Completed**: 6 / 7 stories · 22 / 25 points
+- 08.1-001 ✅ · 08.2-001 ✅ · 08.3-001 ✅ · 08.4-001 ✅ · 08.5-001 ✅ · 08.6-001 ✅ · 08.7-001 ⬜
 - 08.3-001 (exclusive start) was delivered as part of 08.4-001 (`start_exclusive`/`running_others` in `manager.py`, `tests/test_inferencers_exclusive.py`); its separately-built branch was redundant and dropped.
+- 08.7-001 (MTPLX + reference URLs) reopens the epic to onboard a new engine and codify the manual-install / link-only rule across the registry.

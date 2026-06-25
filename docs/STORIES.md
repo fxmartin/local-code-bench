@@ -30,10 +30,12 @@
 | Epic-05 | Sweep Mode & Run Control | Reproduce the prefill-vs-context thesis; resume runs | 3 | 9 | Should Have (v1.x) |
 | Epic-06 | Codex Agent Mode | Benchmark Codex CLI on the same task suites | 4 | 13 | Must Have (MVP) |
 | Epic-07 | Results Dashboard | Explore benchmark runs through static and live local dashboard views | 6 | 20 | Should Have (v2) |
-| Epic-08 | Inferencer Lifecycle Management | Detect/start/stop macOS inference engines with one-active mutual exclusion | 6 | 22 | Should Have (v1.x) |
+| Epic-08 | Inferencer Lifecycle Management | Detect/start/stop macOS inference engines with one-active mutual exclusion | 7 | 25 | Should Have (v1.x) |
 | Epic-09 | Unified Dashboard | One localhost surface to manage inferencers, browse results, launch model+inferencer+suite benchmarks, and chat-test models | 8 | 32 | Should Have (v1.x) |
 | Epic-10 (LLMBENCH-1) | OpenCode Local Coding Benchmark | Two-axis (coding vs rule-following) deterministic local benchmark with quant-source provenance | 5 | 21 | Should Have (v1.x) |
 | Epic-11 | Local Model Inventory & Sharing | Per-inferencer, format-aware view of downloaded models and detection of models several engines can share | 6 | 24 | Should Have (v1.x) |
+| Epic-12 | Tiered Model Storage (Local + External) | Two-tier model repository (internal disk + external SSD) with promote/demote, auto-tiering, and serve-from-external | 8 | 39 | Should Have (v1.x) |
+| Epic-13 | Context-Optimization Proxy Layer | Measure context-compression proxies (Headroom) as a bare-vs-proxied A/B treatment — tokens prefilled, latency, and correctness cost | 4 | 14 | Should Have (v2) |
 | NFR | Non-Functional Requirements | Accuracy, security, quality, portability, hardware fit | 5 | 12 | Mixed (SEC/QUAL = MVP) |
 
 ## Epic Navigation
@@ -49,6 +51,8 @@
 - **[Epic-09: Unified Dashboard](./stories/epic-09-unified-dashboard.md)** — one `bench dashboard` localhost surface composing Epic-07 results and Epic-08 inferencer control, plus a benchmark launcher (model + inferencer + suites), live run monitoring, a built-in/custom test-suite catalog, and a native streaming chat panel for smoke-testing models.
 - **[Epic-10: OpenCode Local Coding Benchmark](./stories/epic-10-opencode-local-benchmark.md)** (LLMBENCH-1) — `run-bench.sh` two-axis benchmark scoring open-ended coding (Go build + black-box tests) and strict rule-following (JSON map diff) on local models, with quant-source provenance and a comparable scorecard.
 - **[Epic-11: Local Model Inventory & Sharing](./stories/epic-11-local-model-inventory.md)** — per-inferencer, format-aware scanner of downloaded models (GGUF, Ollama blobs, HF/MLX caches, LM Studio/GPT4All dirs), normalized inventory records, shared-repository detection, CLI + dashboard inventory views, and a duplicate-download disk report.
+- **[Epic-12: Tiered Model Storage (Local + External)](./stories/epic-12-tiered-model-storage.md)** — external USB/Thunderbolt SSD as a second model repository with mount/availability detection, a tier-aware unified inventory built on Epic-11, integrity-checked promote/demote moves, disk-budget + LRU auto-tiering with pinning, serve-from-external (with auto-promote-before-benchmark for clean metrics), and CLI + dashboard tier surfaces.
+- **[Epic-13: Context-Optimization Proxy Layer](./stories/epic-13-context-optimization-proxy.md)** — `configs/optimizers.yaml` registry (detect-only, manual-install, link-guided) for OpenAI-compatible context-compression proxies, chained `proxy → inferencer` lifecycle, and a bare-vs-proxied A/B measurement treatment reporting tokens prefilled, latency, and correctness/task-success deltas; Headroom is the first proxy, scoped to agent mode.
 - **[Non-Functional Requirements](./stories/non-functional-requirements.md)** — performance, security, quality, integration, infrastructure.
 
 ## MVP Summary
@@ -71,8 +75,8 @@ v1 is "done" (per `REQUIREMENTS.md` §6) when one command runs the full HumanEva
 
 ## Project Metrics
 
-- **Total Stories**: 65
-- **Total Story Points**: 222
+- **Total Stories**: 73
+- **Total Story Points**: 261
 - **MVP Stories**: ~28 (Epics 01–04 + Epic-06 + NFR-SEC/QUAL)
 - **MVP Points**: ~88
 
@@ -102,6 +106,8 @@ graph TD
     E01 --> E10[Epic-10: OpenCode Local Benchmark]
     E08 --> E11[Epic-11: Local Model Inventory]
     E09 --> E11
+    E11 --> E12[Epic-12: Tiered Model Storage]
+    E09 --> E12
     NFR[NFR: Security/Sandbox] -.governs.-> E02
     NFR -.governs.-> E03
 ```
