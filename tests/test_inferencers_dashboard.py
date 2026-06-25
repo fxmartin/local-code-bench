@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import urllib.request
 
 import pytest
 
@@ -236,6 +238,27 @@ def test_stop_of_gui_target_is_refused(monkeypatch):
     assert "lm-studio" in payload["error"]
 
 
+def test_stop_unknown_engine_is_404(monkeypatch):
+    monkeypatch.setattr(manager, "stop", lambda cfg, state_dir: pytest.fail("nothing to stop"))
+
+    code, payload = dashboard.stop_action("nope", _configs(), ".runtime")
+
+    assert code == 404
+    assert "nope" in payload["error"]
+
+
+def test_stop_failure_surfaces_as_502(monkeypatch):
+    def _boom(cfg, state_dir):
+        raise InferencerError("could not terminate process")
+
+    monkeypatch.setattr(manager, "stop", _boom)
+
+    code, payload = dashboard.stop_action("dflash", _configs(), ".runtime")
+
+    assert code == 502
+    assert "terminate" in payload["error"]
+
+
 # ---------------------------------------------------------------------------
 # request routing
 # ---------------------------------------------------------------------------
@@ -326,3 +349,91 @@ def test_make_server_binds_localhost_only():
         assert server.server_address[0] == "127.0.0.1"
     finally:
         server.server_close()
+
+
+# ---------------------------------------------------------------------------
+# live HTTP roundtrip through the request handler
+# ---------------------------------------------------------------------------
+
+
+def test_handler_serves_real_get_and_post_over_http(monkeypatch):
+    monkeypatch.setattr(
+        manager, "status_all", lambda configs, state_dir: {"dflash": _status("dflash", running=True)}
+    )
+    stopped: list[str] = []
+    monkeypatch.setattr(manager, "stop", lambda cfg, state_dir: stopped.append(cfg.name))
+
+    server = dashboard.make_server(_configs(), ".runtime", port=0)
+    host, port = server.server_address
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = f"http://{host}:{port}"
+
+        with urllib.request.urlopen(f"{base}/api/status") as resp:
+            assert resp.status == 200
+            payload = json.loads(resp.read())
+        assert payload["inferencers"][0]["name"] == "dflash"
+
+        req = urllib.request.Request(f"{base}/api/stop?name=dflash", method="POST")
+        with urllib.request.urlopen(req) as resp:
+            assert resp.status == 200
+            assert json.loads(resp.read())["stopped"] == "dflash"
+        assert stopped == ["dflash"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+# ---------------------------------------------------------------------------
+# serve_dashboard lifecycle
+# ---------------------------------------------------------------------------
+
+
+class _FakeServer:
+    def __init__(self) -> None:
+        self.served = False
+        self.closed = False
+
+    def serve_forever(self) -> None:
+        self.served = True
+        raise KeyboardInterrupt
+
+    def server_close(self) -> None:
+        self.closed = True
+
+
+def test_serve_dashboard_loads_configs_reports_progress_and_closes(monkeypatch):
+    fake = _FakeServer()
+    seen: dict = {}
+    messages: list[str] = []
+
+    monkeypatch.setattr(dashboard, "load_inferencers", lambda path: seen.setdefault("path", path) or {})
+
+    def _make_server(configs, state_dir, *, host, port):
+        seen["host"] = host
+        seen["port"] = port
+        return fake
+
+    monkeypatch.setattr(dashboard, "make_server", _make_server)
+
+    dashboard.serve_dashboard(
+        "configs/inferencers.yaml", ".runtime", host="127.0.0.1", port=9999, progress=messages.append
+    )
+
+    assert seen["path"] == "configs/inferencers.yaml"
+    assert (seen["host"], seen["port"]) == ("127.0.0.1", 9999)
+    assert fake.served is True
+    assert fake.closed is True  # KeyboardInterrupt still runs the finally: server_close()
+    assert any("9999" in msg for msg in messages)
+
+
+def test_serve_dashboard_runs_without_progress_callback(monkeypatch):
+    fake = _FakeServer()
+    monkeypatch.setattr(dashboard, "load_inferencers", lambda path: {})
+    monkeypatch.setattr(dashboard, "make_server", lambda *a, **k: fake)
+
+    dashboard.serve_dashboard("configs/inferencers.yaml", ".runtime")
+
+    assert fake.closed is True
