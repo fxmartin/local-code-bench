@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.13.0 (2026-06-25)
+
+### Features
+
+- **inferencer-lifecycle**: Start, stop, and status with (#08.2-001)
+  ([`c0a58f3`](https://github.com/fxmartin/local-code-bench/commit/c0a58f37307e0165c3b6638636d634679d2bf879))
+
+### Testing
+
+- **inferencer-lifecycle**: Start, stop, and status with (#08.2-001)
+  ([`7b91749`](https://github.com/fxmartin/local-code-bench/commit/7b9174932629ed51d12698f6da6c0b71cfb139dd))
+
+
 ## v0.12.0 (2026-06-25)
 
 ### Documentation
