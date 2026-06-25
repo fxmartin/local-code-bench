@@ -280,3 +280,100 @@ def test_raw_response_preview_is_bounded() -> None:
 
     preview = agg.tasks[0].raw_response_preview
     assert len(preview) <= 512
+
+
+def test_unrecognized_run_mode_becomes_warning() -> None:
+    records = [
+        _endpoint_record(task_id="HumanEval/0", passed=True),
+        {"run_mode": "mystery", "model": "m1", "task_id": "HumanEval/3"},
+    ]
+
+    data = build_dashboard_data(records)
+
+    assert len(data.endpoint_models) == 1
+    assert len(data.warnings) == 1
+    assert "unrecognized run_mode" in data.warnings[0].message
+
+
+def test_sweep_record_missing_fields_becomes_warning() -> None:
+    records = [
+        {"run_mode": "sweep", "model": "m1"},  # missing context_tokens
+        {"run_mode": "sweep", "context_tokens": 2000},  # missing model
+        # context_tokens given as bool must not be accepted as an int.
+        {"run_mode": "sweep", "model": "m1", "context_tokens": True},
+    ]
+
+    data = build_dashboard_data(records)
+
+    assert data.sweep_points == ()
+    assert len(data.warnings) == 3
+    assert all("sweep record missing" in warning.message for warning in data.warnings)
+
+
+def test_missing_or_non_dict_metrics_yield_no_throughput() -> None:
+    records = [
+        _endpoint_record(task_id="HumanEval/0", metrics=None),
+        _endpoint_record(task_id="HumanEval/1", metrics="not-a-dict"),
+    ]
+
+    agg = build_dashboard_data(records).endpoint_models[0]
+
+    assert agg.median_ttft_seconds is None
+    assert agg.median_latency_seconds is None
+    assert agg.median_prefill_tokens_per_second is None
+    assert agg.median_decode_tokens_per_second is None
+    assert all(task.ttft_seconds is None for task in agg.tasks)
+
+
+def test_token_counts_handle_float_and_invalid_values() -> None:
+    records = [
+        # Float token counts are truncated to ints.
+        _endpoint_record(task_id="HumanEval/0", tokens={"prompt": 12.9, "completion": 4.1}),
+        # Non-numeric / missing token entries contribute zero.
+        _endpoint_record(task_id="HumanEval/1", tokens={"prompt": "oops"}),
+        _endpoint_record(task_id="HumanEval/2", tokens="not-a-dict"),
+    ]
+
+    agg = build_dashboard_data(records).endpoint_models[0]
+
+    # 12 (truncated) + 0 + 0; completion 4 + 0 + 0.
+    assert agg.total_prompt_tokens == 12
+    assert agg.total_completion_tokens == 4
+
+
+def test_non_numeric_and_boolean_cost_is_treated_as_zero() -> None:
+    records = [
+        _endpoint_record(task_id="HumanEval/0", cost_usd="free"),
+        _endpoint_record(task_id="HumanEval/1", cost_usd=True),
+    ]
+
+    agg = build_dashboard_data(records).endpoint_models[0]
+
+    assert agg.total_cost_usd == 0.0
+    assert agg.mean_cost_usd == 0.0
+    assert all(task.cost_usd == 0.0 for task in agg.tasks)
+
+
+def test_non_string_raw_response_previews_to_empty() -> None:
+    record = _endpoint_record(task_id="HumanEval/0", raw_response={"unexpected": "shape"})
+
+    agg = build_dashboard_data([record]).endpoint_models[0]
+
+    assert agg.tasks[0].raw_response_preview == ""
+
+
+def test_load_dashboard_data_skips_blank_lines_and_flags_non_object_lines(tmp_path) -> None:
+    path = tmp_path / "run.jsonl"
+    append_jsonl(path, _endpoint_record(task_id="HumanEval/0", passed=True))
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("\n")  # blank line is skipped silently
+        handle.write("   \n")  # whitespace-only line is skipped too
+        handle.write("[1, 2, 3]\n")  # valid JSON but not an object
+
+    data = load_dashboard_data([path])
+
+    assert data.endpoint_models[0].attempts == 1
+    assert len(data.warnings) == 1
+    warning = data.warnings[0]
+    assert "not a JSON object" in warning.message
+    assert warning.line == 4
