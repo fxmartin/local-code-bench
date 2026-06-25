@@ -5,6 +5,7 @@ import re
 from local_code_bench.dashboard_charts import (
     ChartPoint,
     OmittedPoint,
+    _scale,
     cost_quality_points,
     quality_speed_points,
     render_charts_section,
@@ -210,3 +211,42 @@ def test_render_charts_section_handles_single_flat_sweep_series() -> None:
     assert "<svg" in html_out
     assert "<polyline" not in html_out  # single point → no connecting line
     assert "m1" in html_out
+
+
+def test_render_charts_section_draws_polyline_for_multi_point_series() -> None:
+    # A model with two distinct context sizes draws a connecting polyline.
+    points = (
+        SweepPoint(
+            model="m1", context_tokens=1000, ttft_seconds=1.0, prefill_tokens_per_second=180.0
+        ),
+        SweepPoint(
+            model="m1", context_tokens=4000, ttft_seconds=1.0, prefill_tokens_per_second=120.0
+        ),
+    )
+
+    html_out = render_charts_section((), points)
+
+    assert "<polyline" in html_out  # >1 point per model → connecting line drawn
+
+
+def test_render_charts_section_handles_all_zero_sweep_throughput() -> None:
+    # When every plotted prefill value is zero, y_hi == y_lo and the renderer must
+    # widen the range instead of dividing by zero.
+    points = (
+        SweepPoint(
+            model="m1", context_tokens=1000, ttft_seconds=1.0, prefill_tokens_per_second=0.0
+        ),
+        SweepPoint(
+            model="m1", context_tokens=4000, ttft_seconds=1.0, prefill_tokens_per_second=0.0
+        ),
+    )
+
+    html_out = render_charts_section((), points)
+
+    assert "<svg" in html_out
+    assert "<polyline" in html_out
+
+
+def test_scale_returns_midpoint_for_degenerate_range() -> None:
+    # hi == lo cannot blow up the linear map; the midpoint is returned instead.
+    assert _scale(5.0, 5.0, 5.0, 0.0, 100.0) == 50.0
