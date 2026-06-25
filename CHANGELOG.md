@@ -2,6 +2,30 @@
 
 <!-- version list -->
 
+## v0.17.0 (2026-06-25)
+
+### Documentation
+
+- Add MTPLX + Headroom research transcripts and proxy epic
+  ([`2d508e1`](https://github.com/fxmartin/local-code-bench/commit/2d508e1c476245ae8686308d995980552a3a25c9))
+
+- Add roadmap inputs, article drafts, references, and epic-12 story
+  ([`827c70c`](https://github.com/fxmartin/local-code-bench/commit/827c70cfde51fb849d1e591fd7dc811685a9c0f8))
+
+- Mark story 08.3-001 done, epic-08 complete
+  ([`a390367`](https://github.com/fxmartin/local-code-bench/commit/a3903677b9b2ac7923e84600ebd5eedf0ab323c3))
+
+### Features
+
+- **results-dashboard**: Dashboard result aggregation model (#07.1-001)
+  ([`bf1747e`](https://github.com/fxmartin/local-code-bench/commit/bf1747ea07a75f0984cdba4db44134da56010bab))
+
+### Testing
+
+- **results-dashboard**: Dashboard result aggregation model (#07.1-001)
+  ([`e579690`](https://github.com/fxmartin/local-code-bench/commit/e57969090ac5af0301a8077df72db770392dcbfd))
+
+
 ## v0.16.0 (2026-06-25)
 
 ### Features
