@@ -28,10 +28,12 @@
 
 **Technical Notes**: Reuse the existing leaderboard and sweep parsing patterns where possible. Keep this as a pure Python transform with unit tests over fixture JSONL.
 
+**Implementation**: `src/local_code_bench/dashboard_model.py` exposes `build_dashboard_data(records)` (pure transform) and `load_dashboard_data(paths)` (tolerant JSONL reader). Endpoint results aggregate by `(model, suite)` with per-task drilldown; agent results aggregate by `(agent, suite)` in a separate type so wall-clock metrics never mix into endpoint throughput; sweep records become charting-ready `SweepPoint`s. Unreadable lines and unrecognized records surface as `DataQualityWarning`s instead of crashing. Latest record per task/context wins, matching leaderboard dedupe semantics.
+
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 01.2-003, 04.1-001, 05.1-002, 06.1-003
 **Risk Level**: Medium
@@ -152,4 +154,6 @@
 **Risk Level**: Medium
 
 ## Epic Progress
-**Completed**: 0 / 6 stories · 0 / 20 points
+**Completed**: 1 / 6 stories · 3 / 20 points
+
+- [x] 07.1-001 Dashboard result aggregation model (3 pts)
