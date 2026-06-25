@@ -1,0 +1,85 @@
+# Inference engines the harness can detect and (for `server` lifecycle) manage.
+#
+#   lifecycle  `server` = headless engine with a full start/stop lifecycle;
+#              `app`    = detect-only GUI app that must be managed from its own UI.
+#   detect     exactly one of binary / module / app:
+#                binary -> resolved with `shutil.which`
+#                module -> resolved with `importlib.util.find_spec`
+#                app    -> a macOS `.app` bundle under /Applications or ~/Applications
+#   port       the TCP port the OpenAI-compatible server listens on.
+#   health_url liveness probe; `{port}` is substituted at load time.
+#   start/stop argv lists. `server` entries require `start`; `app` entries must
+#              define neither (GUI apps are never started/stopped headlessly).
+inferencers:
+  # --- Headless servers (full lifecycle) ---------------------------------
+  - name: dflash
+    lifecycle: server
+    detect:
+      binary: dflash
+    port: 8000
+    health_url: http://127.0.0.1:{port}/v1/models
+    start: ["dflash", "serve"]
+  - name: turboquant
+    lifecycle: server
+    detect:
+      binary: turboquant-serve
+    port: 8002
+    health_url: http://127.0.0.1:{port}/v1/models
+    start: ["turboquant-serve"]
+  - name: mlx-lm
+    lifecycle: server
+    detect:
+      module: mlx_lm
+    port: 8080
+    health_url: http://127.0.0.1:{port}/v1/models
+    start: ["mlx_lm.server", "--port", "8080"]
+  - name: llama-cpp
+    lifecycle: server
+    detect:
+      binary: llama-server
+    port: 8081
+    health_url: http://127.0.0.1:{port}/v1/models
+    start: ["llama-server", "--port", "8081"]
+  - name: ollama
+    lifecycle: server
+    detect:
+      binary: ollama
+    port: 11434
+    health_url: http://127.0.0.1:{port}/api/tags
+    start: ["ollama", "serve"]
+    stop: ["ollama", "stop"]
+  - name: mlc-llm
+    lifecycle: server
+    detect:
+      module: mlc_llm
+    port: 8082
+    health_url: http://127.0.0.1:{port}/v1/models
+    start: ["mlc_llm", "serve", "--port", "8082"]
+  - name: vllm-mlx
+    lifecycle: server
+    detect:
+      module: vllm
+    # 8001 rather than 8000 to avoid colliding with dflash.
+    port: 8001
+    health_url: http://127.0.0.1:{port}/v1/models
+    start: ["vllm", "serve", "--port", "8001"]
+  - name: exo
+    lifecycle: server
+    detect:
+      binary: exo
+    port: 52415
+    health_url: http://127.0.0.1:{port}/v1/models
+    start: ["exo"]
+  # --- Detect-only GUI apps ----------------------------------------------
+  - name: lm-studio
+    lifecycle: app
+    detect:
+      app: "LM Studio.app"
+    port: 1234
+    health_url: http://127.0.0.1:{port}/v1/models
+  - name: gpt4all
+    lifecycle: app
+    detect:
+      app: "GPT4All.app"
+    port: 4891
+    health_url: http://127.0.0.1:{port}/v1/models
