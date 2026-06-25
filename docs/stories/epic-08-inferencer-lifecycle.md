@@ -62,9 +62,9 @@
 **Technical Notes**: New `src/local_code_bench/inferencers/manager.py` modeled on the `PowerSampler` subprocess pattern in `power.py` (Popen → terminate → kill → communicate-with-timeout, errors swallowed). Persist one JSON state file per started server under `.runtime/inferencers/<name>.json` (`{name,pid,port,started_at,command,health_url}`) plus a `<name>.log` for captured stdout/stderr; `.runtime/` is a sibling of `results/`/`.cache/` and must be added to `.gitignore`. Use `subprocess.Popen(..., start_new_session=True)` so SIGTERM reaches the whole group via `os.killpg`; use `os.kill(pid, 0)` for liveness. Health polling via `urllib`, swallowing `URLError`. Provide `status(cfg, state_dir)`, `status_all(configs, state_dir)`, `health_check(url, timeout)`, `start(...)`, `stop(...)`, an `InferencerStatus` dataclass (name, installed, lifecycle, running, pid, port, healthy, detail), and an `InferencerError(RuntimeError)`. Test with `subprocess.Popen`/`health_check`/`os.kill` monkeypatched to fakes, mirroring `tests/test_agents.py` — no real server launched.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 08.1-001
 **Risk Level**: Medium
@@ -171,4 +171,4 @@
 **Risk Level**: Medium
 
 ## Epic Progress
-**Completed**: 1 / 6 stories · 3 / 22 points
+**Completed**: 2 / 6 stories · 8 / 22 points
