@@ -270,6 +270,29 @@ uv run bench --mode sweep --model local-turboquant-qwen-moe --context-sizes 2000
 up one local server at a time (refusing to proceed if the other is still resident),
 sweeps it, then swaps. It honors `SWEEP_CONTEXT_SIZES` and `POWER=1`.
 
+## Results Dashboard
+
+Generate a self-contained static HTML dashboard from stored result JSONL. The
+output embeds its own CSS and dashboard data — no Node/Vite build step and no CDN
+fetches — so you can commit it to the repo and open it directly in a browser:
+
+```bash
+uv run python -m local_code_bench.dashboard --input results/run.jsonl --output docs/dashboard.html
+```
+
+Pass `--input` more than once to merge several result files into one view. The
+generator embeds only a curated set of aggregate fields (model/agent/suite names,
+pass rates, latency, TTFT, throughput, cost), and reduces data-quality warning
+sources to file basenames, so API keys, `.env` contents, raw secrets, and host
+paths never reach the committed artifact. The committed copy lives at
+[`docs/dashboard.html`](docs/dashboard.html) — open it directly in any browser (no
+server required) and regenerate it with the command above when results change. The
+default empty-state copy renders the dashboard shell until you regenerate it from
+your own runs (results JSONL is gitignored).
+
+> The integrated `bench --mode dashboard` command (with a live `--serve` option)
+> is delivered in story 07.2-002.
+
 ## Inferencer Lifecycle
 
 `bench inferencer` detects, inspects, and controls the local inference engines

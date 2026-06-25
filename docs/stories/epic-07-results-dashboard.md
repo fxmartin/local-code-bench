@@ -56,9 +56,9 @@
 **Technical Notes**: Python-only. Prefer a small HTML template rendered by Python over adding a frontend build chain. Use plain JavaScript only where it materially improves interactivity.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 07.1-001
 **Risk Level**: Medium
@@ -154,7 +154,8 @@
 **Risk Level**: Medium
 
 ## Epic Progress
-**Completed**: 2 / 6 stories · 8 / 20 points
+**Completed**: 3 / 6 stories · 13 / 20 points
 
 - [x] 07.1-001 Dashboard result aggregation model (3 pts)
+- [x] 07.2-001 Static HTML dashboard generator (5 pts)
 - [x] 07.3-001 Live results HTTP endpoints (5 pts)

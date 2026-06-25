@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>local-code-bench — Results Dashboard</title>
+<style>
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  margin: 0; padding: 2rem; line-height: 1.5; color: #1d1d1f; background: #f5f5f7;
+}
+h1 { margin: 0 0 0.25rem; font-size: 1.6rem; }
+h2 { margin: 2rem 0 0.75rem; font-size: 1.15rem; }
+.subtitle { color: #6e6e73; margin: 0 0 1.5rem; font-size: 0.9rem; }
+section { background: #fff; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid #e5e5ea; }
+th { font-weight: 600; color: #424245; white-space: nowrap; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.empty { color: #6e6e73; font-style: italic; padding: 0.5rem 0; }
+.warnings { background: #fff8e1; border: 1px solid #f0d98c; }
+.warnings li { color: #6b5900; }
+@media (prefers-color-scheme: dark) {
+  body { color: #f5f5f7; background: #1d1d1f; }
+  section { background: #2c2c2e; box-shadow: none; }
+  th { color: #aeaeb2; }
+  th, td { border-bottom-color: #3a3a3c; }
+  .warnings { background: #3a3320; border-color: #6b5900; }
+  .warnings li { color: #f0d98c; }
+}
+</style>
+</head>
+<body>
+<h1>local-code-bench — Results Dashboard</h1>
+<p class="subtitle">Self-contained benchmark dashboard generated from stored result JSONL. Open directly in a browser — no server required.</p>
+<section><h2>Endpoint Models</h2><table><thead><tr><th>Model</th><th>Suite</th><th class="num">pass@1</th><th class="num">Median Latency (s)</th><th class="num">Median TTFT (s)</th><th class="num">Prefill tok/s</th><th class="num">Decode tok/s</th><th class="num">$/task</th><th class="num">Infra Failures</th></tr></thead></table><p class="empty">No endpoint records found.</p></section>
+<section><h2>Agent Runs</h2><table><thead><tr><th>Agent</th><th>Suite</th><th class="num">pass@1</th><th class="num">Median Wall Time (s)</th><th>Sandbox</th><th class="num">Failures</th></tr></thead></table><p class="empty">No agent records found.</p></section>
+<section><h2>Sweep — Prefill vs Context</h2><table><thead><tr><th>Model</th><th class="num">Context Tokens</th><th class="num">TTFT (s)</th><th class="num">Prefill tok/s</th></tr></thead></table><p class="empty">No sweep records found.</p></section>
+<script id="dashboard-data" type="application/json">{"agent_runs":[],"endpoint_models":[],"sweep_points":[],"warnings":[]}</script>
+</body>
+</html>
