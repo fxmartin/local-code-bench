@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import threading
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -174,6 +175,31 @@ def test_handler_reflects_appended_records_over_http(tmp_path: Path) -> None:
         with urllib.request.urlopen(f"{base}/api/data") as resp:
             second = json.loads(resp.read())
         assert second["endpoint_models"][0]["attempts"] == 2
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_handler_rejects_post_over_http(tmp_path: Path) -> None:
+    # The read-only contract holds at the socket level: do_POST routes to a 404.
+    path = tmp_path / "run.jsonl"
+    append_jsonl(path, _endpoint_record("m1", "HumanEval/0", passed=True))
+
+    server = make_server([path], port=0)
+    host, port = server.server_address
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        request = urllib.request.Request(
+            f"http://{host}:{port}/api/data", data=b"{}", method="POST"
+        )
+        try:
+            urllib.request.urlopen(request)
+            raise AssertionError("expected HTTP 404 for POST")
+        except urllib.error.HTTPError as error:
+            assert error.code == 404
+            assert json.loads(error.read())["error"] == "not found"
     finally:
         server.shutdown()
         server.server_close()
