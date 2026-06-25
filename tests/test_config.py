@@ -93,6 +93,54 @@ models:
     assert models["local"].max_tokens is None
 
 
+def test_load_models_parses_optional_inferencer(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(
+        """
+models:
+  - name: local
+    type: openai
+    base_url: http://localhost:8000/v1
+    model_id: qwen-local
+    pinned_revision: abc123
+    inferencer: dflash
+    price_per_1k_tokens:
+      input: 0.0
+      output: 0.0
+  - name: cloud
+    type: openai
+    base_url: https://example.test/v1
+    model_id: qwen
+    pinned_revision: abc123
+    price_per_1k_tokens:
+      input: 0.01
+      output: 0.02
+""",
+        encoding="utf-8",
+    )
+
+    models = load_models(config_path)
+
+    # A model may declare the engine it needs; existing entries keep None.
+    assert models["local"].inferencer == "dflash"
+    assert models["cloud"].inferencer is None
+
+
+def test_default_models_inferencers_line_up_with_ports() -> None:
+    """The declared inferencer's port matches the model's base_url port (08.5 AC4)."""
+    from urllib.parse import urlparse
+
+    from local_code_bench.config import load_inferencers
+
+    models = load_models("configs/models.yaml")
+    inferencers = load_inferencers("configs/inferencers.yaml")
+
+    for model_name in ("local-dflash-qwen", "local-turboquant-qwen-moe"):
+        declared = models[model_name].inferencer
+        assert declared in inferencers, f"{model_name} declares unknown inferencer {declared!r}"
+        assert urlparse(models[model_name].base_url).port == inferencers[declared].port
+
+
 def test_load_models_parses_extra_body(tmp_path) -> None:
     config_path = tmp_path / "models.yaml"
     config_path.write_text(

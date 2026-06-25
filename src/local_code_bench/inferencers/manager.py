@@ -199,6 +199,58 @@ def stop(
     _remove_state(state_dir, cfg.name)
 
 
+def running_others(
+    target: str,
+    configs: dict[str, InferencerConfig],
+    state_dir: str | Path,
+) -> list[InferencerStatus]:
+    """Return the status of every engine other than `target` that is running now."""
+
+    statuses = status_all(configs, state_dir)
+    return [s for name, s in statuses.items() if name != target and s.running]
+
+
+def start_exclusive(
+    target_cfg: InferencerConfig,
+    configs: dict[str, InferencerConfig],
+    state_dir: str | Path,
+    *,
+    confirm: Callable[[list[InferencerStatus]], bool],
+    force: bool = False,
+    progress: Callable[[str], None] | None = None,
+    **start_kwargs: object,
+) -> InferencerStatus:
+    """Start `target_cfg` as the only running engine, enforcing one-active GPU use.
+
+    This is the single place the timing-integrity invariant lives, so every surface
+    (CLI, benchmark auto-start, web) reuses it. Running GUI (`app`) engines block the
+    start with a refusal unless `force` is set — they are never force-quit. Running
+    headless servers are presented to the injected `confirm`; a decline aborts with an
+    `InferencerError` and stops nothing, while an accept stops them before the target
+    starts.
+    """
+
+    others = running_others(target_cfg.name, configs, state_dir)
+    gui_running = [s for s in others if s.lifecycle == "app"]
+    if gui_running and not force:
+        names = ", ".join(s.name for s in gui_running)
+        raise InferencerError(
+            f"GUI app(s) running: {names}. Quit them from their own UI or pass force."
+        )
+
+    servers_running = [s for s in others if s.lifecycle == "server"]
+    if servers_running:
+        if not confirm(servers_running):
+            names = ", ".join(s.name for s in servers_running)
+            raise InferencerError(
+                f"exclusive start of {target_cfg.name} aborted: declined stopping {names}"
+            )
+        for server in servers_running:
+            stop(configs[server.name], state_dir, progress=progress)
+
+    return start(target_cfg, state_dir, progress=progress, **start_kwargs)  # type: ignore[arg-type]
+
+
 def _await_health(
     proc: subprocess.Popen,
     health_url: str,
