@@ -230,6 +230,89 @@ def test_load_inferencers_missing_file(tmp_path) -> None:
         load_inferencers(tmp_path / "nope.yaml")
 
 
+def test_load_inferencers_rejects_invalid_yaml(tmp_path) -> None:
+    path = _write(tmp_path, "inferencers: [unterminated\n")
+
+    with pytest.raises(ConfigError, match="invalid YAML"):
+        load_inferencers(path)
+
+
+def test_load_inferencers_rejects_non_list_root(tmp_path) -> None:
+    path = _write(tmp_path, "inferencers: not-a-list\n")
+
+    with pytest.raises(ConfigError, match="must be a list"):
+        load_inferencers(path)
+
+
+def test_load_inferencers_rejects_non_mapping_entry(tmp_path) -> None:
+    path = _write(
+        tmp_path,
+        """
+inferencers:
+  - just-a-string
+""",
+    )
+
+    with pytest.raises(ConfigError, match=r"inferencers\[0\] must be a mapping"):
+        load_inferencers(path)
+
+
+def test_load_inferencers_rejects_non_mapping_detect(tmp_path) -> None:
+    path = _write(
+        tmp_path,
+        """
+inferencers:
+  - name: dflash
+    lifecycle: server
+    detect: binary
+    port: 8000
+    health_url: http://127.0.0.1:{port}/v1/models
+    start: ["dflash", "serve"]
+""",
+    )
+
+    with pytest.raises(ConfigError, match=r"inferencers\[0\].detect must be a mapping"):
+        load_inferencers(path)
+
+
+def test_load_inferencers_rejects_non_list_start(tmp_path) -> None:
+    path = _write(
+        tmp_path,
+        """
+inferencers:
+  - name: dflash
+    lifecycle: server
+    detect:
+      binary: dflash
+    port: 8000
+    health_url: http://127.0.0.1:{port}/v1/models
+    start: dflash serve
+""",
+    )
+
+    with pytest.raises(ConfigError, match=r"start must be a non-empty list"):
+        load_inferencers(path)
+
+
+def test_load_inferencers_rejects_blank_start_arg(tmp_path) -> None:
+    path = _write(
+        tmp_path,
+        """
+inferencers:
+  - name: dflash
+    lifecycle: server
+    detect:
+      binary: dflash
+    port: 8000
+    health_url: http://127.0.0.1:{port}/v1/models
+    start: ["dflash", ""]
+""",
+    )
+
+    with pytest.raises(ConfigError, match=r"start must be a non-empty list"):
+        load_inferencers(path)
+
+
 def test_default_inferencers_config_loads() -> None:
     inferencers = load_inferencers("configs/inferencers.yaml")
 

@@ -66,6 +66,20 @@ def test_is_installed_app_not_installed_off_darwin(monkeypatch) -> None:
     assert detect.is_installed(_cfg("app", "LM Studio.app", lifecycle="app")) is False
 
 
+def test_app_dirs_returns_standard_application_roots() -> None:
+    dirs = detect._app_dirs()
+
+    assert Path("/Applications") in dirs
+    assert Path.home() / "Applications" in dirs
+
+
+def test_is_installed_unknown_kind_returns_false() -> None:
+    # A malformed config whose detect_kind is none of binary/module/app.
+    cfg = _cfg("mystery", "whatever")
+
+    assert detect.is_installed(cfg) is False
+
+
 def test_detect_all_maps_each_name(monkeypatch) -> None:
     monkeypatch.setattr(
         detect.shutil, "which", lambda name: "/bin/here" if name == "here" else None
