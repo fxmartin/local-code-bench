@@ -18,6 +18,7 @@ import html
 import json
 from pathlib import Path
 
+from local_code_bench.dashboard_charts import render_charts_section
 from local_code_bench.dashboard_model import (
     AgentAggregate,
     DashboardData,
@@ -164,6 +165,14 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .empty { color: #6e6e73; font-style: italic; padding: 0.5rem 0; }
 .warnings { background: #fff8e1; border: 1px solid #f0d98c; }
 .warnings li { color: #6b5900; }
+.chart-svg { width: 100%; max-width: 520px; height: auto; display: block; }
+.chart-svg .axis { stroke: #c7c7cc; stroke-width: 1; }
+.chart-svg .tick { fill: #6e6e73; font-size: 10px; }
+.chart-svg .axis-title { fill: #424245; font-size: 11px; }
+.chart-note { color: #6b5900; font-size: 0.85rem; margin: 0.5rem 0 0; }
+.legend { list-style: none; padding: 0; margin: 0.5rem 0 0; display: flex; flex-wrap: wrap;
+  gap: 0.25rem 1rem; font-size: 0.85rem; }
+.legend .swatch { margin-right: 0.35rem; }
 @media (prefers-color-scheme: dark) {
   body { color: #f5f5f7; background: #1d1d1f; }
   section { background: #2c2c2e; box-shadow: none; }
@@ -171,6 +180,10 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   th, td { border-bottom-color: #3a3a3c; }
   .warnings { background: #3a3320; border-color: #6b5900; }
   .warnings li { color: #f0d98c; }
+  .chart-svg .axis { stroke: #48484a; }
+  .chart-svg .tick { fill: #aeaeb2; }
+  .chart-svg .axis-title { fill: #d1d1d6; }
+  .chart-note { color: #f0d98c; }
 }
 """.strip()
 
@@ -184,6 +197,7 @@ def _render_html(data: DashboardData) -> str:
     sections = [
         _warnings_section(data.warnings),
         _endpoint_section(data.endpoint_models),
+        render_charts_section(data.endpoint_models, data.sweep_points),
         _agent_section(data.agent_runs),
         _sweep_section(data.sweep_points),
     ]

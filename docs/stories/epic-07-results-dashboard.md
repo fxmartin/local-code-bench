@@ -153,18 +153,21 @@ handler. The default path generates the static artifact via
 
 **Technical Notes**: Basic charts are enough for this epic. Use lightweight inlined JavaScript or simple SVG/canvas generated from the embedded data. Do not add matplotlib PNG generation unless the implementation clearly benefits from it.
 
+**Implementation**: `src/local_code_bench/dashboard_charts.py` renders three charts as inline SVG generated in Python from the dashboard aggregates: **Cost vs Quality** (mean cost per task vs pass@1) and **Quality vs Speed** (median prefill throughput vs pass@1) scatter charts over endpoint models, plus a **Sweep — Prefill Throughput by Context Size** line chart (one series per model). Point selection (`cost_quality_points` / `quality_speed_points` / `sweep_series`) is pure and unit-tested: a point is plotted only when its required metrics are present, and models/sweep observations with incomplete metrics are dropped and surfaced in a visible data-quality note rather than plotted as misleading zeros. No CDN, no JavaScript, no matplotlib — `dashboard.generate_dashboard` embeds the charts so the static artifact renders the same offline.
+
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 07.1-001, 07.2-001
 **Risk Level**: Medium
 
 ## Epic Progress
-**Completed**: 4 / 6 stories · 16 / 20 points
+**Completed**: 5 / 6 stories · 18 / 20 points
 
 - [x] 07.1-001 Dashboard result aggregation model (3 pts)
 - [x] 07.2-001 Static HTML dashboard generator (5 pts)
 - [x] 07.3-001 Live results HTTP endpoints (5 pts)
 - [x] 07.2-002 CLI dashboard mode (3 pts)
+- [x] 07.4-002 Basic tradeoff and sweep charts (2 pts)

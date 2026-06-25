@@ -299,7 +299,14 @@ Pass `--input` more than once to merge several result files into one view. The
 generator embeds only a curated set of aggregate fields (model/agent/suite names,
 pass rates, latency, TTFT, throughput, cost), and reduces data-quality warning
 sources to file basenames, so API keys, `.env` contents, raw secrets, and host
-paths never reach the committed artifact. The committed copy lives at
+paths never reach the committed artifact.
+
+Alongside the tables the dashboard renders three basic tradeoff charts —
+**Cost vs Quality**, **Quality vs Speed**, and **Sweep — Prefill Throughput by
+Context Size** — as inline SVG generated in Python from the embedded data, so they
+display offline with no CDN or JavaScript. Models or sweep points missing a charted
+metric are omitted with a visible data-quality note rather than plotted as
+misleading zeros. The committed copy lives at
 [`docs/dashboard.html`](docs/dashboard.html) — open it directly in any browser (no
 server required) and regenerate it with the command above when results change. The
 default empty-state copy renders the dashboard shell until you regenerate it from

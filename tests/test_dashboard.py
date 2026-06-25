@@ -98,6 +98,59 @@ def test_generate_dashboard_writes_self_contained_html(tmp_path) -> None:
     assert "codex" in content
 
 
+def test_generate_dashboard_includes_offline_tradeoff_and_sweep_charts(tmp_path) -> None:
+    path = tmp_path / "run.jsonl"
+    _seed_records(path)
+    output = tmp_path / "dashboard.html"
+
+    content = generate_dashboard([path], output)
+
+    # All three story-07.4-002 charts are present.
+    assert "Cost vs Quality" in content
+    assert "Quality vs Speed" in content
+    assert "Sweep — Prefill Throughput by Context Size" in content
+    # Rendered as inline SVG, generated offline — no CDN / external script fetch.
+    assert "<svg" in content
+    assert not re.search(r"<script[^>]+src=", content)
+    assert not re.search(r'(href|src)\s*=\s*["\']https?://', content)
+
+
+def test_generate_dashboard_charts_omit_models_with_incomplete_metrics(tmp_path) -> None:
+    path = tmp_path / "run.jsonl"
+    # A second model with no prefill throughput must be omitted from the speed
+    # chart with a visible note rather than plotted as a misleading zero.
+    append_jsonl(
+        path,
+        {
+            "run_mode": "endpoint",
+            "model": "with-speed",
+            "suite": "humaneval",
+            "task_id": "t0",
+            "passed": True,
+            "cost_usd": 0.01,
+            "metrics": {"prefill_tokens_per_second": 150.0, "latency_seconds": 1.0},
+        },
+    )
+    append_jsonl(
+        path,
+        {
+            "run_mode": "endpoint",
+            "model": "no-speed",
+            "suite": "humaneval",
+            "task_id": "t0",
+            "passed": True,
+            "cost_usd": 0.01,
+            "metrics": {"latency_seconds": 1.0},
+        },
+    )
+    output = tmp_path / "dashboard.html"
+
+    content = generate_dashboard([path], output)
+
+    assert "chart-note" in content
+    assert "no-speed" in content
+
+
 def test_generate_dashboard_omits_secrets_and_host_paths(tmp_path) -> None:
     path = tmp_path / "run.jsonl"
     append_jsonl(
