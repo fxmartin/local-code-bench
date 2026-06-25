@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.20.0 (2026-06-25)
+
+### Features
+
+- **results-dashboard**: Cli dashboard mode (#07.2-002)
+  ([`67b5756`](https://github.com/fxmartin/local-code-bench/commit/67b57568aa74007ae47b18abf9065cbadccf05c5))
+
+### Testing
+
+- **results-dashboard**: Cli dashboard mode (#07.2-002)
+  ([`a01c69f`](https://github.com/fxmartin/local-code-bench/commit/a01c69fd6dce2ed6c26eb729afbacf52f1a07d93))
+
+
 ## v0.19.0 (2026-06-25)
 
 ### Features
