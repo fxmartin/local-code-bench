@@ -152,6 +152,63 @@ def test_generate_dashboard_handles_empty_inputs(tmp_path) -> None:
     assert "<table" in content
 
 
+def test_generate_dashboard_escapes_html_metacharacters_in_cells(tmp_path) -> None:
+    path = tmp_path / "run.jsonl"
+    append_jsonl(
+        path,
+        {
+            "run_mode": "endpoint",
+            "model": "<script>alert(1)</script>",
+            "suite": "a&b",
+            "task_id": "HumanEval/0",
+            "passed": True,
+            "metrics": {"latency_seconds": 1.0},
+        },
+    )
+    output = tmp_path / "dashboard.html"
+
+    content = generate_dashboard([path], output)
+
+    # The model name must never reach the rendered table as live markup.
+    assert "<script>alert(1)</script>" not in content
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in content
+    # Ampersands in cell text are entity-encoded, not left raw.
+    assert "<td>a&amp;b</td>" in content
+
+
+def test_generate_dashboard_escapes_script_close_in_embedded_json(tmp_path) -> None:
+    path = tmp_path / "run.jsonl"
+    append_jsonl(
+        path,
+        {
+            "run_mode": "endpoint",
+            "model": "m</script><script>evil()</script>",
+            "suite": "humaneval",
+            "task_id": "HumanEval/0",
+            "passed": True,
+            "metrics": {"latency_seconds": 1.0},
+        },
+    )
+    output = tmp_path / "dashboard.html"
+
+    content = generate_dashboard([path], output)
+
+    # The embedded JSON must not contain a literal closing </script> that would
+    # prematurely terminate the data <script> element.
+    match = re.search(
+        r'<script id="dashboard-data" type="application/json">(.*?)</script>',
+        content,
+        re.DOTALL,
+    )
+    assert match is not None
+    embedded_raw = match.group(1)
+    assert "</script>" not in embedded_raw
+    assert "<\\/script>" in embedded_raw
+    # Round-trips back to the original value once the escape is reversed.
+    embedded = json.loads(embedded_raw.replace("<\\/", "</"))
+    assert embedded["endpoint_models"][0]["model"] == "m</script><script>evil()</script>"
+
+
 def test_main_writes_dashboard_from_cli_args(tmp_path, capsys) -> None:
     path = tmp_path / "run.jsonl"
     _seed_records(path)
