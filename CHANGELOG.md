@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.22.0 (2026-06-25)
+
+### Features
+
+- **results-dashboard**: Leaderboard, run history, and (#07.4-001)
+  ([`fc5c795`](https://github.com/fxmartin/local-code-bench/commit/fc5c79535a7ffbbf7791ea7d2e9cc1a1064f42d5))
+
+
 ## v0.21.0 (2026-06-25)
 
 ### Features
