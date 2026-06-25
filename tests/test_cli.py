@@ -394,6 +394,45 @@ def test_dashboard_mode_without_input_errors(capsys) -> None:
     assert "requires --input" in capsys.readouterr().err
 
 
+def test_dashboard_mode_serve_honors_custom_host(tmp_path, monkeypatch, capsys) -> None:
+    input_path = tmp_path / "endpoint.jsonl"
+    captured: dict = {}
+
+    def fake_serve(paths, *, host, port, progress):
+        captured.update(host=host, port=port)
+        progress(f"results dashboard on http://{host}:{port}")
+
+    monkeypatch.setattr("local_code_bench.dashboard_server.serve_dashboard", fake_serve)
+
+    exit_code = main(
+        ["--mode", "dashboard", "--input", str(input_path), "--serve", "--host", "0.0.0.0"]
+    )
+
+    assert exit_code == 0
+    assert captured["host"] == "0.0.0.0"
+    assert captured["port"] == 8770
+    assert "http://0.0.0.0:8770" in capsys.readouterr().out
+
+
+def test_dashboard_mode_passes_multiple_inputs(tmp_path, monkeypatch) -> None:
+    first = tmp_path / "endpoint.jsonl"
+    second = tmp_path / "agent.jsonl"
+    captured: dict = {}
+
+    def fake_generate(paths, output):
+        captured.update(paths=paths, output=output)
+        return "<html></html>"
+
+    monkeypatch.setattr("local_code_bench.dashboard.generate_dashboard", fake_generate)
+
+    exit_code = main(
+        ["--mode", "dashboard", "--input", str(first), str(second)]
+    )
+
+    assert exit_code == 0
+    assert captured["paths"] == [first, second]
+
+
 # --- argument validation -----------------------------------------------------
 
 
