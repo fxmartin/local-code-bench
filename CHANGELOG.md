@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.15.0 (2026-06-25)
+
+### Features
+
+- **inferencer-lifecycle**: Auto-start the inferencer a (#08.5-001)
+  ([`57a7c13`](https://github.com/fxmartin/local-code-bench/commit/57a7c13b8bc50a875a5c92824116187f0a5d111f))
+
+### Testing
+
+- **inferencer-lifecycle**: Auto-start the inferencer a (#08.5-001)
+  ([`f8ba2d2`](https://github.com/fxmartin/local-code-bench/commit/f8ba2d24f6183504bca93b1d6900986f8178444e))
+
+
 ## v0.14.0 (2026-06-25)
 
 ### Features
