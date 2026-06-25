@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.21.0 (2026-06-25)
+
+### Features
+
+- **results-dashboard**: Basic tradeoff and sweep charts (#07.4-002)
+  ([`627bf11`](https://github.com/fxmartin/local-code-bench/commit/627bf11854f4029b1639c56d2cebae755e705f3a))
+
+### Testing
+
+- **results-dashboard**: Basic tradeoff and sweep charts (#07.4-002)
+  ([`127724c`](https://github.com/fxmartin/local-code-bench/commit/127724c7f2f3eee78e8046e8fba80ad66cc6bebc))
+
+
 ## v0.20.0 (2026-06-25)
 
 ### Features
