@@ -98,12 +98,12 @@
 - **Given** missing, malformed, or partially written JSONL lines **When** the endpoint is requested **Then** the response includes data-quality warnings and still returns valid aggregates from readable records.
 - **Given** the server is running **When** accessed from a browser on the same machine **Then** it serves only local dashboard assets and result-derived JSON.
 
-**Technical Notes**: Python standard library HTTP server is acceptable for the first version. No authentication is required if the server binds to localhost only.
+**Technical Notes**: Python standard library HTTP server is acceptable for the first version. No authentication is required if the server binds to localhost only. Implemented in `src/local_code_bench/dashboard_server.py` as `serve_dashboard(paths, ...)`: a localhost-bound `http.server` whose handler holds only the result-file paths and rebuilds aggregates on every `GET /api/data` request, so appended records appear on refresh without a restart. Aggregation and tolerant JSONL reading (malformed/partial lines become data-quality warnings) are delegated to `dashboard_model.load_dashboard_data` (07.1-001) so the live view shares one interpretation with the static artifact. The two read-only routes (`GET /` page, `GET /api/data` JSON) are all the server exposes; CLI wiring lands with story 07.2-002.
 
 **Definition of Done**:
 - [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 07.1-001
 **Risk Level**: Medium
@@ -154,6 +154,7 @@
 **Risk Level**: Medium
 
 ## Epic Progress
-**Completed**: 1 / 6 stories · 3 / 20 points
+**Completed**: 2 / 6 stories · 8 / 20 points
 
 - [x] 07.1-001 Dashboard result aggregation model (3 pts)
+- [x] 07.3-001 Live results HTTP endpoints (5 pts)
