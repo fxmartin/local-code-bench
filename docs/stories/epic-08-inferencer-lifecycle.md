@@ -173,5 +173,6 @@
 **Risk Level**: Medium
 
 ## Epic Progress
-**Completed**: 5 / 6 stories · 19 / 22 points
-- 08.1-001 ✅ · 08.2-001 ✅ · 08.4-001 ✅ · 08.5-001 ✅ · 08.6-001 ✅ (08.3-001 mutual-exclusion core landed with 08.4-001)
+**Completed**: 6 / 6 stories · 22 / 22 points
+- 08.1-001 ✅ · 08.2-001 ✅ · 08.3-001 ✅ · 08.4-001 ✅ · 08.5-001 ✅ · 08.6-001 ✅
+- 08.3-001 (exclusive start) was delivered as part of 08.4-001 (`start_exclusive`/`running_others` in `manager.py`, `tests/test_inferencers_exclusive.py`); its separately-built branch was redundant and dropped.
