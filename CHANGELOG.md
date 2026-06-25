@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.19.0 (2026-06-25)
+
+### Features
+
+- **results-dashboard**: Static html dashboard generator (#07.2-001)
+  ([`62ab4aa`](https://github.com/fxmartin/local-code-bench/commit/62ab4aa9642e2749fb8ed2918ab075156ae8110c))
+
+### Testing
+
+- **results-dashboard**: Static html dashboard generator (#07.2-001)
+  ([`dd420e9`](https://github.com/fxmartin/local-code-bench/commit/dd420e9581453073a26ccedbb9e8b7ca07f91dd8))
+
+
 ## v0.18.0 (2026-06-25)
 
 ### Features
