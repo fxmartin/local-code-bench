@@ -274,3 +274,37 @@ def test_single_prompt_mode_streams_and_writes_result(tmp_path, monkeypatch, cap
     assert records[0]["raw_response"] == "world"
     assert records[0]["tokens"] == {"prompt": 1, "completion": 1, "estimated": False}
     assert "model=m prompt_tokens=1 completion_tokens=1" in capsys.readouterr().out
+
+
+def test_inferencer_dashboard_command_invokes_server(monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_serve(config, state_dir, *, host, port, progress) -> None:
+        captured.update(config=config, state_dir=state_dir, host=host, port=port)
+
+    monkeypatch.setattr(
+        "local_code_bench.inferencers.dashboard.serve_dashboard", fake_serve
+    )
+
+    exit_code = main(["inferencer", "dashboard", "--port", "9000", "--config", "x.yaml"])
+
+    assert exit_code == 0
+    assert captured["port"] == 9000
+    assert captured["config"] == "x.yaml"
+    assert captured["host"] == "127.0.0.1"
+
+
+def test_inferencer_dashboard_config_error_exits_2(monkeypatch, capsys) -> None:
+    from local_code_bench.config import ConfigError
+
+    def boom(*_args, **_kwargs) -> None:
+        raise ConfigError("inferencer config not found: missing.yaml")
+
+    monkeypatch.setattr(
+        "local_code_bench.inferencers.dashboard.serve_dashboard", boom
+    )
+
+    exit_code = main(["inferencer", "dashboard"])
+
+    assert exit_code == 2
+    assert "bench: error:" in capsys.readouterr().err

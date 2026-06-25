@@ -163,12 +163,12 @@
 **Technical Notes**: New `src/local_code_bench/inferencers/dashboard.py` using the Python stdlib `http.server` bound to localhost, reusing `manager.py` so no business logic is duplicated. The two-step `409 {needs_confirmation, others}` → confirm modal → `POST ...&confirm=1` is the web realization of the injected `confirm` contract from 08.3-001 (web supplies `confirm=lambda _: True`). Reuse the stdlib-server pattern planned in Epic-07's live-results story (07.3-001) rather than coupling to it. Expose it via `bench inferencer dashboard [--port 8765]`. Test by driving the handler with a fake request and asserting `/api/status` JSON plus the 409→confirm→start sequence.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 08.3-001
 **Risk Level**: Medium
 
 ## Epic Progress
-**Completed**: 2 / 6 stories · 8 / 22 points
+**Completed**: 3 / 6 stories · 13 / 22 points

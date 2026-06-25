@@ -9,6 +9,7 @@ from pathlib import Path
 
 from local_code_bench.agents import completed_agent_pairs, run_codex_task
 from local_code_bench.config import ConfigError, ModelConfig, load_agents, load_models
+from local_code_bench.inferencers.manager import InferencerError
 from local_code_bench.leaderboard import generate_leaderboard
 from local_code_bench.metrics import CompletionMeasurement, capture_stream_metrics
 from local_code_bench.power import PowerSampler
@@ -107,6 +108,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    argv_list = list(sys.argv[1:] if argv is None else argv)
+    if argv_list and argv_list[0] == "inferencer":
+        return run_inferencer_command(argv_list[1:])
+
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -245,6 +250,46 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     parser.print_help()
+    return 0
+
+
+def run_inferencer_command(argv: Sequence[str]) -> int:
+    """Dispatch `bench inferencer <subcommand>` (currently `dashboard`).
+
+    Branched ahead of the flat `--mode` flow so every existing benchmark command
+    stays backward compatible. Config/lifecycle failures print `bench: error: ...`
+    to stderr and exit 2, consistent with the rest of the CLI.
+    """
+
+    parser = argparse.ArgumentParser(prog="bench inferencer")
+    sub = parser.add_subparsers(dest="command", required=True)
+    dashboard_parser = sub.add_parser("dashboard", help="serve the localhost web control panel")
+    dashboard_parser.add_argument(
+        "--config", default="configs/inferencers.yaml", help="path to inferencer YAML config"
+    )
+    dashboard_parser.add_argument(
+        "--state-dir", default=".runtime/inferencers", help="directory for persisted server state"
+    )
+    dashboard_parser.add_argument("--host", default="127.0.0.1", help="bind host (localhost only)")
+    dashboard_parser.add_argument("--port", type=int, default=8765, help="bind port")
+    args = parser.parse_args(argv)
+
+    if args.command == "dashboard":
+        from local_code_bench.inferencers.dashboard import serve_dashboard
+
+        try:
+            serve_dashboard(
+                args.config,
+                args.state_dir,
+                host=args.host,
+                port=args.port,
+                progress=lambda message: print(message, flush=True),
+            )
+        except (ConfigError, InferencerError) as exc:
+            print(f"bench: error: {exc}", file=sys.stderr)
+            return 2
+        return 0
+
     return 0
 
 
