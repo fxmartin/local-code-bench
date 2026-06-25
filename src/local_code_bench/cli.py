@@ -4,19 +4,21 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from local_code_bench.agents import completed_agent_pairs, run_codex_task
 from local_code_bench.config import (
     ConfigError,
+    InferencerConfig,
     ModelConfig,
     load_agents,
     load_inferencers,
     load_models,
 )
-from local_code_bench.inferencers import manager
-from local_code_bench.inferencers.manager import InferencerError
+from local_code_bench.inferencers import detect, manager
+from local_code_bench.inferencers.manager import InferencerError, InferencerStatus
 from local_code_bench.leaderboard import generate_leaderboard
 from local_code_bench.metrics import CompletionMeasurement, capture_stream_metrics
 from local_code_bench.power import PowerSampler
@@ -136,14 +138,65 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="permit auto-start past a running GUI app (never force-quits it)",
     )
+
+    subparsers = parser.add_subparsers(dest="command")
+    inferencer = subparsers.add_parser(
+        "inferencer",
+        help="detect and control local inference engines",
+        description="List, inspect, start, stop, and serve a dashboard for local inference engines.",
+    )
+    inferencer.add_argument(
+        "action",
+        choices=["list", "status", "start", "stop", "dashboard"],
+        help="inferencer operation to perform",
+    )
+    inferencer.add_argument("name", nargs="?", help="engine name (required for start/stop)")
+    inferencer.add_argument(
+        "--config",
+        default="configs/inferencers.yaml",
+        help="path to inferencer YAML config",
+    )
+    inferencer.add_argument(
+        "--state-dir",
+        default=".runtime/inferencers",
+        help="directory holding per-engine PID/state files",
+    )
+    inferencer.add_argument(
+        "--watch",
+        action="store_true",
+        help="re-render the status table on an interval (status only)",
+    )
+    inferencer.add_argument(
+        "--interval",
+        type=float,
+        default=2.0,
+        help="seconds between refreshes when --watch is set",
+    )
+    inferencer.add_argument(
+        "--yes",
+        action="store_true",
+        help="auto-confirm stopping other running engines on start",
+    )
+    inferencer.add_argument(
+        "--force",
+        action="store_true",
+        help="start past a running GUI app instead of refusing",
+    )
+    inferencer.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="dashboard bind host (localhost only)",
+    )
+    inferencer.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="dashboard bind port",
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    argv_list = list(sys.argv[1:] if argv is None else argv)
-    if argv_list and argv_list[0] == "inferencer":
-        return run_inferencer_command(argv_list[1:])
-
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -154,6 +207,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     try:
+        if getattr(args, "command", None) == "inferencer":
+            return run_inferencer_command(args)
+
         if args.mode == "leaderboard":
             inputs = [Path(item) for item in args.input or []]
             if not inputs:
@@ -252,7 +308,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"suite={args.suite} results={result_path} summary={summary}")
             return 0
 
-    except (ConfigError, ProviderError, TaskLoadError, InferencerError, ValueError) as exc:
+    except (ConfigError, ProviderError, TaskLoadError, ValueError, InferencerError) as exc:
         print(f"bench: error: {exc}", file=sys.stderr)
         return 2
 
@@ -287,28 +343,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-def run_inferencer_command(argv: Sequence[str]) -> int:
-    """Dispatch `bench inferencer <subcommand>` (currently `dashboard`).
+def run_inferencer_command(args: argparse.Namespace) -> int:
+    """Dispatch `bench inferencer <action>`; the manager enforces one-active.
 
-    Branched ahead of the flat `--mode` flow so every existing benchmark command
-    stays backward compatible. Config/lifecycle failures print `bench: error: ...`
-    to stderr and exit 2, consistent with the rest of the CLI.
+    `dashboard` serves the localhost web control panel; `list`/`status`/`start`/
+    `stop` drive engine lifecycle. Config/lifecycle failures surface as
+    `bench: error: ...` on stderr with exit 2, consistent with the rest of the CLI.
     """
 
-    parser = argparse.ArgumentParser(prog="bench inferencer")
-    sub = parser.add_subparsers(dest="command", required=True)
-    dashboard_parser = sub.add_parser("dashboard", help="serve the localhost web control panel")
-    dashboard_parser.add_argument(
-        "--config", default="configs/inferencers.yaml", help="path to inferencer YAML config"
-    )
-    dashboard_parser.add_argument(
-        "--state-dir", default=".runtime/inferencers", help="directory for persisted server state"
-    )
-    dashboard_parser.add_argument("--host", default="127.0.0.1", help="bind host (localhost only)")
-    dashboard_parser.add_argument("--port", type=int, default=8765, help="bind port")
-    args = parser.parse_args(argv)
-
-    if args.command == "dashboard":
+    if args.action == "dashboard":
         from local_code_bench.inferencers.dashboard import serve_dashboard
 
         try:
@@ -324,7 +367,120 @@ def run_inferencer_command(argv: Sequence[str]) -> int:
             return 2
         return 0
 
+    configs = load_inferencers(args.config)
+
+    if args.action == "list":
+        _print_inferencer_list(configs)
+        return 0
+
+    if args.action == "status":
+        if args.watch:
+            _watch_status(configs, args.state_dir, args.interval)
+        else:
+            _print_status_table(manager.status_all(configs, args.state_dir))
+        return 0
+
+    # start / stop both need a named engine.
+    cfg = _select_inferencer(configs, args.name, args.action)
+
+    def progress(message: str) -> None:
+        print(message, flush=True)
+
+    if args.action == "stop":
+        manager.stop(cfg, args.state_dir, progress=progress)
+        print(f"stopped {cfg.name}")
+        return 0
+
+    status = manager.start_exclusive(
+        cfg,
+        configs,
+        args.state_dir,
+        confirm=_make_confirm(assume_yes=args.yes),
+        force=args.force,
+        progress=progress,
+    )
+    print(f"started {status.name}: {status.detail}")
     return 0
+
+
+def _select_inferencer(
+    configs: dict[str, InferencerConfig], name: str | None, action: str
+) -> InferencerConfig:
+    if not name:
+        raise ConfigError(f"inferencer {action} requires an engine name")
+    try:
+        return configs[name]
+    except KeyError as exc:
+        available = ", ".join(sorted(configs)) or "(none)"
+        raise ConfigError(f"unknown inferencer '{name}'. Available: {available}") from exc
+
+
+def _make_confirm(*, assume_yes: bool) -> Callable[[list[InferencerStatus]], bool]:
+    """Build the stdin y/N prompt the CLI injects into `start_exclusive`.
+
+    `--yes` auto-confirms; a non-interactive stdin defaults to no so an unattended
+    run never silently stops another engine.
+    """
+
+    def confirm(others: list[InferencerStatus]) -> bool:
+        if assume_yes:
+            return True
+        if not sys.stdin.isatty():
+            return False
+        names = ", ".join(st.name for st in others)
+        reply = input(f"Stop running engine(s) [{names}] to start exclusively? [y/N] ")
+        return reply.strip().lower() in {"y", "yes"}
+
+    return confirm
+
+
+def _print_inferencer_list(configs: dict[str, InferencerConfig]) -> None:
+    rows = [("ENGINE", "INSTALLED", "LIFECYCLE", "PORT")]
+    for name, cfg in configs.items():
+        installed = "yes" if detect.is_installed(cfg) else "no"
+        rows.append((name, installed, cfg.lifecycle, str(cfg.port)))
+    _print_rows(rows)
+
+
+def _print_status_table(statuses: dict[str, InferencerStatus]) -> None:
+    rows = [("ENGINE", "INSTALLED", "RUNNING", "HEALTHY", "PID", "DETAIL")]
+    for st in statuses.values():
+        rows.append(
+            (
+                st.name,
+                "yes" if st.installed else "no",
+                "yes" if st.running else "no",
+                "yes" if st.healthy else "no",
+                str(st.pid) if st.pid is not None else "-",
+                st.detail,
+            )
+        )
+    _print_rows(rows)
+
+
+def _watch_status(
+    configs: dict[str, InferencerConfig], state_dir: str, interval: float
+) -> None:
+    """Re-render the status table on `interval`, clearing the screen with ANSI codes.
+
+    No curses dependency: `\\033[2J\\033[H` clears and homes the cursor each tick.
+    Ctrl-C exits cleanly.
+    """
+
+    try:
+        while True:
+            sys.stdout.write("\033[2J\033[H")
+            _print_status_table(manager.status_all(configs, state_dir))
+            sys.stdout.flush()
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print()
+
+
+def _print_rows(rows: list[tuple[str, ...]]) -> None:
+    widths = [max(len(row[col]) for row in rows) for col in range(len(rows[0]))]
+    for row in rows:
+        print("  ".join(cell.ljust(widths[col]) for col, cell in enumerate(row)))
 
 
 def run_single_prompt(

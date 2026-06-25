@@ -200,14 +200,19 @@ def stop(
 
 
 def running_others(
-    target: str,
-    configs: dict[str, InferencerConfig],
-    state_dir: str | Path,
+    target: str, configs: dict[str, InferencerConfig], state_dir: str | Path
 ) -> list[InferencerStatus]:
-    """Return the status of every engine other than `target` that is running now."""
+    """Return the currently-running engines other than `target`.
 
-    statuses = status_all(configs, state_dir)
-    return [s for name, s in statuses.items() if name != target and s.running]
+    Both `server` and `app` engines count: a running GUI app holds the GPU just as
+    a headless server does, so the mutual-exclusion rule must see it.
+    """
+
+    return [
+        st
+        for name, cfg in configs.items()
+        if name != target and (st := status(cfg, state_dir)).running
+    ]
 
 
 def start_exclusive(
@@ -218,37 +223,41 @@ def start_exclusive(
     confirm: Callable[[list[InferencerStatus]], bool],
     force: bool = False,
     progress: Callable[[str], None] | None = None,
-    **start_kwargs: object,
 ) -> InferencerStatus:
-    """Start `target_cfg` as the only running engine, enforcing one-active GPU use.
+    """Start `target_cfg` as the only running engine, enforcing one-active.
 
-    This is the single place the timing-integrity invariant lives, so every surface
-    (CLI, benchmark auto-start, web) reuses it. Running GUI (`app`) engines block the
-    start with a refusal unless `force` is set — they are never force-quit. Running
-    headless servers are presented to the injected `confirm`; a decline aborts with an
-    `InferencerError` and stops nothing, while an accept stops them before the target
-    starts.
+    This is the single place the timing-integrity invariant lives, regardless of
+    entry surface (CLI, web): the `confirm` callback is injected so each surface
+    supplies its own yes/no prompt. A running GUI app blocks the start (the harness
+    never force-quits one) unless `force` is set; the headless servers that would be
+    stopped are passed to `confirm`, and only on acceptance are they stopped before
+    the target starts. Raises `InferencerError` for a GUI target, a blocking GUI, or
+    a declined confirmation — in every case nothing is started.
     """
 
+    if target_cfg.lifecycle == "app":
+        raise InferencerError(_GUI_REFUSAL.format(name=target_cfg.name))
+
     others = running_others(target_cfg.name, configs, state_dir)
-    gui_running = [s for s in others if s.lifecycle == "app"]
-    if gui_running and not force:
-        names = ", ".join(s.name for s in gui_running)
+    gui_blockers = [st for st in others if configs[st.name].lifecycle == "app"]
+    if gui_blockers and not force:
+        names = ", ".join(st.name for st in gui_blockers)
         raise InferencerError(
-            f"GUI app(s) running: {names}. Quit them from their own UI or pass force."
+            f"{names} is running — quit it from its own UI before starting "
+            f"{target_cfg.name}, or pass --force to start past it."
         )
 
-    servers_running = [s for s in others if s.lifecycle == "server"]
-    if servers_running:
-        if not confirm(servers_running):
-            names = ", ".join(s.name for s in servers_running)
+    to_stop = [st for st in others if configs[st.name].lifecycle == "server"]
+    if to_stop:
+        if not confirm(to_stop):
+            stopping = ", ".join(st.name for st in to_stop)
             raise InferencerError(
-                f"exclusive start of {target_cfg.name} aborted: declined stopping {names}"
+                f"aborted: {target_cfg.name} not started ({stopping} left running)"
             )
-        for server in servers_running:
-            stop(configs[server.name], state_dir, progress=progress)
+        for st in to_stop:
+            stop(configs[st.name], state_dir, progress=progress)
 
-    return start(target_cfg, state_dir, progress=progress, **start_kwargs)  # type: ignore[arg-type]
+    return start(target_cfg, state_dir, progress=progress)
 
 
 def _await_health(

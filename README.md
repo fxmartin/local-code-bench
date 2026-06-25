@@ -270,6 +270,30 @@ uv run bench --mode sweep --model local-turboquant-qwen-moe --context-sizes 2000
 up one local server at a time (refusing to proceed if the other is still resident),
 sweeps it, then swaps. It honors `SWEEP_CONTEXT_SIZES` and `POWER=1`.
 
+## Inferencer Lifecycle
+
+`bench inferencer` detects, inspects, and controls the local inference engines
+declared in `configs/inferencers.yaml` (DFlash, TurboQuant, MLX-LM, llama.cpp,
+Ollama, and friends; LM Studio / GPT4All are detect-only GUI apps). Exactly one
+headless server is allowed to hold the GPU at a time, so timing measurements stay
+valid:
+
+```bash
+uv run bench inferencer list              # installed state, lifecycle, and port
+uv run bench inferencer status            # installed/running/healthy/pid table
+uv run bench inferencer status --watch    # live table, refreshes on --interval (ANSI clear)
+uv run bench inferencer start dflash      # prompts to stop any other running engines first
+uv run bench inferencer start dflash --yes    # auto-confirm stopping others (non-tty defaults to no)
+uv run bench inferencer start dflash --force  # start past a running GUI app instead of refusing
+uv run bench inferencer stop dflash       # idempotent stop
+```
+
+Starting an engine enforces the one-active invariant: any other running headless
+servers are listed and stopped only after you confirm, then the target starts. A
+running GUI app blocks the start with a warning to quit it manually unless `--force`
+is passed; the harness never force-quits a GUI app. State lives under
+`.runtime/inferencers/` (gitignored). Override paths with `--config` and `--state-dir`.
+
 ## Verification Status
 
 Last automated verification: 2026-06-21.

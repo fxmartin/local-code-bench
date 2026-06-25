@@ -473,3 +473,158 @@ def test_read_state_returns_none_for_malformed_json(tmp_path) -> None:
 
 def test_log_tail_returns_empty_on_unreadable_path(tmp_path) -> None:
     assert manager._log_tail(tmp_path / "missing.log") == ""
+
+
+# --- running_others / start_exclusive (mutual exclusion) ---------------------
+
+
+def _running(name: str, lifecycle: str = "server") -> InferencerStatus:
+    return InferencerStatus(
+        name=name,
+        installed=True,
+        lifecycle=lifecycle,
+        running=True,
+        pid=111 if lifecycle == "server" else None,
+        port=9000,
+        healthy=True,
+        detail="running",
+    )
+
+
+def _not_running(name: str, lifecycle: str = "server") -> InferencerStatus:
+    return InferencerStatus(
+        name=name,
+        installed=True,
+        lifecycle=lifecycle,
+        running=False,
+        pid=None,
+        port=9000,
+        healthy=False,
+        detail="not running",
+    )
+
+
+def test_running_others_excludes_target_and_keeps_only_running(monkeypatch) -> None:
+    configs = {
+        "dflash": _server_cfg("dflash", 8000),
+        "turboquant": _server_cfg("turboquant", 8002),
+        "mlx-lm": _server_cfg("mlx-lm", 8080),
+    }
+    statuses = {
+        "dflash": _not_running("dflash"),
+        "turboquant": _running("turboquant"),
+        "mlx-lm": _running("mlx-lm"),
+    }
+    monkeypatch.setattr(manager, "status", lambda cfg, sd: statuses[cfg.name])
+
+    others = manager.running_others("dflash", configs, "/state")
+
+    assert [o.name for o in others] == ["turboquant", "mlx-lm"]
+
+
+def test_start_exclusive_decline_aborts_without_starting(monkeypatch) -> None:
+    configs = {"dflash": _server_cfg("dflash", 8000), "turboquant": _server_cfg("turboquant", 8002)}
+    monkeypatch.setattr(manager, "running_others", lambda *a, **k: [_running("turboquant")])
+    started: list = []
+    stopped: list = []
+    monkeypatch.setattr(manager, "start", lambda *a, **k: started.append(a))
+    monkeypatch.setattr(manager, "stop", lambda *a, **k: stopped.append(a))
+
+    with pytest.raises(InferencerError) as exc:
+        manager.start_exclusive(
+            configs["dflash"], configs, "/state", confirm=lambda others: False
+        )
+
+    assert "aborted" in str(exc.value).lower()
+    assert started == []
+    assert stopped == []
+
+
+def test_start_exclusive_accept_stops_others_then_starts(monkeypatch) -> None:
+    configs = {"dflash": _server_cfg("dflash", 8000), "turboquant": _server_cfg("turboquant", 8002)}
+    monkeypatch.setattr(manager, "running_others", lambda *a, **k: [_running("turboquant")])
+    calls: list = []
+    monkeypatch.setattr(
+        manager, "stop", lambda cfg, sd, **k: calls.append(("stop", cfg.name))
+    )
+    monkeypatch.setattr(
+        manager,
+        "start",
+        lambda cfg, sd, **k: calls.append(("start", cfg.name))
+        or _running(cfg.name),
+    )
+    seen: list = []
+
+    result = manager.start_exclusive(
+        configs["dflash"], configs, "/state", confirm=lambda others: seen.extend(others) or True
+    )
+
+    assert calls == [("stop", "turboquant"), ("start", "dflash")]
+    assert [s.name for s in seen] == ["turboquant"]
+    assert result.name == "dflash"
+
+
+def test_start_exclusive_running_gui_blocks_without_force(monkeypatch) -> None:
+    configs = {"dflash": _server_cfg("dflash", 8000), "lm-studio": _app_cfg("lm-studio")}
+    monkeypatch.setattr(
+        manager, "running_others", lambda *a, **k: [_running("lm-studio", lifecycle="app")]
+    )
+    started: list = []
+    monkeypatch.setattr(manager, "start", lambda *a, **k: started.append(a))
+
+    with pytest.raises(InferencerError) as exc:
+        manager.start_exclusive(
+            configs["dflash"], configs, "/state", confirm=lambda others: True
+        )
+
+    assert "lm-studio" in str(exc.value)
+    assert "force" in str(exc.value).lower()
+    assert started == []
+
+
+def test_start_exclusive_force_starts_past_running_gui(monkeypatch) -> None:
+    configs = {"dflash": _server_cfg("dflash", 8000), "lm-studio": _app_cfg("lm-studio")}
+    monkeypatch.setattr(
+        manager, "running_others", lambda *a, **k: [_running("lm-studio", lifecycle="app")]
+    )
+    calls: list = []
+    monkeypatch.setattr(manager, "stop", lambda cfg, sd, **k: calls.append(("stop", cfg.name)))
+    monkeypatch.setattr(
+        manager, "start", lambda cfg, sd, **k: calls.append(("start", cfg.name)) or _running(cfg.name)
+    )
+
+    result = manager.start_exclusive(
+        configs["dflash"], configs, "/state", confirm=lambda others: True, force=True
+    )
+
+    # GUI apps are never stopped; the server simply starts past them.
+    assert calls == [("start", "dflash")]
+    assert result.name == "dflash"
+
+
+def test_start_exclusive_no_others_starts_without_confirm(monkeypatch) -> None:
+    configs = {"dflash": _server_cfg("dflash", 8000)}
+    monkeypatch.setattr(manager, "running_others", lambda *a, **k: [])
+    calls: list = []
+    monkeypatch.setattr(
+        manager, "start", lambda cfg, sd, **k: calls.append(cfg.name) or _running(cfg.name)
+    )
+
+    def confirm(_others):
+        raise AssertionError("confirm must not be called when nothing needs stopping")
+
+    result = manager.start_exclusive(configs["dflash"], configs, "/state", confirm=confirm)
+
+    assert calls == ["dflash"]
+    assert result.name == "dflash"
+
+
+def test_start_exclusive_refuses_gui_target(monkeypatch) -> None:
+    configs = {"lm-studio": _app_cfg("lm-studio")}
+
+    with pytest.raises(InferencerError) as exc:
+        manager.start_exclusive(
+            configs["lm-studio"], configs, "/state", confirm=lambda others: True
+        )
+
+    assert "UI" in str(exc.value)
