@@ -311,6 +311,60 @@ def test_inferencer_dashboard_config_error_exits_2(monkeypatch, capsys) -> None:
     assert "bench: error:" in capsys.readouterr().err
 
 
+# --- argument validation -----------------------------------------------------
+
+
+def test_no_args_prints_help_and_returns_zero(capsys) -> None:
+    exit_code = main([])
+
+    assert exit_code == 0
+    assert "usage" in capsys.readouterr().out.lower()
+
+
+def test_leaderboard_mode_without_input_errors(capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["--mode", "leaderboard"])
+
+    assert exc.value.code == 2
+    assert "requires --input" in capsys.readouterr().err
+
+
+def test_rescore_mode_without_input_errors(capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["--mode", "rescore"])
+
+    assert exc.value.code == 2
+    assert "requires --input and --suite" in capsys.readouterr().err
+
+
+def test_agent_mode_without_agent_errors(capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["--mode", "agent"])
+
+    assert exc.value.code == 2
+    assert "requires --agent and --suite" in capsys.readouterr().err
+
+
+def test_model_without_prompt_errors(capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["--model", "m"])
+
+    assert exc.value.code == 2
+    assert "must be provided together" in capsys.readouterr().err
+
+
+def test_agent_mode_unknown_agent_errors_exit_2(monkeypatch, capsys) -> None:
+    agent = AgentConfig("codex", "codex", "codex", "workspace-write", 10)
+    monkeypatch.setattr("local_code_bench.cli.load_agents", lambda _path: {"codex": agent})
+
+    exit_code = main(["--mode", "agent", "--agent", "ghost", "--suite", "canary"])
+
+    assert exit_code == 2
+    err = capsys.readouterr().err
+    assert "unknown agent 'ghost'" in err
+    assert "codex" in err
+
+
 # --- bench inferencer subcommands -------------------------------------------
 
 
@@ -490,6 +544,69 @@ def test_inferencer_status_watch_clears_and_rerenders(monkeypatch, capsys) -> No
     assert exit_code == 0
     assert "\033[2J" in out  # ANSI clear-screen
     assert "dflash" in out
+
+
+def test_inferencer_start_interactive_confirm_reads_stdin(monkeypatch) -> None:
+    confirm = _make_confirm(assume_yes=False)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    prompts: list[str] = []
+
+    def fake_input(prompt: str) -> str:
+        prompts.append(prompt)
+        return " Yes "
+
+    monkeypatch.setattr("builtins.input", fake_input)
+
+    assert confirm([_status("turboquant", running=True)]) is True
+    assert "turboquant" in prompts[0]
+
+
+def test_inferencer_start_interactive_confirm_declines_on_blank(monkeypatch) -> None:
+    confirm = _make_confirm(assume_yes=False)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "")
+
+    assert confirm([_status("turboquant", running=True)]) is False
+
+
+def test_inferencer_start_emits_manager_progress(monkeypatch, capsys) -> None:
+    configs = {"dflash": _server_cfg("dflash", 8000)}
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _path: configs)
+
+    def fake_start_exclusive(cfg, cfgs, state_dir, *, confirm, force, progress):
+        progress("waiting for dflash to become healthy")
+        return _status("dflash", running=True, healthy=True, pid=4321)
+
+    monkeypatch.setattr("local_code_bench.cli.manager.start_exclusive", fake_start_exclusive)
+
+    exit_code = main(["inferencer", "start", "dflash", "--yes"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "waiting for dflash to become healthy" in out
+    assert "started dflash" in out
+
+
+def test_inferencer_start_without_name_errors_exit_2(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "local_code_bench.cli.load_inferencers", lambda _path: {"dflash": _server_cfg()}
+    )
+
+    exit_code = main(["inferencer", "start"])
+
+    assert exit_code == 2
+    assert "bench: error: inferencer start requires an engine name" in capsys.readouterr().err
+
+
+def test_inferencer_stop_without_name_errors_exit_2(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "local_code_bench.cli.load_inferencers", lambda _path: {"dflash": _server_cfg()}
+    )
+
+    exit_code = main(["inferencer", "stop"])
+
+    assert exit_code == 2
+    assert "bench: error: inferencer stop requires an engine name" in capsys.readouterr().err
 
 
 def test_inferencer_config_error_exit_2(monkeypatch, capsys) -> None:
