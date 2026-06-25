@@ -136,7 +136,7 @@ def test_start_exclusive_gui_blocks_without_force(monkeypatch) -> None:
     configs = {target.name: target, gui.name: gui}
     calls = _patch_manager(monkeypatch, configs, running_names={"lm-studio"})
 
-    with pytest.raises(InferencerError, match="GUI"):
+    with pytest.raises(InferencerError, match="--force"):
         manager.start_exclusive(target, configs, ".runtime", confirm=lambda _o: True)
 
     assert calls == []

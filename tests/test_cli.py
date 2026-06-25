@@ -6,8 +6,9 @@ from importlib.metadata import version
 
 import pytest
 
-from local_code_bench.cli import _parse_context_sizes, build_parser, main
-from local_code_bench.config import AgentConfig, ModelConfig, TokenPrices
+from local_code_bench.cli import _make_confirm, _parse_context_sizes, build_parser, main
+from local_code_bench.config import AgentConfig, InferencerConfig, ModelConfig, TokenPrices
+from local_code_bench.inferencers.manager import InferencerError, InferencerStatus
 from local_code_bench.metrics import StreamEvent
 from local_code_bench.results import append_jsonl, read_jsonl
 from local_code_bench.tasks import BenchmarkTask
@@ -308,3 +309,198 @@ def test_inferencer_dashboard_config_error_exits_2(monkeypatch, capsys) -> None:
 
     assert exit_code == 2
     assert "bench: error:" in capsys.readouterr().err
+
+
+# --- bench inferencer subcommands -------------------------------------------
+
+
+def _server_cfg(name: str = "dflash", port: int = 8000) -> InferencerConfig:
+    return InferencerConfig(
+        name=name,
+        lifecycle="server",
+        detect_kind="binary",
+        detect_target=name,
+        port=port,
+        health_url="http://127.0.0.1:{port}/v1/models",
+        start=(name, "serve"),
+    )
+
+
+def _app_cfg(name: str = "lm-studio", port: int = 1234) -> InferencerConfig:
+    return InferencerConfig(
+        name=name,
+        lifecycle="app",
+        detect_kind="app",
+        detect_target="LM Studio.app",
+        port=port,
+        health_url="http://127.0.0.1:{port}/v1/models",
+    )
+
+
+def _status(name: str, **over) -> InferencerStatus:
+    base = dict(
+        name=name,
+        installed=True,
+        lifecycle="server",
+        running=False,
+        pid=None,
+        port=8000,
+        healthy=False,
+        detail="not running",
+    )
+    base.update(over)
+    return InferencerStatus(**base)  # type: ignore[arg-type]
+
+
+def test_inferencer_list_prints_install_lifecycle_and_port(monkeypatch, capsys) -> None:
+    configs = {"dflash": _server_cfg("dflash", 8000), "lm-studio": _app_cfg("lm-studio", 1234)}
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _path: configs)
+    monkeypatch.setattr(
+        "local_code_bench.inferencers.detect.is_installed",
+        lambda cfg: cfg.name == "dflash",
+    )
+
+    exit_code = main(["inferencer", "list"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "dflash" in out and "server" in out and "8000" in out
+    assert "lm-studio" in out and "app" in out and "1234" in out
+
+
+def test_inferencer_status_prints_table(monkeypatch, capsys) -> None:
+    configs = {"dflash": _server_cfg("dflash", 8000)}
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _path: configs)
+    monkeypatch.setattr(
+        "local_code_bench.cli.manager.status_all",
+        lambda cfgs, sd: {"dflash": _status("dflash", running=True, healthy=True, pid=4321)},
+    )
+
+    exit_code = main(["inferencer", "status"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "dflash" in out
+    assert "4321" in out  # pid shown
+
+
+def test_inferencer_start_yes_auto_confirms_and_starts(monkeypatch, capsys) -> None:
+    configs = {"dflash": _server_cfg("dflash", 8000)}
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _path: configs)
+    captured: dict = {}
+
+    def fake_start_exclusive(cfg, cfgs, state_dir, *, confirm, force, progress=None):
+        captured["name"] = cfg.name
+        captured["force"] = force
+        captured["confirm"] = confirm([_status("turboquant", running=True)])
+        return _status("dflash", running=True, healthy=True, pid=4321)
+
+    monkeypatch.setattr("local_code_bench.cli.manager.start_exclusive", fake_start_exclusive)
+
+    exit_code = main(["inferencer", "start", "dflash", "--yes"])
+
+    assert exit_code == 0
+    assert captured["name"] == "dflash"
+    assert captured["confirm"] is True  # --yes auto-confirms
+    assert captured["force"] is False
+    assert "started dflash" in capsys.readouterr().out
+
+
+def test_inferencer_start_non_tty_defaults_to_no(monkeypatch) -> None:
+    confirm = _make_confirm(assume_yes=False)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    assert confirm([_status("turboquant", running=True)]) is False
+
+
+def test_inferencer_start_force_flag_passed_through(monkeypatch) -> None:
+    configs = {"dflash": _server_cfg("dflash", 8000)}
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _path: configs)
+    captured: dict = {}
+
+    def fake_start_exclusive(cfg, cfgs, state_dir, *, confirm, force, progress=None):
+        captured["force"] = force
+        return _status("dflash", running=True, healthy=True)
+
+    monkeypatch.setattr("local_code_bench.cli.manager.start_exclusive", fake_start_exclusive)
+
+    exit_code = main(["inferencer", "start", "dflash", "--yes", "--force"])
+
+    assert exit_code == 0
+    assert captured["force"] is True
+
+
+def test_inferencer_start_unknown_name_errors_exit_2(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "local_code_bench.cli.load_inferencers", lambda _path: {"dflash": _server_cfg()}
+    )
+
+    exit_code = main(["inferencer", "start", "nope", "--yes"])
+
+    assert exit_code == 2
+    assert "bench: error:" in capsys.readouterr().err
+
+
+def test_inferencer_start_lifecycle_failure_exit_2(monkeypatch, capsys) -> None:
+    configs = {"dflash": _server_cfg("dflash", 8000)}
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _path: configs)
+
+    def boom(*_a, **_k):
+        raise InferencerError("dflash did not become healthy")
+
+    monkeypatch.setattr("local_code_bench.cli.manager.start_exclusive", boom)
+
+    exit_code = main(["inferencer", "start", "dflash", "--yes"])
+
+    assert exit_code == 2
+    assert "bench: error: dflash did not become healthy" in capsys.readouterr().err
+
+
+def test_inferencer_stop_is_idempotent(monkeypatch, capsys) -> None:
+    configs = {"dflash": _server_cfg("dflash", 8000)}
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _path: configs)
+    calls: list = []
+    monkeypatch.setattr(
+        "local_code_bench.cli.manager.stop", lambda cfg, sd, **k: calls.append(cfg.name)
+    )
+
+    exit_code = main(["inferencer", "stop", "dflash"])
+
+    assert exit_code == 0
+    assert calls == ["dflash"]
+    assert "stopped dflash" in capsys.readouterr().out
+
+
+def test_inferencer_status_watch_clears_and_rerenders(monkeypatch, capsys) -> None:
+    configs = {"dflash": _server_cfg("dflash", 8000)}
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _path: configs)
+    monkeypatch.setattr(
+        "local_code_bench.cli.manager.status_all",
+        lambda cfgs, sd: {"dflash": _status("dflash", running=True, healthy=True, pid=4321)},
+    )
+
+    def stop_after_first(_interval):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("local_code_bench.cli.time.sleep", stop_after_first)
+
+    exit_code = main(["inferencer", "status", "--watch", "--interval", "0"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "\033[2J" in out  # ANSI clear-screen
+    assert "dflash" in out
+
+
+def test_inferencer_config_error_exit_2(monkeypatch, capsys) -> None:
+    from local_code_bench.config import ConfigError
+
+    def boom(_path):
+        raise ConfigError("inferencer config not found")
+
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", boom)
+
+    exit_code = main(["inferencer", "list"])
+
+    assert exit_code == 2
+    assert "bench: error: inferencer config not found" in capsys.readouterr().err

@@ -112,10 +112,12 @@
 
 **Technical Notes**: Add an argparse subparser for `inferencer` (`list`/`status`/`start`/`stop`) in `src/local_code_bench/cli.py`, branched at the top of `main` before the existing flat `--mode` dispatch so every current flow (endpoint/agent/sweep/leaderboard/rescore) stays backward compatible. Keep a `run_inferencer_command(args) -> int` helper to keep `main` readable; the CLI's `confirm` reads stdin (`input()` y/N), honoring `--yes`/non-tty/`--force`. Add `InferencerError` to the caught-exception tuple already mapping `ConfigError` to exit 2. Flags include `--config configs/inferencers.yaml`, `--state-dir .runtime/inferencers`, `--watch`, `--yes`, `--force`. Test by monkeypatching the manager functions (as `tests/test_cli.py` patches `run_endpoint_suite`) and asserting output and exit codes.
 
+**Implementation note**: this story also added the mutual-exclusion core its `start` command depends on (`running_others` / `start_exclusive` in `manager.py`, with the injected-`confirm` contract) because 08.3-001 had not yet merged when this landed; 08.3-001's acceptance criteria are satisfied by these functions and their tests.
+
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 08.3-001
 **Risk Level**: Low
@@ -171,4 +173,5 @@
 **Risk Level**: Medium
 
 ## Epic Progress
-**Completed**: 4 / 6 stories · 16 / 22 points
+**Completed**: 5 / 6 stories · 19 / 22 points
+- 08.1-001 ✅ · 08.2-001 ✅ · 08.4-001 ✅ · 08.5-001 ✅ · 08.6-001 ✅ (08.3-001 mutual-exclusion core landed with 08.4-001)
