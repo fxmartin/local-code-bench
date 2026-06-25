@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.14.0 (2026-06-25)
+
+### Features
+
+- **inferencer-lifecycle**: Localhost web dashboard for (#08.6-001)
+  ([`49d63b3`](https://github.com/fxmartin/local-code-bench/commit/49d63b38cd1db9d84dcad88df38d88c825b1f4ed))
+
+### Testing
+
+- **inferencer-lifecycle**: Localhost web dashboard for (#08.6-001)
+  ([`b9d1ea6`](https://github.com/fxmartin/local-code-bench/commit/b9d1ea672c379395c81a127d674361d57bda99d3))
+
+
 ## v0.13.0 (2026-06-25)
 
 ### Features
