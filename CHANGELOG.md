@@ -2,6 +2,40 @@
 
 <!-- version list -->
 
+## v0.12.0 (2026-06-25)
+
+### Documentation
+
+- Add Epic-08 inferencer lifecycle management stories
+  ([#7](https://github.com/fxmartin/local-code-bench/pull/7),
+  [`79405f1`](https://github.com/fxmartin/local-code-bench/commit/79405f112ac9b7a6b8036da242c0f11a4be32dcf))
+
+- Add Epic-09 unified dashboard stories ([#8](https://github.com/fxmartin/local-code-bench/pull/8),
+  [`ced7720`](https://github.com/fxmartin/local-code-bench/commit/ced77201f4d113f13ccc690943d489dbb3a571bc))
+
+- Add Epic-10 (LLMBENCH-1) OpenCode local benchmark stories
+  ([#9](https://github.com/fxmartin/local-code-bench/pull/9),
+  [`ab4e325`](https://github.com/fxmartin/local-code-bench/commit/ab4e325f4cde094cfa147524f0a65be57f3fb048))
+
+- Add Epic-11 local model inventory and sharing stories
+  ([#10](https://github.com/fxmartin/local-code-bench/pull/10),
+  [`791744b`](https://github.com/fxmartin/local-code-bench/commit/791744b79a69e8814051dc56bcfa76c78dd4eaf0))
+
+- Add native chat panel feature to Epic-09 dashboard
+  ([#11](https://github.com/fxmartin/local-code-bench/pull/11),
+  [`98f9f54`](https://github.com/fxmartin/local-code-bench/commit/98f9f54c83b57c8623bf55a2ce84663f15a643a9))
+
+### Features
+
+- **inferencer-lifecycle**: Inferencer config and (#08.1-001)
+  ([`9af30c8`](https://github.com/fxmartin/local-code-bench/commit/9af30c82b12b1777cc8b9a8f84ae20e3ba4cbbc7))
+
+### Testing
+
+- **inferencer-lifecycle**: Inferencer config and (#08.1-001)
+  ([`8c85cf4`](https://github.com/fxmartin/local-code-bench/commit/8c85cf489a6418696504f3c5d1f054297617b9fa))
+
+
 ## v0.11.0 (2026-06-22)
 
 ### Bug Fixes
