@@ -30,6 +30,7 @@
 | Epic-05 | Sweep Mode & Run Control | Reproduce the prefill-vs-context thesis; resume runs | 3 | 9 | Should Have (v1.x) |
 | Epic-06 | Codex Agent Mode | Benchmark Codex CLI on the same task suites | 4 | 13 | Must Have (MVP) |
 | Epic-07 | Results Dashboard | Explore benchmark runs through static and live local dashboard views | 6 | 20 | Should Have (v2) |
+| Epic-08 | Inferencer Lifecycle Management | Detect/start/stop macOS inference engines with one-active mutual exclusion | 6 | 22 | Should Have (v1.x) |
 | NFR | Non-Functional Requirements | Accuracy, security, quality, portability, hardware fit | 5 | 12 | Mixed (SEC/QUAL = MVP) |
 
 ## Epic Navigation
@@ -41,6 +42,7 @@
 - **[Epic-05: Sweep Mode & Run Control](./stories/epic-05-sweep-run-control.md)** — agentic-preamble padding sweep, prefill-vs-context curve, resume.
 - **[Epic-06: Codex Agent Mode](./stories/epic-06-codex-agent-mode.md)** — `configs/agents.yaml`, task workspaces, `codex exec` runner, agent-mode scoring and CLI.
 - **[Epic-07: Results Dashboard](./stories/epic-07-results-dashboard.md)** — static HTML dashboard, CLI-served live results endpoints, drilldown views, and basic tradeoff/sweep charts.
+- **[Epic-08: Inferencer Lifecycle Management](./stories/epic-08-inferencer-lifecycle.md)** — `configs/inferencers.yaml` registry, install detection, headless start/stop with persisted state, one-active mutual exclusion, `bench inferencer` CLI, benchmark auto-start, localhost web control panel.
 - **[Non-Functional Requirements](./stories/non-functional-requirements.md)** — performance, security, quality, integration, infrastructure.
 
 ## MVP Summary
@@ -63,8 +65,8 @@ v1 is "done" (per `REQUIREMENTS.md` §6) when one command runs the full HumanEva
 
 ## Project Metrics
 
-- **Total Stories**: 40
-- **Total Story Points**: 123
+- **Total Stories**: 46
+- **Total Story Points**: 145
 - **MVP Stories**: ~28 (Epics 01–04 + Epic-06 + NFR-SEC/QUAL)
 - **MVP Points**: ~88
 
@@ -87,6 +89,8 @@ graph TD
     E04 --> E07[Epic-07: Results Dashboard]
     E05 --> E07
     E06 --> E07
+    E01 --> E08[Epic-08: Inferencer Lifecycle]
+    E03 --> E08
     NFR[NFR: Security/Sandbox] -.governs.-> E02
     NFR -.governs.-> E03
 ```
