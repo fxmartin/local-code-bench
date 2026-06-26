@@ -1052,3 +1052,80 @@ def test_build_orchestrator_wires_models_into_run_orchestrator(monkeypatch, tmp_
 
     assert isinstance(orch, launch.RunOrchestrator)
     assert orch.runs_payload() == []  # built, no runs launched yet
+
+
+# ---------------------------------------------------------------------------
+# stream cancellation: a dropped browser connection releases the provider
+# ---------------------------------------------------------------------------
+
+
+def _stub_handler_with_wfile(wfile: object) -> ud.BaseHTTPRequestHandler:
+    """A handler instance wired to a fake wfile, bypassing socket setup.
+
+    BaseHTTPRequestHandler.__init__ services the socket immediately, so for a
+    direct _stream() unit test we build the instance via __new__ and stub the
+    header-writing callbacks that touch the (absent) connection.
+    """
+
+    handler_cls = ud.make_handler(_ctx())
+    handler = handler_cls.__new__(handler_cls)
+    handler.wfile = wfile
+    handler.send_response = lambda status: None
+    handler.send_header = lambda *a, **k: None
+    handler.end_headers = lambda: None
+    return handler
+
+
+class _BrokenWfile:
+    """A wfile that dies on the first write, as a closed client socket would."""
+
+    def write(self, _data: bytes) -> int:
+        raise BrokenPipeError("client closed the connection")
+
+    def flush(self) -> None:  # pragma: no cover - write raises before flush
+        pass
+
+
+def test_stream_releases_provider_when_client_drops_connection() -> None:
+    closed = {"called": False}
+
+    class _Events:
+        def __iter__(self):
+            yield 'data: {"delta": "Hi"}\n\n'
+
+        def close(self) -> None:
+            closed["called"] = True
+
+    handler = _stub_handler_with_wfile(_BrokenWfile())
+    response = ud.chat.ChatStreamResponse(200, _Events())
+
+    handler._stream(response)  # broken pipe must be swallowed, not raised
+
+    assert closed["called"] is True  # upstream provider connection released
+
+
+def test_stream_swallows_connection_reset_when_events_have_no_close() -> None:
+    class _ResetWfile:
+        def write(self, _data: bytes) -> int:
+            raise ConnectionResetError("peer reset")
+
+        def flush(self) -> None:  # pragma: no cover - write raises before flush
+            pass
+
+    handler = _stub_handler_with_wfile(_ResetWfile())
+    # A plain list is iterable but exposes no close(): the callable() guard skips it.
+    response = ud.chat.ChatStreamResponse(200, ['data: {"delta": "Hi"}\n\n'])
+
+    handler._stream(response)  # must not raise even with nothing to close
+
+
+def test_load_models_safe_degrades_silently_without_progress_callback(monkeypatch) -> None:
+    from local_code_bench.config import ConfigError
+
+    def _missing_models(_path):
+        raise ConfigError("model config not found")
+
+    monkeypatch.setattr(ud, "load_models", _missing_models)
+
+    # progress=None: chat is disabled to an empty catalog with no callback to notify.
+    assert ud._load_models_safe("configs/models.yaml", None) == {}
