@@ -1,0 +1,10 @@
+2026-06-26T10:00:01 INFO server started on port 8080
+2026-06-26T10:00:02 WARN disk usage at 82%
+2026-06-26T10:00:03 ERROR failed to open /etc/config
+2026-06-26T10:00:04 FATAL out of memory, aborting
+2026-06-26T10:00:05 DEBUG cache warm complete
+2026-06-26T10:00:06 INFO request handled in 12ms
+2026-06-26T10:00:07 WARN retry 3 of 5 for upstream
+2026-06-26T10:00:08 ERROR WARN upstream down, error wins
+2026-06-26T10:00:09 connection closed cleanly
+2026-06-26T10:00:10 info lowercase should be unknown

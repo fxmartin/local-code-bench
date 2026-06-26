@@ -45,7 +45,7 @@ Severity rules (given verbatim to the model, and the ground truth for Task B):
 
 #### Stories
 
-##### Story LLMBENCH-1.1: Fixed-prompt invocation and capture
+##### Story 10.1-001: Fixed-prompt invocation and capture
 **User Story**: As the benchmark operator, I want a single script that sends a fixed prompt to a chosen local model and captures the raw output plus timing so that every model is tested under identical conditions.
 **Priority**: Should Have
 **Story Points**: 5
@@ -72,7 +72,7 @@ Severity rules (given verbatim to the model, and the ground truth for Task B):
 
 #### Stories
 
-##### Story LLMBENCH-1.2: Extract, compile, and behaviourally test the generated Go
+##### Story 10.2-001: Extract, compile, and behaviourally test the generated Go
 **User Story**: As the operator, I want the model's generated Go extracted, compiled, and behaviourally tested so that coding ability is judged by a compiler and a test binary, not by eye.
 **Priority**: Should Have
 **Story Points**: 5
@@ -91,14 +91,14 @@ Severity rules (given verbatim to the model, and the ground truth for Task B):
 - [ ] Tests written and passing
 - [ ] Documentation updated
 
-**Dependencies**: LLMBENCH-1.1
+**Dependencies**: 10.1-001
 **Risk Level**: Medium
 
 ### Feature 10.3: Task B — Strict Rule-Following (auto-scored)
 
 #### Stories
 
-##### Story LLMBENCH-1.3: Structured classification map diffed against ground truth
+##### Story 10.3-001: Structured classification map diffed against ground truth
 **User Story**: As the operator, I want the model to emit a structured classification map for a fixed log fixture, diffed against ground truth, so that rule-following is measured independently of coding skill.
 **Priority**: Should Have
 **Story Points**: 5
@@ -112,18 +112,18 @@ Severity rules (given verbatim to the model, and the ground truth for Task B):
 **Technical Notes**: `opencode/fixtures.py` `classify_line` implements the severity rules verbatim (first-match-wins, case-sensitive) and is the single source of truth for both Task A's behavioural expectations and Task B's ground truth. The Task B prompt carries a `{{FIXTURE}}` placeholder substituted at render time from `fixtures/opencode-sample.log`, keeping prompt text version-controlled and the fixture authoritative.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
-**Dependencies**: LLMBENCH-1.1
+**Dependencies**: 10.1-001
 **Risk Level**: Medium
 
 ### Feature 10.4: Scorecard & Provenance Report
 
 #### Stories
 
-##### Story LLMBENCH-1.4: Comparable scorecard with provenance note
+##### Story 10.4-001: Comparable scorecard with provenance note
 **User Story**: As FX reviewing results, I want a single comparable scorecard across all models run so that I can see the coding/rule-following split and the effect of quant source at a glance.
 **Priority**: Should Have
 **Story Points**: 3
@@ -140,14 +140,14 @@ Severity rules (given verbatim to the model, and the ground truth for Task B):
 - [ ] Tests written and passing
 - [ ] Documentation updated
 
-**Dependencies**: LLMBENCH-1.2, LLMBENCH-1.3
+**Dependencies**: 10.2-001, 10.3-001
 **Risk Level**: Low
 
 ### Feature 10.5: Reproducibility & Engine Matrix (stretch)
 
 #### Stories
 
-##### Story LLMBENCH-1.5: Sweep, repeat/variance, and engine version
+##### Story 10.5-001: Sweep, repeat/variance, and engine version
 **User Story**: As the operator, I want to sweep the same test across multiple installed engines and modes so that I can isolate engine and mode effects (the GPT-OSS default-vs-thinking lesson).
 **Priority**: Should Have (stretch)
 **Story Points**: 3
@@ -164,14 +164,14 @@ Severity rules (given verbatim to the model, and the ground truth for Task B):
 - [ ] Tests written and passing
 - [ ] Documentation updated
 
-**Dependencies**: LLMBENCH-1.4
+**Dependencies**: 10.4-001
 **Risk Level**: Medium
 
 ## Definition of Done (Epic)
-- All of LLMBENCH-1.1–1.4 implemented; 1.5 optional.
+- All of 10.1-001–10.4-001 implemented; 10.5-001 optional.
 - A reference model (whatever is installed) runs clean end-to-end and produces a scorecard.
 - README documents how to add a model and how to read the provenance note.
 - Determinism verified: same inputs, same scores on rerun.
 
 ## Epic Progress
-**Completed**: 0 / 5 stories · 0 / 21 points
+**Completed**: 1 / 5 stories · 5 / 21 points (10.3-001)
