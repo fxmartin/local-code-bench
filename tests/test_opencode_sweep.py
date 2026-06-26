@@ -7,7 +7,12 @@ from pathlib import Path
 import pytest
 
 from local_code_bench.config import ConfigError
-from local_code_bench.opencode.engine_version import capture_engine_version
+from local_code_bench.opencode import engine_version as ev
+from local_code_bench.opencode.engine_version import (
+    _default_fetch,
+    _host_root,
+    capture_engine_version,
+)
 from local_code_bench.opencode.sweep import read_model_list
 
 
@@ -105,3 +110,63 @@ def test_capture_engine_version_missing_key_is_none() -> None:
         )
         is None
     )
+
+
+def test_capture_engine_version_empty_body_is_none() -> None:
+    assert (
+        capture_engine_version(
+            "ollama", "http://127.0.0.1:11434/v1", fetch=lambda _u, _t: ""
+        )
+        is None
+    )
+
+
+def test_capture_engine_version_non_dict_json_is_none() -> None:
+    # A JSON body that parses but is not an object yields no version string.
+    assert (
+        capture_engine_version(
+            "ollama", "http://127.0.0.1:11434/v1", fetch=lambda _u, _t: "[1, 2, 3]"
+        )
+        is None
+    )
+
+
+# --- _host_root ------------------------------------------------------------
+
+
+def test_host_root_strips_v1_suffix() -> None:
+    assert _host_root("http://127.0.0.1:11434/v1") == "http://127.0.0.1:11434"
+
+
+def test_host_root_without_v1_is_left_intact() -> None:
+    # A base URL that does not end in /v1 keeps its path untouched.
+    assert _host_root("http://127.0.0.1:11434/") == "http://127.0.0.1:11434"
+
+
+# --- _default_fetch --------------------------------------------------------
+
+
+def test_default_fetch_reads_response_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeResponse:
+        def __enter__(self) -> "_FakeResponse":
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"version": "0.5.7"}'
+
+    captured: dict[str, object] = {}
+
+    def fake_urlopen(url: str, timeout: float) -> _FakeResponse:
+        captured["url"] = url
+        captured["timeout"] = timeout
+        return _FakeResponse()
+
+    monkeypatch.setattr(ev.urllib.request, "urlopen", fake_urlopen)
+
+    body = _default_fetch("http://127.0.0.1:11434/api/version", 1.0)
+
+    assert body == '{"version": "0.5.7"}'
+    assert captured == {"url": "http://127.0.0.1:11434/api/version", "timeout": 1.0}
