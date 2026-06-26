@@ -76,7 +76,7 @@ def parse_classification(text: str) -> tuple[dict[int, str], int] | None:
         raw = json.loads(blob, object_pairs_hook=count_collisions)
     except (ValueError, TypeError):
         return None
-    if not isinstance(raw, dict):
+    if not isinstance(raw, dict):  # pragma: no cover - defensive: an extracted blob always starts with '{', so a successful parse is an object
         return None
 
     mapping: dict[int, str] = {}
