@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.25.0 (2026-06-26)
+
+### Features
+
+- **unified-dashboard**: Single-page unified dashboard (#09.1-001)
+  ([`1eb699a`](https://github.com/fxmartin/local-code-bench/commit/1eb699a9fec19f764b2c4ed5ee70403f81450651))
+
+### Testing
+
+- **unified-dashboard**: Single-page unified dashboard (#09.1-001)
+  ([`1689dcf`](https://github.com/fxmartin/local-code-bench/commit/1689dcf9e758e8d0d39efcb2c76510e96ddaf754))
+
+
 ## v0.24.0 (2026-06-26)
 
 ### Features
