@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import urllib.error
 import urllib.request
 
 import pytest
@@ -472,6 +473,53 @@ def test_handler_serves_real_post_over_http(tmp_path, monkeypatch):
             payload = json.loads(resp.read())
         assert payload["run_id"]
         orch.join(timeout=5)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_runs_lists_tracked_runs_in_order(tmp_path, monkeypatch):
+    calls: list[str] = []
+    _patch_backends(monkeypatch, calls=calls)
+    orch = _orchestrator(tmp_path)
+
+    assert orch.runs() == []
+
+    _, first = orch.launch(model="qwen", inferencer="dflash", suites=["humaneval"])
+    orch.join(timeout=5)
+    _, second = orch.launch(model="qwen", inferencer="dflash", suites=["mbpp"])
+    orch.join(timeout=5)
+
+    tracked = orch.runs()
+    assert [state.id for state in tracked] == [first["run_id"], second["run_id"]]
+
+
+def test_join_is_a_noop_before_any_run(tmp_path):
+    orch = _orchestrator(tmp_path)
+    # no background thread has started yet; join must return without error.
+    orch.join(timeout=0.1)
+
+
+def test_launch_action_rejects_non_dict_body(tmp_path):
+    orch = _orchestrator(tmp_path)
+    code, payload = launch.launch_action(orch, ["not", "a", "dict"])
+    assert code == 400
+    assert "JSON object" in payload["error"]
+
+
+def test_handler_serves_real_get_over_http(tmp_path):
+    orch = _orchestrator(tmp_path)
+    server = launch.make_server(orch, port=0)
+    host, port = server.server_address
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        req = urllib.request.Request(f"http://{host}:{port}/nope", method="GET")
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(req)
+        assert excinfo.value.code == 404
+        assert json.loads(excinfo.value.read())["error"] == "not found"
     finally:
         server.shutdown()
         server.server_close()
