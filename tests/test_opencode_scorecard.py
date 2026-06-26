@@ -262,6 +262,20 @@ def test_provenance_note_groups_by_bit_width_not_full_quant_string() -> None:
     assert "unsloth" in note and "bartowski" in note
 
 
+def test_provenance_note_keeps_best_error_rate_per_provider() -> None:
+    # A provider with two rows: the worse (higher error) row must not displace
+    # the already-recorded best, and the surfaced delta uses each provider's best.
+    rows = [
+        _row(model="qwen3", quant="IQ3_XXS", provider="unsloth", error_rate=0.05),
+        _row(model="qwen3", quant="IQ3_XXS", provider="unsloth", error_rate=0.90),
+        _row(model="qwen3", quant="IQ3_XXS", provider="bartowski", error_rate=1.0),
+    ]
+    note = provenance_note(rows)
+    # unsloth best (5%) vs bartowski (100%) => ~95 point delta, not 0.9-based.
+    assert "95" in note
+    assert "90.0% error" not in note
+
+
 def test_provenance_note_skips_rows_without_parseable_quant() -> None:
     rows = [
         _row(model="qwen3", quant=None, provider="unsloth"),
