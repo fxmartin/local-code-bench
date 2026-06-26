@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.27.0 (2026-06-26)
+
+### Features
+
+- **unified-dashboard**: Streaming chat endpoint (#09.7-001)
+  ([`2ee6f1f`](https://github.com/fxmartin/local-code-bench/commit/2ee6f1f43ef2512781e76466919170ebafb26a96))
+
+### Testing
+
+- **unified-dashboard**: Streaming chat endpoint (#09.7-001)
+  ([`7faf647`](https://github.com/fxmartin/local-code-bench/commit/7faf6475057622cc1d316283de8ef50113e4afc8))
+
+
 ## v0.26.0 (2026-06-26)
 
 ### Features
