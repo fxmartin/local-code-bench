@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from local_code_bench.config import ConfigError, load_agents, load_models
+from local_code_bench.config import (
+    ConfigError,
+    load_agents,
+    load_inferencers,
+    load_models,
+)
 
 
 def test_load_models_validates_endpoint_config(tmp_path) -> None:
@@ -316,3 +321,202 @@ agents:
 
     with pytest.raises(ConfigError, match="timeout_seconds"):
         load_agents(config_path)
+
+
+def test_load_models_reports_missing_file(tmp_path) -> None:
+    with pytest.raises(ConfigError, match="model config not found"):
+        load_models(tmp_path / "absent.yaml")
+
+
+def test_load_models_reports_invalid_yaml(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text("models: [unterminated", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="invalid YAML"):
+        load_models(config_path)
+
+
+def test_load_models_requires_top_level_mapping(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text("- just\n- a\n- list\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="top-level mapping"):
+        load_models(config_path)
+
+
+def test_load_models_requires_models_list(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text("models: not-a-list\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="'models' must be a list"):
+        load_models(config_path)
+
+
+def test_load_models_rejects_non_mapping_entry(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text("models:\n  - just-a-string\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match=r"models\[0\] must be a mapping"):
+        load_models(config_path)
+
+
+def test_load_models_rejects_unknown_type(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(
+        """
+models:
+  - name: bad
+    type: bedrock
+    base_url: http://localhost:8000/v1
+    model_id: qwen
+    pinned_revision: abc123
+    price_per_1k_tokens:
+      input: 0.0
+      output: 0.0
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="must be 'openai' or 'anthropic'"):
+        load_models(config_path)
+
+
+def test_load_models_requires_price_mapping(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(
+        """
+models:
+  - name: bad
+    type: openai
+    base_url: http://localhost:8000/v1
+    model_id: qwen
+    pinned_revision: abc123
+    price_per_1k_tokens: free
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="price_per_1k_tokens must be a mapping"):
+        load_models(config_path)
+
+
+def test_load_models_rejects_negative_price(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(
+        """
+models:
+  - name: bad
+    type: openai
+    base_url: http://localhost:8000/v1
+    model_id: qwen
+    pinned_revision: abc123
+    price_per_1k_tokens:
+      input: -1
+      output: 0.0
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="must be a non-negative number"):
+        load_models(config_path)
+
+
+def test_load_models_rejects_duplicate_name(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(
+        """
+models:
+  - name: dup
+    type: openai
+    base_url: http://localhost:8000/v1
+    model_id: qwen
+    pinned_revision: abc123
+    price_per_1k_tokens:
+      input: 0.0
+      output: 0.0
+  - name: dup
+    type: openai
+    base_url: http://localhost:8001/v1
+    model_id: qwen2
+    pinned_revision: def456
+    price_per_1k_tokens:
+      input: 0.0
+      output: 0.0
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="duplicates 'dup'"):
+        load_models(config_path)
+
+
+def test_load_agents_reports_missing_file(tmp_path) -> None:
+    with pytest.raises(ConfigError, match="agent config not found"):
+        load_agents(tmp_path / "absent.yaml")
+
+
+def test_load_agents_requires_agents_list(tmp_path) -> None:
+    config_path = tmp_path / "agents.yaml"
+    config_path.write_text("agents: nope\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="'agents' must be a list"):
+        load_agents(config_path)
+
+
+def test_load_agents_rejects_non_mapping_entry(tmp_path) -> None:
+    config_path = tmp_path / "agents.yaml"
+    config_path.write_text("agents:\n  - just-a-string\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match=r"agents\[0\] must be a mapping"):
+        load_agents(config_path)
+
+
+def test_load_agents_rejects_unknown_type(tmp_path) -> None:
+    config_path = tmp_path / "agents.yaml"
+    config_path.write_text(
+        """
+agents:
+  - name: claude
+    type: claude
+    command: claude
+    sandbox: workspace-write
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="must be 'codex'"):
+        load_agents(config_path)
+
+
+def test_load_agents_rejects_duplicate_name(tmp_path) -> None:
+    config_path = tmp_path / "agents.yaml"
+    config_path.write_text(
+        """
+agents:
+  - name: codex
+    type: codex
+    command: codex
+    sandbox: workspace-write
+  - name: codex
+    type: codex
+    command: codex2
+    sandbox: read-only
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="duplicates 'codex'"):
+        load_agents(config_path)
+
+
+def test_load_inferencers_reports_missing_file(tmp_path) -> None:
+    with pytest.raises(ConfigError, match="inferencer config not found"):
+        load_inferencers(tmp_path / "absent.yaml")
+
+
+def test_load_inferencers_requires_inferencers_list(tmp_path) -> None:
+    config_path = tmp_path / "inferencers.yaml"
+    config_path.write_text("inferencers: nope\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="'inferencers' must be a list"):
+        load_inferencers(config_path)
