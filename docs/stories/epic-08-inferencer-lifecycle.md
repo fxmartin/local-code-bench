@@ -88,9 +88,9 @@
 **Technical Notes**: Add `running_others(target, configs, state_dir)` and `start_exclusive(target_cfg, configs, state_dir, *, confirm, force=False, progress=None)` to `manager.py`. `confirm` is an injected `Callable[[list[InferencerStatus]], bool]` so the identical mutual-exclusion rule serves every surface (CLI, web) without duplication — this is the one place the timing-integrity invariant is enforced. Test by injecting a confirm spy and patching `start`/`stop` to record calls; assert decline aborts without starting, accept stops-then-starts, and GUI-app-without-`force` blocks. No subprocess needed.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 08.2-001
 **Risk Level**: Medium
