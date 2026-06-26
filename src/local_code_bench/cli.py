@@ -209,6 +209,46 @@ def build_parser() -> argparse.ArgumentParser:
         default=8765,
         help="dashboard bind port",
     )
+
+    dashboard = subparsers.add_parser(
+        "dashboard",
+        help="serve the unified Inferencers / Results / Run dashboard",
+        description=(
+            "Serve one localhost page composing the inferencer control panel, the live "
+            "results view, and the benchmark Run section (supersedes 'inferencer dashboard')."
+        ),
+    )
+    dashboard.add_argument(
+        "--config",
+        default="configs/inferencers.yaml",
+        help="path to inferencer registry YAML",
+    )
+    dashboard.add_argument(
+        "--state-dir",
+        default=".runtime/inferencers",
+        help="directory holding per-engine PID/state files",
+    )
+    dashboard.add_argument(
+        "--input",
+        nargs="*",
+        help="result JSONL files for the Results section (default: every results-dir/*.jsonl)",
+    )
+    dashboard.add_argument(
+        "--results-dir",
+        default="results",
+        help="directory scanned for result JSONL when --input is omitted",
+    )
+    dashboard.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="dashboard bind host (localhost only)",
+    )
+    dashboard.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="dashboard bind port",
+    )
     return parser
 
 
@@ -225,6 +265,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if getattr(args, "command", None) == "inferencer":
             return run_inferencer_command(args)
+
+        if getattr(args, "command", None) == "dashboard":
+            return run_unified_dashboard_command(args)
 
         if args.mode == "leaderboard":
             inputs = [Path(item) for item in args.input or []]
@@ -395,6 +438,43 @@ def run_dashboard_mode(args: argparse.Namespace, parser: argparse.ArgumentParser
     generate_dashboard(inputs, output)
     print(f"wrote {output}")
     return 0
+
+
+def run_unified_dashboard_command(args: argparse.Namespace) -> int:
+    """Serve the Epic-09 unified dashboard (Inferencers / Results / Run) on localhost.
+
+    Composes the existing inferencer control panel and live results view under one
+    page. The Results section reads either the explicit ``--input`` JSONL files or,
+    by default, every ``*.jsonl`` under ``--results-dir``. Config/lifecycle failures
+    surface as ``bench: error: ...`` on stderr with exit 2, like the rest of the CLI.
+    """
+
+    from local_code_bench.unified_dashboard import serve_dashboard
+
+    try:
+        serve_dashboard(
+            args.config,
+            args.state_dir,
+            _resolve_dashboard_inputs(args),
+            host=args.host,
+            port=args.port,
+            progress=lambda message: print(message, flush=True),
+        )
+    except (ConfigError, InferencerError) as exc:
+        print(f"bench: error: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def _resolve_dashboard_inputs(args: argparse.Namespace) -> list[str | Path]:
+    """Pick the Results-section JSONL: explicit ``--input``, else results-dir/*.jsonl."""
+
+    if args.input:
+        return [Path(item) for item in args.input]
+    results_dir = Path(args.results_dir)
+    if results_dir.is_dir():
+        return sorted(results_dir.glob("*.jsonl"))
+    return []
 
 
 def run_inferencer_command(args: argparse.Namespace) -> int:

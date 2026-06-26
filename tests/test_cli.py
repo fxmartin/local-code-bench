@@ -312,6 +312,61 @@ def test_inferencer_dashboard_config_error_exits_2(monkeypatch, capsys) -> None:
     assert "bench: error:" in capsys.readouterr().err
 
 
+# --- unified dashboard command ----------------------------------------------
+
+
+def test_unified_dashboard_command_invokes_server(monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_serve(config, state_dir, result_paths, *, host, port, progress) -> None:
+        captured.update(
+            config=config, state_dir=state_dir, result_paths=result_paths, host=host, port=port
+        )
+
+    monkeypatch.setattr("local_code_bench.unified_dashboard.serve_dashboard", fake_serve)
+
+    exit_code = main(
+        ["dashboard", "--port", "9001", "--config", "x.yaml", "--input", "results/a.jsonl"]
+    )
+
+    assert exit_code == 0
+    assert captured["port"] == 9001
+    assert captured["config"] == "x.yaml"
+    assert captured["host"] == "127.0.0.1"
+    assert captured["result_paths"] == [Path("results/a.jsonl")]
+
+
+def test_unified_dashboard_discovers_results_dir(monkeypatch, tmp_path) -> None:
+    (tmp_path / "run-a.jsonl").write_text("{}\n")
+    (tmp_path / "run-b.jsonl").write_text("{}\n")
+    (tmp_path / "notes.txt").write_text("ignore me")
+    captured: dict = {}
+
+    def fake_serve(config, state_dir, result_paths, *, host, port, progress) -> None:
+        captured["result_paths"] = result_paths
+
+    monkeypatch.setattr("local_code_bench.unified_dashboard.serve_dashboard", fake_serve)
+
+    exit_code = main(["dashboard", "--results-dir", str(tmp_path)])
+
+    assert exit_code == 0
+    assert captured["result_paths"] == [tmp_path / "run-a.jsonl", tmp_path / "run-b.jsonl"]
+
+
+def test_unified_dashboard_config_error_exits_2(monkeypatch, capsys) -> None:
+    from local_code_bench.config import ConfigError
+
+    def boom(*_args, **_kwargs) -> None:
+        raise ConfigError("inferencer config not found: missing.yaml")
+
+    monkeypatch.setattr("local_code_bench.unified_dashboard.serve_dashboard", boom)
+
+    exit_code = main(["dashboard"])
+
+    assert exit_code == 2
+    assert "bench: error:" in capsys.readouterr().err
+
+
 # --- dashboard mode ----------------------------------------------------------
 
 

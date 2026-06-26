@@ -359,6 +359,29 @@ running GUI app blocks the start with a warning to quit it manually unless `--fo
 is passed; the harness never force-quits a GUI app. State lives under
 `.runtime/inferencers/` (gitignored). Override paths with `--config` and `--state-dir`.
 
+## Unified Dashboard
+
+`bench dashboard` serves a single localhost page that brings the inferencer control
+panel, the live results view, and a benchmark **Run** section together — switch
+between them client-side with no reload and no build step:
+
+```bash
+uv run bench dashboard                       # serve on http://127.0.0.1:8765
+uv run bench dashboard --port 8888           # pick a different localhost port
+uv run bench dashboard --input results/run.jsonl   # Results section reads these files
+```
+
+It composes the existing surfaces rather than duplicating them: the **Inferencers**
+section drives the same exclusive start/stop as `bench inferencer` (exactly one
+headless server ever holds the GPU), and the **Results** section reuses the live
+aggregates, so a still-running run shows up on refresh without a restart. The
+**Run** section is the navigable seam the benchmark launcher plugs into next. By
+default the Results section reads every `*.jsonl` under `--results-dir` (default
+`results/`); pass `--input` one or more times to view specific files instead.
+`--config` and `--state-dir` point at the inferencer registry and its state dir.
+The server binds localhost only and exposes no API keys, `.env` contents, or host
+paths. This supersedes `bench inferencer dashboard`, which remains available.
+
 ## Verification Status
 
 Last automated verification: 2026-06-21.

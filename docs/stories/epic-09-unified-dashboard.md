@@ -35,9 +35,9 @@
 **Technical Notes**: New `src/local_code_bench/dashboard/app.py` (or extend the Epic-08 `inferencers/dashboard.py` server) using the stdlib `http.server`, reusing Epic-08's `manager`/status JSON and Epic-07's results aggregates (07.1-001/07.3-001) rather than re-querying. Serve one self-contained page (inlined CSS/JS, no CDN). Expose via a single `bench dashboard [--port 8765]` entry that supersedes the per-epic `bench inferencer dashboard` once this lands. Keep section panels as thin clients over the existing JSON endpoints.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 07.3-001, 08.6-001
 **Risk Level**: Medium
@@ -212,6 +212,7 @@ writing JSONL via `new_run_path`. Tests in `tests/test_launch.py`.
 **Risk Level**: Low
 
 ## Epic Progress
-**Completed**: 1 / 8 stories · 5 / 32 points
+**Completed**: 2 / 8 stories · 10 / 32 points
 
+- [x] 09.1-001 — Single-page unified dashboard with Inferencers / Results / Run sections (5 pts)
 - 09.3-001 Launch orchestration endpoint — done (`src/local_code_bench/launch.py`)
