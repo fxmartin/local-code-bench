@@ -385,11 +385,17 @@ Unavailable suites (e.g. a missing EvalPlus cache file) are shown disabled with 
 reason. The form warns when the chosen inferencer differs from the model's declared
 `inferencer` before anything is launched, and submitting a valid composition posts
 to the launch endpoint, which exclusively starts the inferencer and runs the suites.
-By default the Results section reads every `*.jsonl` under `--results-dir` (default
-`results/`); pass `--input` one or more times to view specific files instead.
-`--config` and `--state-dir` point at the inferencer registry and its state dir.
-The server binds localhost only and exposes no API keys, `.env` contents, or host
-paths. This supersedes `bench inferencer dashboard`, which remains available.
+It then monitors launched benchmarks live: a **Live Runs** table polls `/api/runs`
+to show each run's status, passed/failed/remaining counts, current task, and the cost
+and decode tok/s accumulated so far; when a run reaches a terminal state its status is
+shown (a failed or aborted run surfaces a reason rather than stopping silently) and
+the Results section refreshes to reflect the new JSONL — no restart. By default the
+Results section reads every `*.jsonl` under `--results-dir` (default `results/`),
+which is also where launched runs write, so newly launched runs appear automatically;
+pass `--input` one or more times to view specific files instead. `--config` and
+`--state-dir` point at the inferencer registry and its state dir. The server binds
+localhost only and exposes no API keys, `.env` contents, or host paths. This
+supersedes `bench inferencer dashboard`, which remains available.
 
 A `POST /api/chat` endpoint streams a model reply token-by-token over Server-Sent
 Events, so you can smoke-test a model without writing a benchmark. Post a JSON body

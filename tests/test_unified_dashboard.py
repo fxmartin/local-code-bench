@@ -604,3 +604,191 @@ def test_serve_dashboard_degrades_when_models_config_is_missing(monkeypatch) -> 
 
     assert seen["models"] == {}  # chat disabled, dashboard still serves
     assert any("chat disabled" in msg for msg in messages)
+
+
+# ---------------------------------------------------------------------------
+# Run section: live run progress + auto-refreshed results (story 09.4-001)
+# ---------------------------------------------------------------------------
+
+
+from local_code_bench import launch  # noqa: E402
+
+
+def _orchestrator(tmp_path) -> launch.RunOrchestrator:
+    return launch.RunOrchestrator(
+        models={},
+        inferencers=_configs(),
+        state_dir=".runtime",
+        results_dir=str(tmp_path / "results"),
+    )
+
+
+def _ctx_with_orchestrator(orch, *, results_dir=None, result_paths=None) -> ud.DashboardContext:
+    return ud.DashboardContext(
+        configs=_configs(),
+        state_dir=".runtime",
+        result_paths=result_paths or [],
+        orchestrator=orch,
+        results_dir=results_dir,
+    )
+
+
+def _inject_run(orch, **kwargs) -> launch.RunState:
+    defaults = dict(id="r1", model="qwen", inferencer="dflash", suites=["humaneval"],
+                    result_file="run.jsonl")
+    defaults.update(kwargs)
+    state = launch.RunState(**defaults)
+    orch._runs[state.id] = state
+    return state
+
+
+def test_api_runs_lists_live_progress(tmp_path: Path) -> None:
+    orch = _orchestrator(tmp_path)
+    _inject_run(orch, total=5, completed=2, passed=2, failed=0, last_event="[2/5] qwen t1: passed")
+
+    resp = ud.handle_request("GET", "/api/runs", _ctx_with_orchestrator(orch))
+
+    assert resp.status == 200
+    payload = json.loads(resp.body)
+    run = payload["runs"][0]
+    assert run["run_id"] == "r1"
+    assert run["passed"] == 2
+    assert run["remaining"] == 3
+    assert run["status"] == "running"
+
+
+def test_api_runs_without_orchestrator_is_empty() -> None:
+    resp = ud.handle_request("GET", "/api/runs", _ctx())
+    assert resp.status == 200
+    assert json.loads(resp.body) == {"runs": []}
+
+
+def test_api_run_by_id_returns_progress(tmp_path: Path) -> None:
+    orch = _orchestrator(tmp_path)
+    _inject_run(orch, id="abc123", total=3, completed=3, passed=3, status="completed")
+
+    resp = ud.handle_request("GET", "/api/run/abc123", _ctx_with_orchestrator(orch))
+
+    assert resp.status == 200
+    payload = json.loads(resp.body)
+    assert payload["run_id"] == "abc123"
+    assert payload["status"] == "completed"
+    assert payload["remaining"] == 0
+
+
+def test_api_run_by_id_unknown_is_404(tmp_path: Path) -> None:
+    orch = _orchestrator(tmp_path)
+    resp = ud.handle_request("GET", "/api/run/nope", _ctx_with_orchestrator(orch))
+    assert resp.status == 404
+
+
+def test_api_run_surfaces_failure_reason(tmp_path: Path) -> None:
+    orch = _orchestrator(tmp_path)
+    _inject_run(orch, id="boom", status="failed", error="inferencer did not become healthy")
+
+    resp = ud.handle_request("GET", "/api/run/boom", _ctx_with_orchestrator(orch))
+
+    payload = json.loads(resp.body)
+    assert payload["status"] == "failed"
+    assert "did not become healthy" in payload["error"]
+
+
+def test_post_api_run_delegates_to_launch_action(tmp_path: Path, monkeypatch) -> None:
+    orch = _orchestrator(tmp_path)
+    seen: dict = {}
+
+    def _fake_launch_action(orchestrator, body):
+        seen["orchestrator"] = orchestrator
+        seen["body"] = body
+        return 202, {"run_id": "new", "status": "running"}
+
+    monkeypatch.setattr(ud.launch, "launch_action", _fake_launch_action)
+
+    body = json.dumps({"model": "qwen", "inferencer": "dflash", "suites": ["humaneval"]}).encode()
+    resp = ud.handle_request("POST", "/api/run", _ctx_with_orchestrator(orch), body)
+
+    assert resp.status == 202
+    assert seen["orchestrator"] is orch
+    assert seen["body"]["model"] == "qwen"
+    assert json.loads(resp.body)["run_id"] == "new"
+
+
+def test_post_api_run_invalid_json_is_400(tmp_path: Path) -> None:
+    orch = _orchestrator(tmp_path)
+    resp = ud.handle_request("POST", "/api/run", _ctx_with_orchestrator(orch), b"{not json")
+    assert resp.status == 400
+
+
+def test_post_api_run_without_orchestrator_is_503() -> None:
+    resp = ud.handle_request("POST", "/api/run", _ctx(), b"{}")
+    assert resp.status == 503
+
+
+def test_api_data_picks_up_new_run_file_from_results_dir(tmp_path: Path) -> None:
+    # AC2: a freshly launched run's JSONL appears in Results without a restart, even
+    # when it was not in the explicit --input list.
+    results_dir = tmp_path / "results"
+    new_file = results_dir / "run-new.jsonl"
+    append_jsonl(new_file, _endpoint_record("m9", "HumanEval/0", passed=True))
+
+    ctx = ud.DashboardContext(
+        configs=_configs(), state_dir=".runtime", result_paths=[], results_dir=results_dir
+    )
+    payload = json.loads(ud.handle_request("GET", "/api/data", ctx).body)
+
+    assert payload["endpoint_models"][0]["model"] == "m9"
+
+
+def test_run_section_has_live_monitor_markup() -> None:
+    body = ud.render_page()
+    assert 'id="runs"' in body  # live run monitor table body
+    assert "Live Runs" in body
+    assert "/api/runs" in body  # the page polls the status endpoint
+
+
+def test_post_api_run_routes_over_http(tmp_path: Path, monkeypatch) -> None:
+    orch = _orchestrator(tmp_path)
+    monkeypatch.setattr(
+        ud.launch, "launch_action", lambda orchestrator, b: (202, {"run_id": "x"})
+    )
+    server = ud.make_server(_ctx_with_orchestrator(orch), port=0)
+    host, port = server.server_address
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        request = urllib.request.Request(
+            f"http://{host}:{port}/api/run",
+            data=json.dumps({"model": "qwen", "inferencer": "dflash", "suites": ["humaneval"]}).encode(),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request) as resp:
+            assert resp.status == 202
+            assert json.loads(resp.read())["run_id"] == "x"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_build_orchestrator_returns_none_without_results_dir() -> None:
+    assert ud._build_orchestrator("configs/models.yaml", _configs(), ".runtime", None) is None
+
+
+def test_build_orchestrator_returns_none_when_models_unloadable(monkeypatch, tmp_path) -> None:
+    from local_code_bench.config import ConfigError
+
+    monkeypatch.setattr(ud, "load_models", lambda _path: (_ for _ in ()).throw(ConfigError("nope")))
+
+    orch = ud._build_orchestrator("missing.yaml", _configs(), ".runtime", str(tmp_path))
+
+    assert orch is None
+
+
+def test_build_orchestrator_wires_models_into_run_orchestrator(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(ud, "load_models", lambda _path: {"qwen": object()})
+
+    orch = ud._build_orchestrator("configs/models.yaml", _configs(), ".runtime", str(tmp_path))
+
+    assert isinstance(orch, launch.RunOrchestrator)
+    assert orch.runs_payload() == []  # built, no runs launched yet

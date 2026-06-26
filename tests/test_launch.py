@@ -537,3 +537,124 @@ def test_launch_response_leaks_no_secrets(tmp_path, monkeypatch):
     serialized = json.dumps(payload).lower()
     for secret in ("api_key", "apikey", "authorization", "secret", "token", ".env", str(tmp_path)):
         assert secret.lower() not in serialized
+
+
+# ---------------------------------------------------------------------------
+# live progress: accumulated cost/speed + run payload (story 09.4-001)
+# ---------------------------------------------------------------------------
+
+
+def _endpoint_metric_record(task_id: str, *, cost: float, decode: float) -> dict[str, object]:
+    return {
+        "run_mode": "endpoint",
+        "task_id": task_id,
+        "cost_usd": cost,
+        "metrics": {"decode_tokens_per_second": decode},
+    }
+
+
+def test_accumulated_metrics_sums_cost_and_medians_decode(tmp_path):
+    from local_code_bench.results import append_jsonl
+
+    path = tmp_path / "run.jsonl"
+    append_jsonl(path, _endpoint_metric_record("t0", cost=0.01, decode=50.0))
+    append_jsonl(path, _endpoint_metric_record("t1", cost=0.03, decode=70.0))
+
+    metrics = launch.accumulated_metrics(path)
+
+    assert metrics["cost_usd"] == pytest.approx(0.04)
+    assert metrics["decode_tokens_per_second"] == pytest.approx(60.0)
+
+
+def test_accumulated_metrics_missing_file_is_nulls(tmp_path):
+    metrics = launch.accumulated_metrics(tmp_path / "absent.jsonl")
+    assert metrics == {"cost_usd": None, "decode_tokens_per_second": None}
+
+
+def test_accumulated_metrics_tolerates_partial_trailing_line(tmp_path):
+    path = tmp_path / "run.jsonl"
+    # a poll can catch the runner mid-append: a complete record then a half-written line.
+    path.write_text(
+        json.dumps(_endpoint_metric_record("t0", cost=0.02, decode=40.0)) + "\n{\"task_id\": ",
+        encoding="utf-8",
+    )
+
+    metrics = launch.accumulated_metrics(path)
+
+    assert metrics["cost_usd"] == pytest.approx(0.02)
+    assert metrics["decode_tokens_per_second"] == pytest.approx(40.0)
+
+
+def test_accumulated_metrics_ignores_non_task_records(tmp_path):
+    from local_code_bench.results import append_jsonl
+
+    path = tmp_path / "run.jsonl"
+    append_jsonl(path, {"run_mode": "metadata", "suite": "humaneval"})  # run-metadata header
+    append_jsonl(path, _endpoint_metric_record("t0", cost=0.05, decode=90.0))
+
+    metrics = launch.accumulated_metrics(path)
+
+    assert metrics["cost_usd"] == pytest.approx(0.05)
+    assert metrics["decode_tokens_per_second"] == pytest.approx(90.0)
+
+
+def _inject_state(orch, **kwargs):
+    defaults = dict(
+        id="r1",
+        model="qwen",
+        inferencer="dflash",
+        suites=["humaneval"],
+        result_file="run.jsonl",
+    )
+    defaults.update(kwargs)
+    state = launch.RunState(**defaults)
+    orch._runs[state.id] = state
+    return state
+
+
+def test_run_payload_merges_counts_and_file_metrics(tmp_path):
+    from local_code_bench.results import append_jsonl
+
+    orch = _orchestrator(tmp_path)
+    results_dir = tmp_path / "results"
+    append_jsonl(results_dir / "run.jsonl", _endpoint_metric_record("t0", cost=0.01, decode=50.0))
+    append_jsonl(results_dir / "run.jsonl", _endpoint_metric_record("t1", cost=0.03, decode=70.0))
+    _inject_state(orch, total=5, completed=2, passed=2, failed=0, last_event="[2/5] qwen t1: passed")
+
+    payload = orch.run_payload("r1")
+
+    assert payload["run_id"] == "r1"
+    assert payload["passed"] == 2
+    assert payload["failed"] == 0
+    assert payload["remaining"] == 3  # total - completed
+    assert payload["last_event"].endswith("passed")
+    assert payload["cost_usd"] == pytest.approx(0.04)
+    assert payload["decode_tokens_per_second"] == pytest.approx(60.0)
+
+
+def test_run_payload_unknown_id_is_none(tmp_path):
+    orch = _orchestrator(tmp_path)
+    assert orch.run_payload("missing") is None
+
+
+def test_run_payload_surfaces_failure_reason(tmp_path):
+    orch = _orchestrator(tmp_path)
+    _inject_state(orch, status="failed", error="missing evalplus cache", total=3, completed=1)
+
+    payload = orch.run_payload("r1")
+
+    assert payload["status"] == "failed"
+    assert payload["error"] == "missing evalplus cache"
+    assert payload["remaining"] == 2
+
+
+def test_runs_payload_lists_each_run_with_remaining(tmp_path):
+    orch = _orchestrator(tmp_path)
+    _inject_state(orch, id="a", total=4, completed=1)
+    _inject_state(orch, id="b", result_file="b.jsonl", total=2, completed=2, status="completed")
+
+    payloads = orch.runs_payload()
+
+    assert [p["run_id"] for p in payloads] == ["a", "b"]
+    assert payloads[0]["remaining"] == 3
+    assert payloads[1]["remaining"] == 0

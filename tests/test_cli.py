@@ -344,6 +344,7 @@ def test_unified_dashboard_command_invokes_server(monkeypatch) -> None:
             state_dir=state_dir,
             result_paths=result_paths,
             models_path=models_path,
+            results_dir=results_dir,
             suites_path=suites_path,
             host=host,
             port=port,
@@ -364,8 +365,10 @@ def test_unified_dashboard_command_invokes_server(monkeypatch) -> None:
     assert captured["models_path"] == "custom/models.yaml"
     assert captured["host"] == "127.0.0.1"
     assert captured["result_paths"] == [Path("results/a.jsonl")]
-    # the Run launcher's suite catalog falls back to the default registry
+    # the Run launcher's suite catalog falls back to the default registry; the live
+    # monitor + auto-refresh read the results dir
     assert captured["suites_path"] == "configs/suites.yaml"
+    assert captured["results_dir"] == "results"
 
 
 def test_unified_dashboard_discovers_results_dir(monkeypatch, tmp_path) -> None:

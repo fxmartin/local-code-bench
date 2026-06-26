@@ -118,10 +118,20 @@ writing JSONL via `new_run_path`. Tests in `tests/test_launch.py`.
 
 **Technical Notes**: A `GET /api/run/<id>` (or `/api/runs`) status endpoint the page polls, fed by the in-memory run state from 09.3-001 and/or by tailing the run's JSONL. On completion, the Results section re-fetches Epic-07's live aggregates (07.3-001) pointed at the new file. Keep polling simple (interval refresh); no websockets needed. Test with a fake run-state source asserting progress, terminal, and failure rendering.
 
+**Implementation**: `RunOrchestrator.run_payload`/`runs_payload` and the
+`accumulated_metrics` JSONL tailer in `src/local_code_bench/launch.py` expose live
+progress (passed/failed/remaining counts, current task, and accumulated cost / decode
+tok/s). The unified dashboard wires the orchestrator into `DashboardContext` and adds
+`POST /api/run` (delegating to `launch.launch_action`), `GET /api/runs`, and
+`GET /api/run/<id>`; `/api/data` now also globs `results_dir` so a launched run's JSONL
+appears without a restart. The Run section's **Live Runs** monitor polls `/api/runs`
+every 2s, surfaces terminal status + failure reason, and triggers the Results refresh
+on completion. Tests in `tests/test_launch.py` and `tests/test_unified_dashboard.py`.
+
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 09.3-001, 07.3-001
 **Risk Level**: Medium
@@ -233,9 +243,10 @@ tests in `tests/test_provider.py`.
 **Risk Level**: Low
 
 ## Epic Progress
-**Completed**: 3 / 8 stories · 15 / 32 points
+**Completed**: 5 / 8 stories · 23 / 32 points
 
 - [x] 09.1-001 — Single-page unified dashboard with Inferencers / Results / Run sections (5 pts)
 - [x] 09.2-001 — Compose a benchmark from model + inferencer + suites (5 pts) (`src/local_code_bench/unified_dashboard.py`)
 - 09.3-001 Launch orchestration endpoint — done (`src/local_code_bench/launch.py`)
+- [x] 09.4-001 — Live run progress and auto-refreshed results (3 pts) — `launch.py` run payloads + `unified_dashboard.py` `/api/runs` monitor
 - [x] 09.7-001 — Streaming chat endpoint (5 pts) — done (`src/local_code_bench/chat.py`)

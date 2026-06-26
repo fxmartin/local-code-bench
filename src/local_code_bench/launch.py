@@ -24,6 +24,7 @@ live progress.
 from __future__ import annotations
 
 import json
+import statistics
 import threading
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -198,6 +199,22 @@ class RunOrchestrator:
 
         return list(self._runs.values())
 
+    def run_payload(self, run_id: str) -> dict[str, object] | None:
+        """Serialize one run's live progress, or ``None`` if the id is unknown.
+
+        Merges the in-memory counts (passed/failed/remaining, current task, terminal
+        status and reason) with cost and decode speed accumulated so far by tailing
+        the run's JSONL — the source of truth story 09.4-001 renders for the user.
+        """
+
+        state = self._runs.get(run_id)
+        return self._payload(state) if state is not None else None
+
+    def runs_payload(self) -> list[dict[str, object]]:
+        """Serialize every tracked run's live progress (tracking order preserved)."""
+
+        return [self._payload(state) for state in self._runs.values()]
+
     def join(self, timeout: float | None = None) -> None:
         """Wait for the current background run thread to finish (test/shutdown aid)."""
 
@@ -285,6 +302,58 @@ class RunOrchestrator:
     def _on_progress(state: RunState, message: str) -> None:
         state.completed += 1
         state.last_event = message
+
+    def _payload(self, state: RunState) -> dict[str, object]:
+        payload = state.serialize()
+        payload["remaining"] = max(state.total - state.completed, 0)
+        payload.update(accumulated_metrics(Path(self._results_dir) / state.result_file))
+        return payload
+
+
+def accumulated_metrics(path: str | Path) -> dict[str, float | None]:
+    """Tail a run's JSONL for accumulated cost and a representative decode speed.
+
+    Reads the durable result file line by line, tolerating a partially-written
+    trailing line a status poll can catch mid-append, and ignoring non-task records
+    such as the run-metadata header. Returns ``{"cost_usd",
+    "decode_tokens_per_second"}`` with ``None`` for a metric no record carries yet,
+    so an in-flight run renders cleanly before its first task lands.
+    """
+
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return {"cost_usd": None, "decode_tokens_per_second": None}
+
+    cost = 0.0
+    saw_cost = False
+    decode_speeds: list[float] = []
+    for line in lines:
+        text = line.strip()
+        if not text:
+            continue
+        try:
+            record = json.loads(text)
+        except json.JSONDecodeError:
+            continue  # partially-written tail line; the next poll catches the rest
+        if not isinstance(record, dict) or record.get("run_mode") != "endpoint":
+            continue
+        if "task_id" not in record:
+            continue
+        value = record.get("cost_usd")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            cost += float(value)
+            saw_cost = True
+        metrics = record.get("metrics")
+        if isinstance(metrics, dict):
+            decode = metrics.get("decode_tokens_per_second")
+            if isinstance(decode, (int, float)) and not isinstance(decode, bool):
+                decode_speeds.append(float(decode))
+
+    return {
+        "cost_usd": cost if saw_cost else None,
+        "decode_tokens_per_second": statistics.median(decode_speeds) if decode_speeds else None,
+    }
 
 
 def _json(status: int, payload: dict[str, object]) -> Response:

@@ -31,6 +31,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import chat
 from . import dashboard_server as results_panel
+from . import launch
 from .config import (
     ConfigError,
     InferencerConfig,
@@ -39,7 +40,6 @@ from .config import (
     load_models,
 )
 from .inferencers import dashboard as inferencer_panel
-from .launch import RunOrchestrator, launch_action
 from .suite_catalog import catalog_payload
 
 _TRUTHY = {"1", "true", "yes", "on"}
@@ -57,16 +57,21 @@ class DashboardContext:
     The Run section (story 09.2-001) adds the model registry plus the suite-catalog
     lookups (``cache_dir`` / ``suites_path``) behind ``/api/catalog``, and a launch
     ``orchestrator`` (story 09.3-001) behind ``/api/run`` so the launcher form is a
-    thin client whose authority lives in the orchestrator.
+    thin client whose authority lives in the orchestrator. The same orchestrator's
+    in-memory run state feeds the status endpoints the page polls (``GET /api/runs`` /
+    ``/api/run/<id>``, story 09.4-001), and ``results_dir`` is scanned per
+    ``/api/data`` request so a freshly launched run's JSONL appears in the Results
+    section without a restart.
     """
 
     configs: dict[str, InferencerConfig]
     state_dir: str | Path
     result_paths: list[str | Path] = field(default_factory=list)
     models: dict[str, ModelConfig] = field(default_factory=dict)
-    orchestrator: RunOrchestrator | None = None
+    orchestrator: launch.RunOrchestrator | None = None
     cache_dir: str | Path = ".cache/benchmarks"
     suites_path: str | Path = "configs/suites.yaml"
+    results_dir: str | Path | None = None
 
 
 @dataclass(frozen=True)
@@ -104,6 +109,25 @@ def catalog_action(ctx: DashboardContext) -> tuple[int, dict]:
     return 200, {"models": models, "inferencers": inferencers, "suites": suites}
 
 
+def _resolve_result_paths(ctx: DashboardContext) -> list[str | Path]:
+    """Explicit ``--input`` files plus any ``*.jsonl`` under ``results_dir``.
+
+    A run launched from the dashboard writes a fresh file under ``results_dir``; by
+    globbing it per request (and de-duplicating against the explicit list) the
+    Results section reflects the new JSONL without a restart (story 09.4-001 AC2).
+    """
+
+    paths: list[str | Path] = list(ctx.result_paths)
+    if ctx.results_dir is not None:
+        directory = Path(ctx.results_dir)
+        if directory.is_dir():
+            seen = {str(Path(p)) for p in paths}
+            for found in sorted(directory.glob("*.jsonl")):
+                if str(found) not in seen:
+                    paths.append(found)
+    return paths
+
+
 def handle_request(
     method: str, path: str, ctx: DashboardContext, body: bytes = b""
 ) -> Response | chat.ChatStreamResponse:
@@ -135,11 +159,17 @@ def handle_request(
     if method == "POST" and route == "/api/stop":
         return _json(*inferencer_panel.stop_action(name, ctx.configs, ctx.state_dir))
     if method == "GET" and route == "/api/data":
-        return _json(*results_panel.data_action(ctx.result_paths))
+        return _json(*results_panel.data_action(_resolve_result_paths(ctx)))
     if method == "GET" and route == "/api/catalog":
         return _json(*catalog_action(ctx))
     if method == "POST" and route == "/api/run":
-        return _json(*_run_action(ctx, body))
+        if ctx.orchestrator is None:
+            return _json(503, {"error": "launching is unavailable: no model registry loaded"})
+        try:
+            parsed = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            return _json(400, {"error": "invalid JSON body"})
+        return _json(*launch.launch_action(ctx.orchestrator, parsed))
     if method == "POST" and route == "/api/chat":
         try:
             parsed = json.loads(body or b"{}")
@@ -149,19 +179,16 @@ def handle_request(
         if isinstance(result, chat.ChatStreamResponse):
             return result
         return _json(*result)
+    if method == "GET" and route == "/api/runs":
+        runs = ctx.orchestrator.runs_payload() if ctx.orchestrator is not None else []
+        return _json(200, {"runs": runs})
+    if method == "GET" and route.startswith("/api/run/"):
+        if ctx.orchestrator is not None:
+            payload = ctx.orchestrator.run_payload(route[len("/api/run/") :])
+            if payload is not None:
+                return _json(200, payload)
+        return _json(404, {"error": "unknown run"})
     return _json(404, {"error": "not found"})
-
-
-def _run_action(ctx: DashboardContext, body: bytes) -> tuple[int, dict]:
-    """Delegate a launch request to the orchestrator (story 09.3-001 authority)."""
-
-    if ctx.orchestrator is None:
-        return 503, {"error": "benchmark launcher is not available"}
-    try:
-        parsed = json.loads(body or b"{}")
-    except json.JSONDecodeError:
-        return 400, {"error": "invalid JSON body"}
-    return launch_action(ctx.orchestrator, parsed)
 
 
 def make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
@@ -221,6 +248,33 @@ def make_server(
     return HTTPServer((host, port), make_handler(ctx))
 
 
+def _build_orchestrator(
+    models_path: str | Path | None,
+    configs: dict[str, InferencerConfig],
+    state_dir: str | Path,
+    results_dir: str | Path | None,
+) -> launch.RunOrchestrator | None:
+    """Build the Run-section orchestrator, or ``None`` when launching is unavailable.
+
+    Needs both a writable ``results_dir`` and a loadable model registry; if the
+    models file is missing or invalid the dashboard still serves the Inferencers and
+    Results sections (the Run monitor just shows no launches).
+    """
+
+    if results_dir is None or models_path is None:
+        return None
+    try:
+        models = load_models(models_path)
+    except (ConfigError, OSError):
+        return None
+    return launch.RunOrchestrator(
+        models=models,
+        inferencers=configs,
+        state_dir=state_dir,
+        results_dir=results_dir,
+    )
+
+
 def serve_dashboard(
     config_path: str | Path,
     state_dir: str | Path,
@@ -246,7 +300,7 @@ def serve_dashboard(
 
     configs = load_inferencers(config_path)
     models = _load_models_safe(models_path, progress)
-    orchestrator = RunOrchestrator(
+    orchestrator = launch.RunOrchestrator(
         models=models,
         inferencers=configs,
         state_dir=state_dir,
@@ -261,6 +315,7 @@ def serve_dashboard(
         orchestrator=orchestrator,
         cache_dir=cache_dir,
         suites_path=suites_path,
+        results_dir=results_dir,
     )
     server = make_server(ctx, host=host, port=port)
     if progress is not None:
@@ -429,7 +484,8 @@ _PAGE = """<!DOCTYPE html>
   <h2>Run a Benchmark</h2>
   <p class="note">Compose a benchmark from a model, an inferencer, and one or more test
     suites, then launch it. The launch is exclusive: starting a run brings up exactly
-    one inference server. Live run monitoring plugs into this section (story 09.4).</p>
+    one inference server. Launched runs appear in the live monitor below, and the
+    Results section refreshes automatically when a run finishes.</p>
   <p id="run-load-err" class="err"></p>
   <div class="run-grid">
     <div>
@@ -448,6 +504,18 @@ _PAGE = """<!DOCTYPE html>
     <button class="act" id="run-launch">Launch benchmark</button>
   </p>
   <p id="run-msg"></p>
+  <h3>Live Runs</h3>
+  <p id="run-err" class="fail"></p>
+  <table>
+    <thead>
+      <tr>
+        <th>Run</th><th>Model</th><th>Suites</th><th>Status</th>
+        <th>Progress</th><th>Current Task</th>
+        <th class="num">Decode tok/s</th><th class="num">Cost</th><th>Reason</th>
+      </tr>
+    </thead>
+    <tbody id="runs"></tbody>
+  </table>
 </section>
 
 </main>
@@ -785,6 +853,8 @@ _PAGE = """<!DOCTYPE html>
     }
   }
 
+  // Expose so the Run monitor can pull the new JSONL the instant a run finishes.
+  window.refreshResults = refresh;
   refresh();
   setInterval(refresh, 3000);
 })();
@@ -943,6 +1013,74 @@ _PAGE = """<!DOCTYPE html>
   });
 
   load();
+})();
+
+// Run section: live monitor over /api/runs (story 09.4-001). Polls run progress,
+// surfaces terminal status + failure reason, and refreshes Results on completion.
+(function () {
+  const tbody = document.getElementById("runs");
+  const err = document.getElementById("run-err");
+  const finished = new Set();  // run ids already pushed to Results, refresh once each
+
+  function num(value, digits) {
+    if (value === null || value === undefined) return "-";
+    return Number(value).toFixed(digits === undefined ? 1 : digits);
+  }
+  function td(text, cls) {
+    const cell = document.createElement("td");
+    if (cls) cell.className = cls;
+    cell.textContent = text;
+    return cell;
+  }
+
+  function render(runs) {
+    tbody.innerHTML = "";
+    if (!runs.length) {
+      const tr = document.createElement("tr");
+      const cell = td("No runs launched yet.", "empty");
+      cell.colSpan = 9;
+      tr.appendChild(cell);
+      tbody.appendChild(tr);
+      return;
+    }
+    for (const r of runs) {
+      const remaining = r.remaining !== null && r.remaining !== undefined
+        ? r.remaining : Math.max((r.total || 0) - (r.completed || 0), 0);
+      const progress = (r.passed || 0) + " passed / " + (r.failed || 0) + " failed / "
+        + remaining + " left";
+      const cost = r.cost_usd === null || r.cost_usd === undefined
+        ? "-" : "$" + num(r.cost_usd, 6);
+      const terminal = r.status === "completed" || r.status === "failed";
+      const statusClass = r.status === "completed" ? "pass" : (r.status === "failed" ? "fail" : "");
+      const reason = r.status === "failed" ? (r.error || "failed (no reason given)") : "";
+      const tr = document.createElement("tr");
+      tr.append(
+        td(r.run_id), td(r.model), td((r.suites || []).join(", ")),
+        td(r.status, statusClass), td(progress), td(r.last_event || "-"),
+        td(num(r.decode_tokens_per_second), "num"), td(cost, "num"),
+        td(reason, reason ? "fail" : ""),
+      );
+      tbody.appendChild(tr);
+      if (terminal && !finished.has(r.run_id)) {
+        finished.add(r.run_id);
+        if (window.refreshResults) window.refreshResults();  // AC2: reflect new JSONL
+      }
+    }
+  }
+
+  async function refresh() {
+    try {
+      const res = await fetch("/api/runs");
+      const data = await res.json();
+      err.textContent = "";
+      render(data.runs || []);
+    } catch (e) {
+      err.textContent = "run status unavailable: " + e;
+    }
+  }
+
+  refresh();
+  setInterval(refresh, 2000);
 })();
 </script>
 </body>
