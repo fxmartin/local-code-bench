@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.36.0 (2026-06-26)
+
+### Features
+
+- **opencode-local-benchmark**: Comparable scorecard with (#10.4-001)
+  ([`c301c53`](https://github.com/fxmartin/local-code-bench/commit/c301c5358de04dd1f7b3593ff801d098758979db))
+
+### Testing
+
+- **opencode-local-benchmark**: Comparable scorecard with (#10.4-001)
+  ([`da403c2`](https://github.com/fxmartin/local-code-bench/commit/da403c2b998cf197b5e4280ce6b04726754202e6))
+
+
 ## v0.35.0 (2026-06-26)
 
 ### Features
