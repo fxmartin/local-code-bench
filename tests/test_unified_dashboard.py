@@ -783,6 +783,48 @@ def test_run_section_has_live_monitor_markup() -> None:
     assert "/api/runs" in body  # the page polls the status endpoint
 
 
+# ---------------------------------------------------------------------------
+# chat section UI (story 09.7-002) — a thin client over /api/chat + /api/catalog
+# ---------------------------------------------------------------------------
+
+
+def test_nav_includes_chat_section() -> None:
+    body = ud.render_page()
+    assert 'data-section="chat"' in body
+    assert 'id="section-chat"' in body
+
+
+def test_chat_section_has_picker_reusing_catalog_selectors() -> None:
+    body = ud.render_page()
+    # AC1: pick a model and inferencer, populated from the same catalog the launcher uses
+    assert 'id="chat-model"' in body
+    assert 'id="chat-inferencer"' in body
+    assert "/api/catalog" in body
+
+
+def test_chat_section_has_message_pane_and_stop_control() -> None:
+    body = ud.render_page()
+    # AC1/AC2: a multi-turn message pane, an input, a send and a (stop) control
+    assert 'id="chat-messages"' in body
+    assert 'id="chat-input"' in body
+    assert 'id="chat-send"' in body
+    assert 'id="chat-stop"' in body
+
+
+def test_chat_section_has_param_controls() -> None:
+    body = ud.render_page()
+    # AC3: system prompt, temperature, and max-tokens controls
+    assert 'id="chat-system"' in body
+    assert 'id="chat-temperature"' in body
+    assert 'id="chat-max-tokens"' in body
+
+
+def test_chat_section_is_thin_client_over_chat_endpoint() -> None:
+    body = ud.render_page()
+    # AC4: posts to the existing streaming endpoint; no new front-end stack
+    assert "/api/chat" in body
+
+
 def test_post_api_run_routes_over_http(tmp_path: Path, monkeypatch) -> None:
     orch = _orchestrator(tmp_path)
     monkeypatch.setattr(

@@ -460,6 +460,23 @@ _PAGE = """<!DOCTYPE html>
   .run-actions { margin-top: 1rem; }
   #run-msg.ok { color: #1e8449; }
   #run-msg.bad { color: #c0392b; }
+  .chat-grid { display: flex; gap: 2rem; flex-wrap: wrap; align-items: flex-end; }
+  .chat-grid select, .chat-grid input { font: inherit; padding: 0.3rem 0.4rem; }
+  .chat-grid select { min-width: 16rem; }
+  .chat-grid input[type="number"] { width: 6rem; }
+  #chat-system { font: inherit; width: 100%; max-width: 46rem; box-sizing: border-box;
+    padding: 0.4rem 0.5rem; margin-top: 0.4rem; }
+  #chat-messages { border: 1px solid #8884; border-radius: 0.4rem; padding: 0.8rem;
+    max-width: 46rem; height: 24rem; overflow-y: auto; margin-top: 0.8rem;
+    display: flex; flex-direction: column; gap: 0.6rem; }
+  .chat-msg { padding: 0.5rem 0.7rem; border-radius: 0.5rem; max-width: 90%;
+    white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.4; }
+  .chat-msg.user { align-self: flex-end; background: #2e9e4422; }
+  .chat-msg.assistant { align-self: flex-start; background: #8881; }
+  .chat-msg .role { font-size: 0.75rem; color: #888; display: block; margin-bottom: 0.15rem; }
+  .chat-compose { display: flex; gap: 0.5rem; margin-top: 0.8rem; max-width: 46rem; }
+  #chat-input { font: inherit; flex: 1; padding: 0.4rem 0.5rem; resize: vertical; min-height: 2.4rem; }
+  #chat-err { color: #c0392b; min-height: 1.2rem; }
 </style>
 </head>
 <body>
@@ -469,6 +486,7 @@ _PAGE = """<!DOCTYPE html>
     <button data-section="inferencers" class="active">Inferencers</button>
     <button data-section="results">Results</button>
     <button data-section="run">Run</button>
+    <button data-section="chat">Chat</button>
   </nav>
 </header>
 <main>
@@ -572,6 +590,42 @@ _PAGE = """<!DOCTYPE html>
   </table>
 </section>
 
+<section id="section-chat" class="section" hidden>
+  <h2>Chat with a Model</h2>
+  <p class="note">Smoke-test a model conversationally without writing a benchmark. Pick the
+    same model and inferencer the launcher offers, then send a message — the reply streams
+    token-by-token through the running engine. Chat never starts a server; bring one up in
+    the Inferencers or Run section first.</p>
+  <p id="chat-load-err" class="err"></p>
+  <div class="chat-grid">
+    <div>
+      <h3><label for="chat-model">Model</label></h3>
+      <select id="chat-model"></select>
+    </div>
+    <div>
+      <h3><label for="chat-inferencer">Inferencer</label></h3>
+      <select id="chat-inferencer"></select>
+    </div>
+    <div>
+      <h3><label for="chat-temperature">Temperature</label></h3>
+      <input id="chat-temperature" type="number" min="0" max="2" step="0.1" value="0.7">
+    </div>
+    <div>
+      <h3><label for="chat-max-tokens">Max tokens</label></h3>
+      <input id="chat-max-tokens" type="number" min="1" step="1" value="1024">
+    </div>
+  </div>
+  <h3><label for="chat-system">System prompt (optional)</label></h3>
+  <textarea id="chat-system" rows="2" placeholder="e.g. You are a terse coding assistant."></textarea>
+  <div id="chat-messages"></div>
+  <div class="chat-compose">
+    <textarea id="chat-input" rows="2" placeholder="Type a message…"></textarea>
+    <button class="act" id="chat-send">Send</button>
+    <button class="act" id="chat-stop" disabled>Stop</button>
+  </div>
+  <p id="chat-err"></p>
+</section>
+
 </main>
 
 <div id="modal">
@@ -591,6 +645,7 @@ _PAGE = """<!DOCTYPE html>
     inferencers: document.getElementById("section-inferencers"),
     results: document.getElementById("section-results"),
     run: document.getElementById("section-run"),
+    chat: document.getElementById("section-chat"),
   };
   function show(name) {
     for (const key in sections) sections[key].hidden = key !== name;
@@ -1135,6 +1190,152 @@ _PAGE = """<!DOCTYPE html>
 
   refresh();
   setInterval(refresh, 2000);
+})();
+
+// Chat section: a thin client over /api/catalog (selectors) and /api/chat (SSE stream).
+// Multi-turn state lives here and is posted whole each turn — there is no server DB.
+// Streaming is read incrementally from the fetch body and cancelled via AbortController.
+(function () {
+  const modelSel = document.getElementById("chat-model");
+  const infSel = document.getElementById("chat-inferencer");
+  const systemBox = document.getElementById("chat-system");
+  const tempBox = document.getElementById("chat-temperature");
+  const maxBox = document.getElementById("chat-max-tokens");
+  const pane = document.getElementById("chat-messages");
+  const input = document.getElementById("chat-input");
+  const sendBtn = document.getElementById("chat-send");
+  const stopBtn = document.getElementById("chat-stop");
+  const loadErr = document.getElementById("chat-load-err");
+  const err = document.getElementById("chat-err");
+  const history = [];  // {role, content} turns, posted whole each send
+  let controller = null;
+
+  function option(value, label) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    return opt;
+  }
+
+  async function load() {
+    try {
+      const res = await fetch("/api/catalog");
+      const data = await res.json();
+      const models = data.models || [];
+      modelSel.innerHTML = "";
+      modelSel.appendChild(option("", models.length ? "Select a model…" : "No models configured"));
+      for (const m of models) modelSel.appendChild(option(m.name, m.name));
+      infSel.innerHTML = "";
+      const infs = data.inferencers || [];
+      infSel.appendChild(option("", infs.length ? "Select an inferencer…" : "No inferencers configured"));
+      for (const it of infs) infSel.appendChild(option(it.name, it.name));
+    } catch (e) {
+      loadErr.textContent = "catalog unavailable: " + e;
+    }
+  }
+
+  function bubble(role) {
+    const div = document.createElement("div");
+    div.className = "chat-msg " + role;
+    const tag = document.createElement("span");
+    tag.className = "role";
+    tag.textContent = role;
+    const text = document.createElement("span");
+    div.append(tag, text);
+    pane.appendChild(div);
+    pane.scrollTop = pane.scrollHeight;
+    return text;
+  }
+
+  function streaming(on) {
+    sendBtn.disabled = on;
+    stopBtn.disabled = !on;
+    input.disabled = on;
+  }
+
+  function stop() {
+    if (controller) controller.abort();
+  }
+
+  async function send() {
+    err.textContent = "";
+    const content = input.value.trim();
+    if (!content) return;
+    if (!modelSel.value) { err.textContent = "Select a model first."; return; }
+    history.push({ role: "user", content });
+    bubble("user").textContent = content;
+    input.value = "";
+
+    const max = parseInt(maxBox.value, 10);
+    const payload = {
+      model: modelSel.value,
+      inferencer: infSel.value || undefined,
+      messages: history,
+      system: systemBox.value.trim() || undefined,
+      temperature: Number(tempBox.value),
+      max_tokens: Number.isFinite(max) ? max : undefined,
+    };
+    const out = bubble("assistant");
+    let reply = "";
+    controller = new AbortController();
+    streaming(true);
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      if (!res.ok || !res.body) {
+        let body = {};
+        try { body = await res.json(); } catch (e) { body = {}; }
+        out.textContent = body.error || ("chat failed (" + res.status + ")");
+        history.pop();  // drop the user turn that produced no usable reply
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n\n")) !== -1) {
+          const frame = buf.slice(0, nl);
+          buf = buf.slice(nl + 2);
+          const line = frame.split("\n").find((l) => l.startsWith("data:"));
+          if (!line) continue;
+          let ev = {};
+          try { ev = JSON.parse(line.slice(5).trim()); } catch (e) { continue; }
+          if (ev.delta) { reply += ev.delta; out.textContent = reply; pane.scrollTop = pane.scrollHeight; }
+          if (ev.error) { err.textContent = ev.error; }
+        }
+      }
+      if (reply) history.push({ role: "assistant", content: reply });
+      else history.pop();
+    } catch (e) {
+      if (e && e.name === "AbortError") {
+        out.textContent = reply + " [stopped]";
+        if (reply) history.push({ role: "assistant", content: reply });
+        else history.pop();
+      } else {
+        err.textContent = "chat failed: " + e;
+        history.pop();
+      }
+    } finally {
+      streaming(false);
+      controller = null;
+    }
+  }
+
+  sendBtn.addEventListener("click", send);
+  stopBtn.addEventListener("click", stop);
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); send(); }
+  });
+
+  load();
 })();
 </script>
 </body>

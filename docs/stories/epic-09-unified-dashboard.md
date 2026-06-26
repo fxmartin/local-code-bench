@@ -234,19 +234,29 @@ tests in `tests/test_provider.py`.
 
 **Technical Notes**: A new Chat section in the unified dashboard page (09.1-001) that is a thin client over `POST /api/chat` (09.7-001), reusing the launcher's model/inferencer selectors (09.2-001). Keep markdown/rendering minimal — the goal is a fast smoke test, not a full chat product. No new front-end dependencies.
 
+**Implementation**: A new **Chat** section in the unified dashboard page
+(`src/local_code_bench/unified_dashboard.py`) — a thin client over `POST /api/chat`
+(09.7-001) that reuses the launcher's model/inferencer selectors via `/api/catalog`.
+It renders a multi-turn message pane, streams the reply token-by-token by reading the
+SSE body incrementally, and exposes system-prompt / temperature / max-tokens controls
+plus a Stop control that aborts the fetch (cancelling the stream cleanly). Markup, CSS,
+and JS are inlined in the existing self-contained page (no CDN/build); replies render
+via `textContent` (no HTML injection). Tests in `tests/test_unified_dashboard.py`.
+
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 09.7-001, 09.2-001
 **Risk Level**: Low
 
 ## Epic Progress
-**Completed**: 5 / 8 stories · 23 / 32 points
+**Completed**: 6 / 8 stories · 26 / 32 points
 
 - [x] 09.1-001 — Single-page unified dashboard with Inferencers / Results / Run sections (5 pts)
 - [x] 09.2-001 — Compose a benchmark from model + inferencer + suites (5 pts) (`src/local_code_bench/unified_dashboard.py`)
 - 09.3-001 Launch orchestration endpoint — done (`src/local_code_bench/launch.py`)
 - [x] 09.4-001 — Live run progress and auto-refreshed results (3 pts) — `launch.py` run payloads + `unified_dashboard.py` `/api/runs` monitor
 - [x] 09.7-001 — Streaming chat endpoint (5 pts) — done (`src/local_code_bench/chat.py`)
+- [x] 09.7-002 — Chat panel UI (3 pts) — done (`src/local_code_bench/unified_dashboard.py` Chat section)
