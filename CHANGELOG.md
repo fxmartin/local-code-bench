@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.35.0 (2026-06-26)
+
+### Features
+
+- **opencode-local-benchmark**: Extract, compile, and (#10.2-001)
+  ([`f9bafd9`](https://github.com/fxmartin/local-code-bench/commit/f9bafd93ee5ff93358870e64e3b7b5634a205124))
+
+### Testing
+
+- **opencode-local-benchmark**: Extract, compile, and (#10.2-001)
+  ([`392e4fa`](https://github.com/fxmartin/local-code-bench/commit/392e4fa85b5be91c3a16f065d839145327e9e814))
+
+
 ## v0.34.0 (2026-06-26)
 
 ### Features
