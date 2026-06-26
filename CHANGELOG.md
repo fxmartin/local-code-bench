@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.37.0 (2026-06-26)
+
+### Features
+
+- **opencode-local-benchmark**: Sweep, repeat/variance, (#10.5-001)
+  ([`d401499`](https://github.com/fxmartin/local-code-bench/commit/d401499dd3bd7731ce3d95e0027908455304c4bb))
+
+### Testing
+
+- **opencode-local-benchmark**: Sweep, repeat/variance, (#10.5-001)
+  ([`c14e1b7`](https://github.com/fxmartin/local-code-bench/commit/c14e1b7b8ebb78e9d837f01633bd9e192a789d61))
+
+
 ## v0.36.0 (2026-06-26)
 
 ### Features
