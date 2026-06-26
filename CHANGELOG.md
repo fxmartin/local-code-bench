@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.26.0 (2026-06-26)
+
+### Features
+
+- **unified-dashboard**: Compose a benchmark from model + (#09.2-001)
+  ([`883a5bb`](https://github.com/fxmartin/local-code-bench/commit/883a5bbaa6205769317d0e12fddb87c8b7412a71))
+
+### Testing
+
+- **unified-dashboard**: Compose a benchmark from model + (#09.2-001)
+  ([`32e6cf6`](https://github.com/fxmartin/local-code-bench/commit/32e6cf63547725896b5be79dd2d94d546c21f6d7))
+
+
 ## v0.25.0 (2026-06-26)
 
 ### Features
