@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.32.0 (2026-06-26)
+
+### Features
+
+- **inferencer-lifecycle**: Register mtplx (native mtp) (#08.7-001)
+  ([`3946613`](https://github.com/fxmartin/local-code-bench/commit/39466131a24c7f36f0675f2665a43f1d983d6fd8))
+
+### Testing
+
+- **inferencer-lifecycle**: Register mtplx (native mtp) (#08.7-001)
+  ([`0b92672`](https://github.com/fxmartin/local-code-bench/commit/0b92672cf50674d31d10ea6ac21c4d132d408af4))
+
+
 ## v0.31.0 (2026-06-26)
 
 ### Features
