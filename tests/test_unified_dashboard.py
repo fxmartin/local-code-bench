@@ -5,6 +5,8 @@ import threading
 import urllib.request
 from pathlib import Path
 
+import pytest
+
 from local_code_bench.config import InferencerConfig, ModelConfig, TokenPrices
 from local_code_bench.inferencers import manager
 from local_code_bench.inferencers.manager import InferencerStatus
@@ -804,6 +806,229 @@ def test_post_api_run_routes_over_http(tmp_path: Path, monkeypatch) -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+# ---------------------------------------------------------------------------
+# Cross-section flow + localhost-only safety (story 09.6-001)
+# ---------------------------------------------------------------------------
+
+
+def _app_cfg(name: str = "lmstudio", port: int = 1234) -> InferencerConfig:
+    return InferencerConfig(
+        name=name,
+        lifecycle="app",
+        detect_kind="binary",
+        detect_target=name,
+        port=port,
+        health_url="http://127.0.0.1:{port}/v1/models",
+        start=None,
+    )
+
+
+# -- centralized response sanitization --------------------------------------
+
+
+def test_sanitize_payload_drops_secret_bearing_keys() -> None:
+    cleaned = ud.sanitize_payload(
+        {"name": "qwen", "api_key": "sk-abc123", "authorization": "Bearer t", "base_url": "x"}
+    )
+
+    assert cleaned == {"name": "qwen"}
+    assert "sk-abc123" not in json.dumps(cleaned)
+
+
+def test_sanitize_payload_drops_secret_keys_nested_in_lists() -> None:
+    cleaned = ud.sanitize_payload({"runs": [{"model": "qwen", "api_key_env": "SECRET_KEY_ENV"}]})
+
+    assert cleaned == {"runs": [{"model": "qwen"}]}
+
+
+def test_sanitize_payload_redacts_absolute_host_paths_in_strings() -> None:
+    cleaned = ud.sanitize_payload(
+        {"error": "No such file or directory: '/Users/fxmartin/dev/results/run.jsonl'"}
+    )
+
+    assert "/Users/fxmartin" not in cleaned["error"]
+    assert "run.jsonl" in cleaned["error"]  # basename kept so the message stays useful
+
+
+def test_sanitize_payload_leaves_safe_values_untouched() -> None:
+    payload = {"passed": 3, "decode_tokens_per_second": 42.0, "result_file": "run.jsonl"}
+    assert ud.sanitize_payload(payload) == payload
+
+
+def test_json_responses_flow_through_sanitizer(monkeypatch) -> None:
+    # a status row carrying a host path in its detail is scrubbed before it ships
+    monkeypatch.setattr(
+        manager,
+        "status_all",
+        lambda configs, state_dir: {
+            "dflash": InferencerStatus(
+                name="dflash", installed=True, lifecycle="server", running=True,
+                pid=1, port=8000, healthy=True,
+                detail="log at /Users/fxmartin/dev/.runtime/dflash.log",
+            )
+        },
+    )
+
+    body = ud.handle_request("GET", "/api/status", _ctx()).body.decode()
+
+    assert "/Users/fxmartin" not in body
+
+
+def test_run_status_redacts_host_path_in_failure_reason(tmp_path: Path) -> None:
+    # an exception message that captured a real path must not reach the browser
+    orch = _orchestrator(tmp_path)
+    _inject_run(
+        orch, id="boom", status="failed",
+        error="FileNotFoundError: '/Users/fxmartin/dev/configs/models.yaml'",
+    )
+
+    body = ud.handle_request("GET", "/api/run/boom", _ctx_with_orchestrator(orch)).body.decode()
+
+    assert "/Users/fxmartin" not in body
+    assert "models.yaml" in body  # basename retained
+
+
+def test_no_unified_endpoint_leaks_a_known_secret(monkeypatch, tmp_path: Path) -> None:
+    # security sweep: across every JSON endpoint, the model's API-key env name and
+    # base_url never reach the browser (the catalog/status/data projections plus the
+    # centralized sanitizer together hold the line).
+    monkeypatch.setattr(
+        manager, "status_all", lambda configs, state_dir: {"dflash": _status("dflash", running=True)}
+    )
+    path = tmp_path / "run.jsonl"
+    append_jsonl(path, _endpoint_record("m1", "HumanEval/0", passed=True))
+    ctx = _ctx([path])
+
+    for route in ("/api/status", "/api/data", "/api/catalog", "/api/runs"):
+        body = ud.handle_request("GET", route, ctx).body.decode().lower()
+        assert "secret_key_env" not in body
+        assert "http://127.0.0.1:8000/v1" not in body
+
+
+# -- GUI-app safety re-asserted at the unified layer ------------------------
+
+
+def test_unified_run_refuses_gui_app_and_never_force_quits(tmp_path: Path, monkeypatch) -> None:
+    configs = {"dflash": _server_cfg("dflash", 8000), "lmstudio": _app_cfg()}
+    orch = launch.RunOrchestrator(
+        models={"qwen": _model()},
+        inferencers=configs,
+        state_dir=".runtime",
+        results_dir=str(tmp_path / "results"),
+    )
+    # If the unified layer respected the warn-and-refuse rule, no lifecycle call fires.
+    monkeypatch.setattr(launch.manager, "stop", lambda *a, **k: pytest.fail("force-quit a GUI app"))
+    monkeypatch.setattr(
+        launch.manager, "start_exclusive", lambda *a, **k: pytest.fail("started past a GUI app")
+    )
+
+    ctx = ud.DashboardContext(
+        configs=configs, state_dir=".runtime", orchestrator=orch,
+        results_dir=str(tmp_path / "results"),
+    )
+    body = json.dumps({"model": "qwen", "inferencer": "lmstudio", "suites": ["humaneval"]}).encode()
+    resp = ud.handle_request("POST", "/api/run", ctx, body)
+
+    assert resp.status == 400
+    assert "GUI app" in json.loads(resp.body)["error"]
+
+
+# -- end-to-end: launch -> live progress -> completed results ---------------
+
+
+def _dummy_tasks(name: str, *, cache_dir: str | Path) -> list[object]:
+    return [object()]
+
+
+def test_launch_flows_to_live_progress_and_results(tmp_path: Path, monkeypatch) -> None:
+    results_dir = tmp_path / "results"
+    started: set[str] = set()
+
+    def _fake_start_exclusive(cfg, configs, state_dir, *, confirm, force=False):
+        started.add(cfg.name)
+        return _status(cfg.name, running=True)
+
+    def _fake_run_suite(*, models, tasks, result_path, progress=None, **kwargs):
+        append_jsonl(result_path, _endpoint_record("qwen", "HumanEval/0", passed=True))
+        if progress is not None:
+            progress("[1/1] qwen HumanEval/0: passed")
+        return {"passed": 1, "failed": 0, "infra_failed": 0}
+
+    monkeypatch.setattr(launch.manager, "running_others", lambda *a, **k: [])
+    monkeypatch.setattr(launch.manager, "start_exclusive", _fake_start_exclusive)
+    monkeypatch.setattr(launch.tasks, "load_suite", _dummy_tasks)
+    monkeypatch.setattr(launch.runner, "run_endpoint_suite", _fake_run_suite)
+
+    orch = launch.RunOrchestrator(
+        models={"qwen": _model()},
+        inferencers=_configs(),
+        state_dir=".runtime",
+        results_dir=str(results_dir),
+    )
+    ctx = ud.DashboardContext(
+        configs=_configs(), state_dir=".runtime", orchestrator=orch, results_dir=str(results_dir)
+    )
+
+    # 1. launch
+    body = json.dumps({"model": "qwen", "inferencer": "dflash", "suites": ["humaneval"]}).encode()
+    launched = ud.handle_request("POST", "/api/run", ctx, body)
+    assert launched.status == 202
+    run_id = json.loads(launched.body)["run_id"]
+
+    # the run brought up exactly the chosen engine
+    assert started == {"dflash"}
+
+    orch.join(timeout=5)
+
+    # 2. live progress -> terminal
+    runs = json.loads(ud.handle_request("GET", "/api/runs", ctx).body)["runs"]
+    assert runs[0]["run_id"] == run_id
+    assert runs[0]["status"] == "completed"
+    assert runs[0]["passed"] == 1
+
+    # 3. completed results show up via Epic-07 aggregates, no restart
+    data = json.loads(ud.handle_request("GET", "/api/data", ctx).body)
+    assert data["endpoint_models"][0]["model"] == "qwen"
+
+
+def test_inferencers_section_reflects_engine_a_run_brought_up(tmp_path: Path, monkeypatch) -> None:
+    started: set[str] = set()
+
+    def _fake_start_exclusive(cfg, configs, state_dir, *, confirm, force=False):
+        started.add(cfg.name)
+        return _status(cfg.name, running=True)
+
+    monkeypatch.setattr(launch.manager, "running_others", lambda *a, **k: [])
+    monkeypatch.setattr(launch.manager, "start_exclusive", _fake_start_exclusive)
+    monkeypatch.setattr(launch.tasks, "load_suite", _dummy_tasks)
+    monkeypatch.setattr(
+        launch.runner, "run_endpoint_suite",
+        lambda **k: {"passed": 0, "failed": 0, "infra_failed": 0},
+    )
+    # the Inferencers panel reads the same manager.status_all the run started through
+    monkeypatch.setattr(
+        manager, "status_all",
+        lambda configs, state_dir: {n: _status(n, running=(n in started)) for n in configs},
+    )
+
+    orch = launch.RunOrchestrator(
+        models={"qwen": _model()}, inferencers=_configs(), state_dir=".runtime",
+        results_dir=str(tmp_path / "results"),
+    )
+    ctx = ud.DashboardContext(
+        configs=_configs(), state_dir=".runtime", orchestrator=orch,
+        results_dir=str(tmp_path / "results"),
+    )
+
+    body = json.dumps({"model": "qwen", "inferencer": "dflash", "suites": ["humaneval"]}).encode()
+    ud.handle_request("POST", "/api/run", ctx, body)
+    orch.join(timeout=5)
+
+    status = json.loads(ud.handle_request("GET", "/api/status", ctx).body)
+    running = {row["name"] for row in status["inferencers"] if row["running"]}
+    assert running == {"dflash"}
 
 
 def test_build_orchestrator_returns_none_without_results_dir() -> None:

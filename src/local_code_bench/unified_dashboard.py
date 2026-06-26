@@ -23,6 +23,7 @@ section is the navigable seam the benchmark launcher (story 09.2-001) plugs into
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -43,6 +44,58 @@ from .inferencers import dashboard as inferencer_panel
 from .suite_catalog import catalog_payload
 
 _TRUTHY = {"1", "true", "yes", "on"}
+
+# Keys whose values are secret-bearing and must never reach the browser, matched
+# case-insensitively against the exact key name. The delegated actions already
+# project onto safe fields; dropping these here is the defense-in-depth backstop so
+# a future field carrying one of them cannot leak by oversight.
+_SECRET_KEYS = frozenset(
+    {
+        "api_key",
+        "apikey",
+        "api_key_env",
+        "authorization",
+        "access_token",
+        "secret",
+        "password",
+        "base_url",
+    }
+)
+
+# Absolute home/system paths that would expose the benchmark box's filesystem layout.
+# Error strings (e.g. a run's failure reason) can capture a real path; we keep the
+# basename so the message stays useful but strip the host-revealing directories.
+_HOST_PATH = re.compile(r"/(?:Users|home|root)/[^\s'\":,)]+")
+
+
+def _redact_paths(text: str) -> str:
+    return _HOST_PATH.sub(
+        lambda m: "<redacted>/" + m.group(0).rstrip("/").rsplit("/", 1)[-1], text
+    )
+
+
+def sanitize_payload(value: object) -> object:
+    """Recursively scrub a JSON-able value of secrets before it reaches the browser.
+
+    This is the single response-sanitization seam for the unified dashboard
+    (story 09.6-001): every JSON endpoint ships through :func:`_json`, so secret
+    leaks are caught in one place rather than trusted to each delegated action. It
+    drops secret-bearing keys (:data:`_SECRET_KEYS`) and redacts absolute host paths
+    from string values, so an error message that captured a real filesystem path
+    cannot expose where the box keeps its configs or results.
+    """
+
+    if isinstance(value, dict):
+        return {
+            key: sanitize_payload(item)
+            for key, item in value.items()
+            if not (isinstance(key, str) and key.lower() in _SECRET_KEYS)
+        }
+    if isinstance(value, list):
+        return [sanitize_payload(item) for item in value]
+    if isinstance(value, str):
+        return _redact_paths(value)
+    return value
 
 
 @dataclass(frozen=True)
@@ -84,7 +137,8 @@ class Response:
 
 
 def _json(status: int, payload: dict) -> Response:
-    return Response(status, "application/json; charset=utf-8", json.dumps(payload).encode("utf-8"))
+    body = json.dumps(sanitize_payload(payload)).encode("utf-8")
+    return Response(status, "application/json; charset=utf-8", body)
 
 
 def _is_truthy(values: list[str]) -> bool:
