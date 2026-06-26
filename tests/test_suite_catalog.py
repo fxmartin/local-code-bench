@@ -11,6 +11,7 @@ from local_code_bench.config import ConfigError
 from local_code_bench.suite_catalog import (
     BUILTIN_SUITE_IDS,
     SuiteCatalogEntry,
+    builtin_suite_ids,
     catalog_payload,
     load_custom_suites,
     suite_catalog,
@@ -268,6 +269,126 @@ def test_catalog_payload_is_json_serializable_and_secret_free(tmp_path) -> None:
     # No host paths / secrets leak through the payload.
     assert str(tmp_path) not in text
     assert "api_key" not in text.lower()
+
+
+def test_mbpp_count_none_when_cache_malformed(tmp_path) -> None:
+    # A present but unparseable MBPP cache must not crash the catalog: the suite
+    # stays available (downloadable) with an unknown count rather than guessing.
+    cache = tmp_path / "benchmarks"
+    cache.mkdir(parents=True, exist_ok=True)
+    # Valid JSON but the wrong shape (no list / no 'data' list) makes load_mbpp
+    # raise TaskLoadError, which the catalog swallows into an unknown count.
+    (cache / "sanitized-mbpp.json").write_text(json.dumps({"unexpected": 1}), encoding="utf-8")
+
+    entries = _entries_by_id(suite_catalog(cache_dir=cache, suites_path=tmp_path / "x.yaml"))
+
+    assert entries["mbpp"].available is True
+    assert entries["mbpp"].task_count is None
+
+
+def test_evalplus_disabled_when_cache_malformed(tmp_path) -> None:
+    # The release file is present but unloadable: the suite is disabled and the
+    # loader's error is surfaced as the reason instead of failing at launch.
+    cache = tmp_path / "benchmarks"
+    cache.mkdir(parents=True, exist_ok=True)
+    # Valid JSON line but with no test inputs makes load_evalplus raise
+    # TaskLoadError, which the catalog surfaces as the disabled reason.
+    (cache / "HumanEvalPlus.jsonl").write_text(
+        json.dumps(
+            {
+                "task_id": "HumanEval/0",
+                "entry_point": "add",
+                "prompt": "def add(a, b):\n",
+                "canonical_solution": "    return a + b\n",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    entries = _entries_by_id(suite_catalog(cache_dir=cache, suites_path=tmp_path / "x.yaml"))
+
+    plus = entries["humaneval-plus"]
+    assert plus.available is False
+    assert plus.task_count is None
+    assert plus.reason
+
+
+def test_custom_json_object_without_data_list_is_disabled(tmp_path) -> None:
+    dataset = tmp_path / "data.json"
+    dataset.write_text(json.dumps({"not_data": 1}), encoding="utf-8")
+    suites_yaml = tmp_path / "suites.yaml"
+    suites_yaml.write_text(
+        "suites:\n  - id: bad\n    source: data.json\n",
+        encoding="utf-8",
+    )
+
+    entries = _entries_by_id(suite_catalog(cache_dir=tmp_path / "empty", suites_path=suites_yaml))
+
+    bad = entries["bad"]
+    assert bad.available is False
+    assert bad.reason and "could not read dataset" in bad.reason
+
+
+def test_custom_explicit_unsupported_format_is_disabled(tmp_path) -> None:
+    dataset = tmp_path / "data.bin"
+    dataset.write_text("anything", encoding="utf-8")
+    suites_yaml = tmp_path / "suites.yaml"
+    suites_yaml.write_text(
+        "suites:\n  - id: csvish\n    source: data.bin\n    format: csv\n",
+        encoding="utf-8",
+    )
+
+    entries = _entries_by_id(suite_catalog(cache_dir=tmp_path / "empty", suites_path=suites_yaml))
+
+    csvish = entries["csvish"]
+    assert csvish.available is False
+    assert csvish.reason and "could not read dataset" in csvish.reason
+
+
+def test_load_custom_suites_rejects_invalid_yaml(tmp_path) -> None:
+    suites_yaml = tmp_path / "suites.yaml"
+    suites_yaml.write_text("suites: [unclosed\n", encoding="utf-8")
+    with pytest.raises(ConfigError):
+        load_custom_suites(suites_yaml)
+
+
+def test_load_custom_suites_rejects_non_mapping_entry(tmp_path) -> None:
+    suites_yaml = tmp_path / "suites.yaml"
+    suites_yaml.write_text("suites:\n  - just-a-string\n", encoding="utf-8")
+    with pytest.raises(ConfigError):
+        load_custom_suites(suites_yaml)
+
+
+def test_load_custom_suites_rejects_missing_id(tmp_path) -> None:
+    suites_yaml = tmp_path / "suites.yaml"
+    suites_yaml.write_text("suites:\n  - source: a.jsonl\n", encoding="utf-8")
+    with pytest.raises(ConfigError):
+        load_custom_suites(suites_yaml)
+
+
+def test_load_custom_suites_rejects_non_string_label(tmp_path) -> None:
+    suites_yaml = tmp_path / "suites.yaml"
+    suites_yaml.write_text(
+        "suites:\n  - id: a\n    source: a.jsonl\n    label: 123\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError):
+        load_custom_suites(suites_yaml)
+
+
+def test_load_custom_suites_rejects_non_string_format(tmp_path) -> None:
+    suites_yaml = tmp_path / "suites.yaml"
+    suites_yaml.write_text(
+        "suites:\n  - id: a\n    source: a.jsonl\n    format: [json]\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError):
+        load_custom_suites(suites_yaml)
+
+
+def test_builtin_suite_ids_returns_presentation_order() -> None:
+    assert tuple(builtin_suite_ids()) == BUILTIN_SUITE_IDS
 
 
 def test_entry_to_dict_round_trips_fields() -> None:
