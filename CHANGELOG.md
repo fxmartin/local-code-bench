@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.28.0 (2026-06-26)
+
+### Features
+
+- **unified-dashboard**: Live run progress and (#09.4-001)
+  ([`84fa7dc`](https://github.com/fxmartin/local-code-bench/commit/84fa7dc319e9be9eb633e129c5fb1543f75c7fa3))
+
+### Testing
+
+- **unified-dashboard**: Live run progress and (#09.4-001)
+  ([`dd793dd`](https://github.com/fxmartin/local-code-bench/commit/dd793dd240d2634bae522de5b5efc381a2fbfedc))
+
+
 ## v0.27.0 (2026-06-26)
 
 ### Features
