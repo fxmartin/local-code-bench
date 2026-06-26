@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.23.0 (2026-06-26)
+
+### Features
+
+- **unified-dashboard**: Available-suites catalog and (#09.5-001)
+  ([`1c41ede`](https://github.com/fxmartin/local-code-bench/commit/1c41edecaa07916589109fa686a77e58c35a3148))
+
+### Testing
+
+- **unified-dashboard**: Available-suites catalog and (#09.5-001)
+  ([`0190ca5`](https://github.com/fxmartin/local-code-bench/commit/0190ca59d818503a2aa5af16c54e461db7f31228))
+
+
 ## v0.22.0 (2026-06-25)
 
 ### Features
