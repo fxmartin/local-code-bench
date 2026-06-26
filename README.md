@@ -359,6 +359,10 @@ running GUI app blocks the start with a warning to quit it manually unless `--fo
 is passed; the harness never force-quits a GUI app. State lives under
 `.runtime/inferencers/` (gitignored). Override paths with `--config` and `--state-dir`.
 
+The harness never installs an engine — it only detects what you have. For step-by-step,
+per-engine setup on the M3 Max (install, start, verify), see
+[`docs/INFERENCER-INSTALLATION.md`](docs/INFERENCER-INSTALLATION.md).
+
 ## Unified Dashboard
 
 `bench dashboard` serves a single localhost page that brings the inferencer control
