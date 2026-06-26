@@ -68,7 +68,7 @@ Detection runs in the **same environment the harness runs from** (its `uv` venv)
 | `llama-cpp` | binary `llama-server` | 8081 | `brew install llama.cpp` | server | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) |
 | `ollama` | binary `ollama` | 11434 | `brew install --cask ollama` | server | [ollama.com](https://ollama.com) |
 | `mlc-llm` | module `mlc_llm` | 8082 | `pip install --pre -f https://mlc.ai/wheels mlc-llm mlc-ai` | server | [llm.mlc.ai](https://llm.mlc.ai) |
-| `vllm-mlx` | module `vllm` | 8001 | vllm-metal install script (see §7) | server | [vllm-project/vllm-metal](https://github.com/vllm-project/vllm-metal) |
+| `vllm-mlx` | binary `vllm-mlx` | 8001 | `uv tool install vllm-mlx` | server | [waybarrios/vllm-mlx](https://github.com/waybarrios/vllm-mlx) |
 | `exo` | binary `exo` | 52415 | clone + `uv run exo` (see §8) | server | [exo-explore/exo](https://github.com/exo-explore/exo) |
 | `lm-studio` | app `LM Studio.app` | 1234 | download app, enable server | app (detect-only) | [lmstudio.ai](https://lmstudio.ai) |
 | `gpt4all` | app `GPT4All.app` | 4891 | download app, enable API | app (detect-only) | [nomic.ai/gpt4all](https://www.nomic.ai/gpt4all) |
@@ -197,29 +197,27 @@ long-context comparisons. Source: <https://llm.mlc.ai/docs/install/mlc_llm>
 
 ---
 
-## 7. vLLM on Apple Silicon (`vllm`) — port 8001
+## 7. vLLM on Apple Silicon (`vllm-mlx`) — port 8001
 
-**What it is**: continuous batching / server-grade serving brought to Apple Silicon.
+**What it is**: continuous batching / server-grade serving brought to Apple Silicon
+(OpenAI- and Anthropic-compatible, native MLX backend).
 
-> **Config note — read this.** `configs/inferencers.yaml` detects **module `vllm`** and
-> starts **`vllm serve --port 8001`**. That matches the **vllm-metal plugin** (which
-> installs the `vllm` package + a Metal backend). A *separate* project, **`vllm-mlx`**,
-> uses a different command (`vllm-mlx serve`) and module name. Pick the one that matches
-> the harness, or update the config to match your choice.
-
-**Option A — vllm-metal (matches the current config):**
+**Default — `vllm-mlx` (matches `configs/inferencers.yaml`):** the config detects the
+`vllm-mlx` console script and starts `vllm-mlx serve --port 8001`.
 ```bash
-curl -fsSL https://raw.githubusercontent.com/vllm-project/vllm-metal/main/install.sh | bash
-vllm serve <model> --port 8001       # provides importable module `vllm`
+uv tool install vllm-mlx             # or: pipx install vllm-mlx (puts `vllm-mlx` on PATH)
+vllm-mlx serve <model> --port 8001
 ```
-**Option B — vllm-mlx (standalone; would need a config tweak):**
-```bash
-uv pip install vllm-mlx
-vllm-mlx serve <model> --port 8001   # command/module differ from the config's `vllm`
-```
+
+> **Alternative — vllm-metal plugin.** A separate project installs the standard `vllm`
+> package + a Metal backend and serves with `vllm serve`. If you prefer it, install via
+> `curl -fsSL https://raw.githubusercontent.com/vllm-project/vllm-metal/main/install.sh |
+> bash` and update this inferencer's `detect` to `module: vllm` and `start` to
+> `["vllm", "serve", "--port", "8001"]`.
+
 **Verify**: `curl -s http://127.0.0.1:8001/v1/models` then `uv run bench inferencer start
-vllm-mlx`. Sources: <https://github.com/vllm-project/vllm-metal> ·
-<https://github.com/waybarrios/vllm-mlx>
+vllm-mlx`. Sources: <https://github.com/waybarrios/vllm-mlx> ·
+<https://github.com/vllm-project/vllm-metal>
 
 ---
 

@@ -57,14 +57,20 @@ inferencers:
     start: ["mlc_llm", "serve", "--port", "8082"]
   - name: vllm-mlx
     lifecycle: server
+    # The standalone `vllm-mlx` package ships a `vllm-mlx` console script
+    # (`vllm-mlx serve`). The vllm-metal plugin instead provides module `vllm` +
+    # `vllm serve`; switch detect/start to that if you install vllm-metal.
     detect:
-      module: vllm
+      binary: vllm-mlx
     # 8001 rather than 8000 to avoid colliding with dflash.
     port: 8001
     health_url: http://127.0.0.1:{port}/v1/models
-    start: ["vllm", "serve", "--port", "8001"]
+    start: ["vllm-mlx", "serve", "--port", "8001"]
   - name: exo
     lifecycle: server
+    # exo upstream runs as `uv run exo` from its clone; expose an `exo` wrapper on
+    # PATH so detection (shutil.which) and this start command resolve. See
+    # docs/INFERENCER-INSTALLATION.md.
     detect:
       binary: exo
     port: 52415
