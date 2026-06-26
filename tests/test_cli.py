@@ -673,6 +673,24 @@ def test_inferencer_list_shows_url_and_manual_install_note(monkeypatch, capsys) 
     assert "manual" in out.lower() and "install" in out.lower()
 
 
+def test_inferencer_list_shows_dash_when_url_missing(monkeypatch, capsys) -> None:
+    # An engine without a reference URL renders "-" in the URL column rather than
+    # an empty cell, while the manual-install note is still printed.
+    configs = {"dflash": _server_cfg("dflash", 8000, url=None)}
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _path: configs)
+    monkeypatch.setattr(
+        "local_code_bench.inferencers.detect.is_installed",
+        lambda cfg: False,
+    )
+
+    exit_code = main(["inferencer", "list"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "dflash" in out and "-" in out
+    assert "manual" in out.lower() and "install" in out.lower()
+
+
 def test_inferencer_status_shows_url(monkeypatch, capsys) -> None:
     configs = {"mtplx": _server_cfg("mtplx", 8003, url="https://github.com/youssofal/mtplx")}
     monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _path: configs)
@@ -686,6 +704,30 @@ def test_inferencer_status_shows_url(monkeypatch, capsys) -> None:
     out = capsys.readouterr().out
     assert exit_code == 0
     assert "https://github.com/youssofal/mtplx" in out
+
+
+def test_inferencer_status_shows_dash_when_url_missing(monkeypatch, capsys) -> None:
+    # An engine whose config carries no URL shows "-" in the status URL column.
+    configs = {"dflash": _server_cfg("dflash", 8000, url=None)}
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _path: configs)
+    monkeypatch.setattr(
+        "local_code_bench.cli.manager.status_all",
+        lambda cfgs, sd: {"dflash": _status("dflash", port=8000)},
+    )
+
+    exit_code = main(["inferencer", "status"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "dflash" in out and "-" in out
+
+
+def test_print_status_table_without_configs_renders_dash() -> None:
+    # The configs argument is optional (backward-compatible default): when omitted,
+    # every URL cell falls back to "-" and no lookup error is raised.
+    from local_code_bench.cli import _print_status_table
+
+    _print_status_table({"dflash": _status("dflash", port=8000)})
 
 
 def test_inferencer_status_prints_table(monkeypatch, capsys) -> None:
