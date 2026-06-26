@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.33.0 (2026-06-26)
+
+### Features
+
+- **opencode-local-benchmark**: Fixed-prompt invocation (#10.1-001)
+  ([`c590fea`](https://github.com/fxmartin/local-code-bench/commit/c590fea4ea7ad646524191186bf11d1dbe3ac1b4))
+
+### Testing
+
+- **opencode-local-benchmark**: Fixed-prompt invocation (#10.1-001)
+  ([`eb0a3d7`](https://github.com/fxmartin/local-code-bench/commit/eb0a3d7835cef1ceed0d76d88a1b3195ebe53dda))
+
+
 ## v0.32.0 (2026-06-26)
 
 ### Features
