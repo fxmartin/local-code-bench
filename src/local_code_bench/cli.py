@@ -224,6 +224,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="path to inferencer registry YAML",
     )
     dashboard.add_argument(
+        "--models",
+        default="configs/models.yaml",
+        help="path to model registry YAML (populates the Run launcher)",
+    )
+    dashboard.add_argument(
+        "--suites",
+        default="configs/suites.yaml",
+        help="path to optional custom-suite registry YAML for the Run launcher",
+    )
+    dashboard.add_argument(
         "--state-dir",
         default=".runtime/inferencers",
         help="directory holding per-engine PID/state files",
@@ -456,6 +466,9 @@ def run_unified_dashboard_command(args: argparse.Namespace) -> int:
             args.config,
             args.state_dir,
             _resolve_dashboard_inputs(args),
+            models_path=args.models,
+            results_dir=args.results_dir,
+            suites_path=args.suites,
             host=args.host,
             port=args.port,
             progress=lambda message: print(message, flush=True),

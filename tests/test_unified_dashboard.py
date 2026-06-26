@@ -5,7 +5,7 @@ import threading
 import urllib.request
 from pathlib import Path
 
-from local_code_bench.config import InferencerConfig
+from local_code_bench.config import InferencerConfig, ModelConfig, TokenPrices
 from local_code_bench.inferencers import manager
 from local_code_bench.inferencers.manager import InferencerStatus
 from local_code_bench.results import append_jsonl
@@ -37,6 +37,38 @@ def _configs() -> dict[str, InferencerConfig]:
     }
 
 
+def _model_cfg(name: str, *, inferencer: str | None = None) -> ModelConfig:
+    return ModelConfig(
+        name=name,
+        type="openai",
+        base_url="http://127.0.0.1:8000/v1",
+        model_id=f"{name}-id",
+        pinned_revision="manual",
+        price_per_1k_tokens=TokenPrices(input=0.0, output=0.0),
+        api_key_env="SECRET_KEY_ENV",
+        inferencer=inferencer,
+    )
+
+
+def _models() -> dict[str, ModelConfig]:
+    return {
+        "local-coder": _model_cfg("local-coder", inferencer="dflash"),
+        "cloud-coder": _model_cfg("cloud-coder", inferencer=None),
+    }
+
+
+class _FakeOrchestrator:
+    """Stand-in for the launch orchestrator capturing the delegated launch call."""
+
+    def __init__(self, result: tuple[int, dict[str, object]]) -> None:
+        self.result = result
+        self.calls: list[dict[str, object]] = []
+
+    def launch(self, **kwargs: object) -> tuple[int, dict[str, object]]:
+        self.calls.append(kwargs)
+        return self.result
+
+
 def _status(name: str, *, running: bool = False, healthy: bool = False,
             pid: int | None = None, port: int = 8000) -> InferencerStatus:
     return InferencerStatus(
@@ -51,11 +83,22 @@ def _status(name: str, *, running: bool = False, healthy: bool = False,
     )
 
 
-def _ctx(result_paths: list[str | Path] | None = None) -> ud.DashboardContext:
+def _ctx(
+    result_paths: list[str | Path] | None = None,
+    *,
+    models: dict[str, ModelConfig] | None = None,
+    orchestrator: object | None = None,
+    cache_dir: str | Path = ".cache/does-not-exist",
+    suites_path: str | Path = "configs/does-not-exist.yaml",
+) -> ud.DashboardContext:
     return ud.DashboardContext(
         configs=_configs(),
         state_dir=".runtime",
         result_paths=result_paths or [],
+        models=models if models is not None else _models(),
+        orchestrator=orchestrator,
+        cache_dir=cache_dir,
+        suites_path=suites_path,
     )
 
 
@@ -274,6 +317,115 @@ def test_one_server_routes_a_real_post_through_do_post(monkeypatch, tmp_path: Pa
 
 
 # ---------------------------------------------------------------------------
+# run section: catalog read endpoint (model + inferencer + suite catalogs)
+# ---------------------------------------------------------------------------
+
+
+def test_api_catalog_returns_models_inferencers_and_suites() -> None:
+    resp = ud.handle_request("GET", "/api/catalog", _ctx())
+
+    assert resp.status == 200
+    assert resp.content_type.startswith("application/json")
+    payload = json.loads(resp.body)
+    model_names = {m["name"] for m in payload["models"]}
+    assert model_names == {"local-coder", "cloud-coder"}
+    inferencer_names = {i["name"] for i in payload["inferencers"]}
+    assert inferencer_names == {"dflash", "turboquant"}
+    # suites come from the 09.5-001 availability-aware catalog
+    suite_ids = {s["id"] for s in payload["suites"]}
+    assert {"humaneval", "mbpp", "canary"} <= suite_ids
+
+
+def test_api_catalog_exposes_each_models_declared_inferencer() -> None:
+    # the form warns when the chosen inferencer differs from the model's declared one
+    payload = json.loads(ud.handle_request("GET", "/api/catalog", _ctx()).body)
+    by_name = {m["name"]: m for m in payload["models"]}
+    assert by_name["local-coder"]["inferencer"] == "dflash"
+    assert by_name["cloud-coder"]["inferencer"] is None
+
+
+def test_api_catalog_leaks_no_secrets() -> None:
+    body = ud.handle_request("GET", "/api/catalog", _ctx()).body.decode().lower()
+    for secret in ("api_key", "secret_key_env", "/users/", ".env", "base_url"):
+        assert secret not in body
+
+
+def test_post_to_catalog_route_is_404() -> None:
+    assert ud.handle_request("POST", "/api/catalog", _ctx()).status == 404
+
+
+# ---------------------------------------------------------------------------
+# run section: launch is a thin client over the 09.3-001 launch endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_api_run_delegates_to_launch_endpoint() -> None:
+    orch = _FakeOrchestrator((202, {"run_id": "abc123", "status": "running"}))
+    body = json.dumps(
+        {"model": "local-coder", "inferencer": "dflash", "suites": ["humaneval", "canary"]}
+    ).encode()
+
+    resp = ud.handle_request("POST", "/api/run", _ctx(orchestrator=orch), body)
+
+    assert resp.status == 202
+    assert json.loads(resp.body)["run_id"] == "abc123"
+    assert orch.calls == [
+        {
+            "model": "local-coder",
+            "inferencer": "dflash",
+            "suites": ["humaneval", "canary"],
+            "confirm": False,
+            "force": False,
+        }
+    ]
+
+
+def test_api_run_rejects_invalid_json_body() -> None:
+    orch = _FakeOrchestrator((202, {}))
+    resp = ud.handle_request("POST", "/api/run", _ctx(orchestrator=orch), b"{not json")
+    assert resp.status == 400
+    assert orch.calls == []
+
+
+def test_api_run_without_orchestrator_is_unavailable() -> None:
+    resp = ud.handle_request("POST", "/api/run", _ctx(orchestrator=None), b"{}")
+    assert resp.status == 503
+
+
+def test_run_section_page_has_launcher_form() -> None:
+    body = ud.render_page()
+    assert 'id="run-model"' in body
+    assert 'id="run-inferencer"' in body
+    assert 'id="run-suites"' in body
+    assert 'id="run-launch"' in body
+    # the page is a thin client over the catalog + launch endpoints
+    assert "/api/catalog" in body
+    assert "/api/run" in body
+
+
+def test_run_launch_routes_a_real_post_through_do_post() -> None:
+    orch = _FakeOrchestrator((202, {"run_id": "wire1", "status": "running"}))
+    server = ud.make_server(_ctx(orchestrator=orch), port=0)
+    host, port = server.server_address[0], server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        payload = json.dumps(
+            {"model": "local-coder", "inferencer": "dflash", "suites": ["canary"]}
+        ).encode()
+        request = urllib.request.Request(
+            f"http://{host}:{port}/api/run", data=payload, method="POST"
+        )
+        with urllib.request.urlopen(request) as resp:
+            assert resp.status == 202
+            assert json.loads(resp.read())["run_id"] == "wire1"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+# ---------------------------------------------------------------------------
 # serve_dashboard lifecycle
 # ---------------------------------------------------------------------------
 
@@ -297,11 +449,15 @@ def test_serve_dashboard_loads_configs_reports_progress_and_closes(monkeypatch) 
     messages: list[str] = []
 
     monkeypatch.setattr(ud, "load_inferencers", lambda path: seen.setdefault("path", path) or {})
+    monkeypatch.setattr(
+        ud, "load_models", lambda path: seen.setdefault("models_path", path) or {}
+    )
 
     def _make_server(ctx, *, host, port):
         seen["host"] = host
         seen["port"] = port
         seen["result_paths"] = ctx.result_paths
+        seen["has_orchestrator"] = ctx.orchestrator is not None
         return fake
 
     monkeypatch.setattr(ud, "make_server", _make_server)
@@ -310,14 +466,17 @@ def test_serve_dashboard_loads_configs_reports_progress_and_closes(monkeypatch) 
         "configs/inferencers.yaml",
         ".runtime",
         ["results/run.jsonl"],
+        models_path="configs/models.yaml",
         host="127.0.0.1",
         port=9999,
         progress=messages.append,
     )
 
     assert seen["path"] == "configs/inferencers.yaml"
+    assert seen["models_path"] == "configs/models.yaml"
     assert (seen["host"], seen["port"]) == ("127.0.0.1", 9999)
     assert seen["result_paths"] == ["results/run.jsonl"]
+    assert seen["has_orchestrator"] is True
     assert fake.served is True
     assert fake.closed is True  # KeyboardInterrupt still runs the finally: server_close()
     assert any("9999" in msg for msg in messages)
@@ -326,6 +485,7 @@ def test_serve_dashboard_loads_configs_reports_progress_and_closes(monkeypatch) 
 def test_serve_dashboard_runs_without_progress_callback(monkeypatch) -> None:
     fake = _FakeServer()
     monkeypatch.setattr(ud, "load_inferencers", lambda path: {})
+    monkeypatch.setattr(ud, "load_models", lambda path: {})
     monkeypatch.setattr(ud, "make_server", lambda *a, **k: fake)
 
     ud.serve_dashboard("configs/inferencers.yaml", ".runtime", [])

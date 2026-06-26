@@ -318,9 +318,26 @@ def test_inferencer_dashboard_config_error_exits_2(monkeypatch, capsys) -> None:
 def test_unified_dashboard_command_invokes_server(monkeypatch) -> None:
     captured: dict = {}
 
-    def fake_serve(config, state_dir, result_paths, *, host, port, progress) -> None:
+    def fake_serve(
+        config,
+        state_dir,
+        result_paths,
+        *,
+        models_path,
+        results_dir,
+        suites_path,
+        host,
+        port,
+        progress,
+    ) -> None:
         captured.update(
-            config=config, state_dir=state_dir, result_paths=result_paths, host=host, port=port
+            config=config,
+            state_dir=state_dir,
+            result_paths=result_paths,
+            models_path=models_path,
+            suites_path=suites_path,
+            host=host,
+            port=port,
         )
 
     monkeypatch.setattr("local_code_bench.unified_dashboard.serve_dashboard", fake_serve)
@@ -334,6 +351,9 @@ def test_unified_dashboard_command_invokes_server(monkeypatch) -> None:
     assert captured["config"] == "x.yaml"
     assert captured["host"] == "127.0.0.1"
     assert captured["result_paths"] == [Path("results/a.jsonl")]
+    # the Run launcher's catalogs come from the model + suite registries
+    assert captured["models_path"] == "configs/models.yaml"
+    assert captured["suites_path"] == "configs/suites.yaml"
 
 
 def test_unified_dashboard_discovers_results_dir(monkeypatch, tmp_path) -> None:
@@ -342,7 +362,9 @@ def test_unified_dashboard_discovers_results_dir(monkeypatch, tmp_path) -> None:
     (tmp_path / "notes.txt").write_text("ignore me")
     captured: dict = {}
 
-    def fake_serve(config, state_dir, result_paths, *, host, port, progress) -> None:
+    def fake_serve(
+        config, state_dir, result_paths, *, models_path, results_dir, suites_path, host, port, progress
+    ) -> None:
         captured["result_paths"] = result_paths
 
     monkeypatch.setattr("local_code_bench.unified_dashboard.serve_dashboard", fake_serve)
@@ -356,7 +378,9 @@ def test_unified_dashboard_discovers_results_dir(monkeypatch, tmp_path) -> None:
 def test_unified_dashboard_missing_results_dir_yields_no_inputs(monkeypatch, tmp_path) -> None:
     captured: dict = {}
 
-    def fake_serve(config, state_dir, result_paths, *, host, port, progress) -> None:
+    def fake_serve(
+        config, state_dir, result_paths, *, models_path, results_dir, suites_path, host, port, progress
+    ) -> None:
         captured["result_paths"] = result_paths
 
     monkeypatch.setattr("local_code_bench.unified_dashboard.serve_dashboard", fake_serve)
