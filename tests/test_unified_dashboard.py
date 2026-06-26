@@ -336,6 +336,61 @@ def test_api_chat_streams_over_http_and_cancels_cleanly(monkeypatch) -> None:
         thread.join(timeout=5)
 
 
+class _BrokenWriter:
+    """A response writer that fails as if the client closed the connection."""
+
+    def write(self, data: bytes) -> int:
+        raise BrokenPipeError("client gone")
+
+    def flush(self) -> None:  # pragma: no cover - never reached after write() raises
+        pass
+
+
+def _stub_stream_handler():
+    handler = ud.make_handler(_ctx()).__new__(ud.make_handler(_ctx()))
+    handler.wfile = _BrokenWriter()
+    handler.send_response = lambda *a, **k: None
+    handler.send_header = lambda *a, **k: None
+    handler.end_headers = lambda: None
+    return handler
+
+
+def test_stream_cancels_provider_when_client_disconnects() -> None:
+    # AC: a "stop"/closed tab mid-stream cancels the upstream provider connection
+    closed = {"called": False}
+
+    class _Events:
+        def __iter__(self):
+            return iter(["data: a\n\n", "data: b\n\n"])
+
+        def close(self) -> None:
+            closed["called"] = True
+
+    handler = _stub_stream_handler()
+    handler._stream(ud.chat.ChatStreamResponse(200, _Events()))
+
+    assert closed["called"] is True  # the disconnect released the provider stream
+
+
+def test_stream_disconnect_is_quiet_when_events_have_no_close() -> None:
+    # A plain iterator has nothing to cancel; the disconnect must still be swallowed
+    handler = _stub_stream_handler()
+
+    handler._stream(ud.chat.ChatStreamResponse(200, iter(["data: a\n\n"])))
+
+
+def test_load_models_safe_degrades_silently_without_progress(monkeypatch) -> None:
+    from local_code_bench.config import ConfigError
+
+    def _missing(path):
+        raise ConfigError("model config not found")
+
+    monkeypatch.setattr(ud, "load_models", _missing)
+
+    # no progress callback: chat is disabled silently rather than crashing the dashboard
+    assert ud._load_models_safe("configs/models.yaml", None) == {}
+
+
 def test_unknown_route_is_404() -> None:
     resp = ud.handle_request("GET", "/secrets", _ctx())
     assert resp.status == 404
@@ -781,6 +836,48 @@ def test_run_section_has_live_monitor_markup() -> None:
     assert 'id="runs"' in body  # live run monitor table body
     assert "Live Runs" in body
     assert "/api/runs" in body  # the page polls the status endpoint
+
+
+# ---------------------------------------------------------------------------
+# chat section UI (story 09.7-002) — a thin client over /api/chat + /api/catalog
+# ---------------------------------------------------------------------------
+
+
+def test_nav_includes_chat_section() -> None:
+    body = ud.render_page()
+    assert 'data-section="chat"' in body
+    assert 'id="section-chat"' in body
+
+
+def test_chat_section_has_picker_reusing_catalog_selectors() -> None:
+    body = ud.render_page()
+    # AC1: pick a model and inferencer, populated from the same catalog the launcher uses
+    assert 'id="chat-model"' in body
+    assert 'id="chat-inferencer"' in body
+    assert "/api/catalog" in body
+
+
+def test_chat_section_has_message_pane_and_stop_control() -> None:
+    body = ud.render_page()
+    # AC1/AC2: a multi-turn message pane, an input, a send and a (stop) control
+    assert 'id="chat-messages"' in body
+    assert 'id="chat-input"' in body
+    assert 'id="chat-send"' in body
+    assert 'id="chat-stop"' in body
+
+
+def test_chat_section_has_param_controls() -> None:
+    body = ud.render_page()
+    # AC3: system prompt, temperature, and max-tokens controls
+    assert 'id="chat-system"' in body
+    assert 'id="chat-temperature"' in body
+    assert 'id="chat-max-tokens"' in body
+
+
+def test_chat_section_is_thin_client_over_chat_endpoint() -> None:
+    body = ud.render_page()
+    # AC4: posts to the existing streaming endpoint; no new front-end stack
+    assert "/api/chat" in body
 
 
 def test_post_api_run_routes_over_http(tmp_path: Path, monkeypatch) -> None:

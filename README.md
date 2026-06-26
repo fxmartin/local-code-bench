@@ -362,8 +362,8 @@ is passed; the harness never force-quits a GUI app. State lives under
 ## Unified Dashboard
 
 `bench dashboard` serves a single localhost page that brings the inferencer control
-panel, the live results view, and a benchmark **Run** section together — switch
-between them client-side with no reload and no build step:
+panel, the live results view, a benchmark **Run** section, and a **Chat** section
+together — switch between them client-side with no reload and no build step:
 
 ```bash
 uv run bench dashboard                       # serve on http://127.0.0.1:8765
@@ -405,7 +405,12 @@ ending in a `data: {"done": true, ...}` event with token usage. Chat talks to th
 inferencer already serving the model's `base_url`; it never starts a second server,
 so the one-active invariant holds. The model registry comes from `--models` (default
 `configs/models.yaml`); a missing registry disables chat without taking the dashboard
-down. The browser-side Chat panel lands next (story 09.7-002).
+down. The **Chat** section is a thin browser client over this endpoint: pick a model
+and inferencer from the same catalog the launcher uses, set an optional system prompt,
+temperature, and max-tokens, then send a message and watch the reply stream into a
+multi-turn pane (with a Stop control that cancels the stream cleanly). It is part of
+the same self-contained page — inlined CSS/JS, no CDN or build step — and never starts
+a server, so bring one up in the Inferencers or Run section first.
 
 ## Verification Status
 
