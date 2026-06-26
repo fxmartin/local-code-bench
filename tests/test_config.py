@@ -188,6 +188,73 @@ models:
         load_models(config_path)
 
 
+def test_load_models_parses_opencode_provenance_fields(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(
+        """
+models:
+  - name: local
+    type: openai
+    base_url: http://localhost:8000/v1
+    model_id: qwen
+    pinned_revision: abc123
+    quant: IQ3_XXS
+    provider: unsloth
+    engine: dflash
+    thinking_extra_body:
+      reasoning:
+        effort: high
+    price_per_1k_tokens:
+      input: 0.0
+      output: 0.0
+  - name: cloud
+    type: openai
+    base_url: https://example.test/v1
+    model_id: qwen
+    pinned_revision: abc123
+    price_per_1k_tokens:
+      input: 0.01
+      output: 0.02
+""",
+        encoding="utf-8",
+    )
+
+    models = load_models(config_path)
+
+    # Provenance lessons (quant string + Unsloth-vs-Bartowski source) and run-mode
+    # knobs are first-class but optional, so legacy entries keep None.
+    assert models["local"].quant == "IQ3_XXS"
+    assert models["local"].provider == "unsloth"
+    assert models["local"].engine == "dflash"
+    assert models["local"].thinking_extra_body == {"reasoning": {"effort": "high"}}
+    assert models["cloud"].quant is None
+    assert models["cloud"].provider is None
+    assert models["cloud"].engine is None
+    assert models["cloud"].thinking_extra_body is None
+
+
+def test_load_models_rejects_non_mapping_thinking_extra_body(tmp_path) -> None:
+    config_path = tmp_path / "models.yaml"
+    config_path.write_text(
+        """
+models:
+  - name: cloud
+    type: openai
+    base_url: http://localhost:8000/v1
+    model_id: qwen
+    pinned_revision: abc123
+    thinking_extra_body: "nope"
+    price_per_1k_tokens:
+      input: 0.01
+      output: 0.02
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="thinking_extra_body"):
+        load_models(config_path)
+
+
 def test_load_models_rejects_non_positive_concurrency(tmp_path) -> None:
     config_path = tmp_path / "models.yaml"
     config_path.write_text(

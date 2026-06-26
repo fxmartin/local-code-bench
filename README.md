@@ -265,6 +265,41 @@ then scores the resulting `solution.py` with the same tests as endpoint runs:
 uv run bench --mode agent --agent codex --suite humaneval --limit 3
 ```
 
+## OpenCode Benchmark
+
+The `opencode` subcommand drives the Epic-10 local-model benchmark: it sends two
+fixed, version-controlled prompts to a chosen model under identical, deterministic
+conditions and captures the raw output, timing, tokens, and full provenance. The
+prompts live in `prompts/task-a.md` (open-ended Go coding) and `prompts/task-b.md`
+(strict JSON rule-following) and are read from disk — never inlined — so they are
+identical across every model. A thin `run-bench.sh` wrapper forwards every flag:
+
+```bash
+# Against a model's configured endpoint:
+./run-bench.sh --model local-dflash-qwen
+
+# Pick a known engine's default /v1 endpoint instead of editing config:
+./run-bench.sh --model local --engine ollama
+
+# Override the endpoint directly, flip on high-reasoning mode, and tag provenance:
+./run-bench.sh --model local --endpoint http://127.0.0.1:1234/v1 \
+  --mode thinking --quant IQ3_XXS --provider unsloth
+```
+
+`--engine` resolves to the locked default `/v1` endpoint for any of the ten engines
+(`dflash`, `turboquant`, `mlx-lm`, `llama-cpp`, `ollama`, `mlc-llm`, `vllm-mlx`,
+`exo`, `lm-studio`, `gpt4all`); `--endpoint` wins when both are given. oMLX's
+Anthropic endpoint is reached by setting the model's `type: anthropic` in config.
+Each run records the quant string, quant provider (the Unsloth-vs-Bartowski lesson),
+engine, endpoint, mode, and the pinned seed/temperature (temperature defaults to 0
+for determinism). Results are written to `results/opencode-<model>-*.jsonl`.
+
+Equivalent without the wrapper:
+
+```bash
+uv run bench opencode --model local-dflash-qwen
+```
+
 ## Leaderboard And Sweep
 
 Generate a Markdown leaderboard from stored JSONL:

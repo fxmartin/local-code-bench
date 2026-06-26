@@ -34,6 +34,10 @@ class ModelConfig:
     max_tokens: int | None = None
     extra_body: dict[str, Any] | None = None
     inferencer: str | None = None
+    quant: str | None = None
+    provider: str | None = None
+    engine: str | None = None
+    thinking_extra_body: dict[str, Any] | None = None
 
 
 AgentType = Literal["codex"]
@@ -233,6 +237,10 @@ def _parse_model(entry: Any, index: int) -> ModelConfig:
         max_tokens=_optional_positive_int(entry, "max_tokens", index, default=None),
         extra_body=_optional_mapping(entry, "extra_body", index),
         inferencer=_optional_str(entry, "inferencer", index),
+        quant=_optional_str(entry, "quant", index),
+        provider=_optional_str(entry, "provider", index),
+        engine=_optional_str(entry, "engine", index),
+        thinking_extra_body=_optional_mapping(entry, "thinking_extra_body", index),
     )
 
 

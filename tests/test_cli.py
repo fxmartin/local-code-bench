@@ -986,3 +986,114 @@ def test_emit_power_warns_when_requested_but_no_samples(tmp_path, capsys) -> Non
     err = capsys.readouterr().err
     assert "power: powermetrics produced no samples" in err
     assert not (tmp_path / "run.jsonl").exists()
+
+
+def test_parser_accepts_opencode_subcommand() -> None:
+    args = build_parser().parse_args(
+        [
+            "opencode",
+            "--model",
+            "local",
+            "--mode",
+            "thinking",
+            "--endpoint",
+            "http://127.0.0.1:1234/v1",
+            "--engine",
+            "ollama",
+            "--quant",
+            "IQ3_XXS",
+            "--provider",
+            "unsloth",
+            "--seed",
+            "7",
+            "--max-tokens",
+            "512",
+        ]
+    )
+
+    assert args.command == "opencode"
+    assert args.model == "local"
+    assert args.opencode_mode == "thinking"
+    assert args.endpoint == "http://127.0.0.1:1234/v1"
+    assert args.engine == "ollama"
+    assert args.quant == "IQ3_XXS"
+    assert args.provider == "unsloth"
+    assert args.seed == 7
+    assert args.max_tokens == 512
+
+
+def test_opencode_mode_defaults_to_default() -> None:
+    args = build_parser().parse_args(["opencode", "--model", "local"])
+
+    assert args.opencode_mode == "default"
+    assert args.temperature == 0.0
+
+
+def test_opencode_rejects_unknown_mode() -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["opencode", "--model", "local", "--mode", "nope"])
+
+
+def test_opencode_requires_model(capsys) -> None:
+    exit_code = main(["opencode"])
+
+    assert exit_code == 2
+    assert "opencode requires --model" in capsys.readouterr().err
+
+
+def test_opencode_unknown_model_errors(monkeypatch, capsys) -> None:
+    model = ModelConfig(
+        name="m",
+        type="openai",
+        base_url="http://localhost:9000/v1",
+        model_id="qwen",
+        pinned_revision="abc",
+        price_per_1k_tokens=TokenPrices(input=0, output=0),
+    )
+    monkeypatch.setattr("local_code_bench.cli.load_models", lambda _path: {"m": model})
+
+    exit_code = main(["opencode", "--model", "ghost"])
+
+    assert exit_code == 2
+    assert "unknown model 'ghost'" in capsys.readouterr().err
+
+
+def test_opencode_dispatches_to_run_opencode(monkeypatch, tmp_path, capsys) -> None:
+    model = ModelConfig(
+        name="local",
+        type="openai",
+        base_url="http://localhost:9000/v1",
+        model_id="qwen",
+        pinned_revision="abc",
+        price_per_1k_tokens=TokenPrices(input=0, output=0),
+    )
+    monkeypatch.setattr("local_code_bench.cli.load_models", lambda _path: {"local": model})
+
+    captured: dict = {}
+
+    def fake_run_opencode(**kwargs):
+        captured.update(kwargs)
+        return tmp_path / "opencode-run.jsonl", [("task-a", None), ("task-b", None)]
+
+    monkeypatch.setattr("local_code_bench.cli.run_opencode", fake_run_opencode)
+
+    exit_code = main(
+        [
+            "opencode",
+            "--model",
+            "local",
+            "--mode",
+            "thinking",
+            "--engine",
+            "ollama",
+            "--seed",
+            "9",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["model"] is model
+    assert captured["mode"] == "thinking"
+    assert captured["overrides"].engine == "ollama"
+    assert captured["seed"] == 9
+    assert "opencode" in capsys.readouterr().out

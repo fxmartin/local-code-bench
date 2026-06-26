@@ -21,6 +21,7 @@ from local_code_bench.inferencers import detect, manager
 from local_code_bench.inferencers.manager import InferencerError, InferencerStatus
 from local_code_bench.leaderboard import generate_leaderboard
 from local_code_bench.metrics import CompletionMeasurement, capture_stream_metrics
+from local_code_bench.opencode.invoke import OpenCodeOverrides, run_opencode
 from local_code_bench.power import PowerSampler
 from local_code_bench.provider import ChatRequest, ProviderError, provider_for_model
 from local_code_bench.results import append_jsonl, new_run_path
@@ -259,6 +260,56 @@ def build_parser() -> argparse.ArgumentParser:
         default=8765,
         help="dashboard bind port",
     )
+
+    opencode = subparsers.add_parser(
+        "opencode",
+        help="run the OpenCode local-model benchmark (Task A coding + Task B rule-following)",
+        description=(
+            "Send the fixed prompts/task-a.md and prompts/task-b.md to a chosen local "
+            "model under identical, deterministic conditions and capture raw output, "
+            "timing, tokens, and provenance (quant, provider, engine, mode, seed)."
+        ),
+    )
+    opencode.add_argument("--model", required=False, help="configured model name to run")
+    opencode.add_argument(
+        "--mode",
+        dest="opencode_mode",
+        choices=["default", "thinking"],
+        default="default",
+        help="run mode: 'thinking' merges the model's thinking_extra_body (GPT-OSS lesson)",
+    )
+    opencode.add_argument("--endpoint", help="override the model base URL (OpenAI-compatible /v1)")
+    opencode.add_argument(
+        "--engine",
+        help="select a known engine's default /v1 endpoint (dflash, ollama, lm-studio, ...)",
+    )
+    opencode.add_argument("--quant", help="override the logged quant string (e.g. IQ3_XXS)")
+    opencode.add_argument(
+        "--provider",
+        help="override the logged quant provider (the Unsloth-vs-Bartowski lesson)",
+    )
+    opencode.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="seed logged for reproducibility (default 0)",
+    )
+    opencode.add_argument(
+        "--temperature",
+        type=float,
+        default=0.0,
+        help="sampling temperature, pinned to 0 by default for determinism",
+    )
+    opencode.add_argument(
+        "--max-tokens",
+        type=int,
+        help="cap per-task generation (defaults to the model's configured max_tokens)",
+    )
+    opencode.add_argument(
+        "--prompts-dir",
+        default="prompts",
+        help="directory holding task-a.md and task-b.md",
+    )
     return parser
 
 
@@ -278,6 +329,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if getattr(args, "command", None) == "dashboard":
             return run_unified_dashboard_command(args)
+
+        if getattr(args, "command", None) == "opencode":
+            return run_opencode_command(args)
 
         if args.mode == "leaderboard":
             inputs = [Path(item) for item in args.input or []]
@@ -476,6 +530,48 @@ def run_unified_dashboard_command(args: argparse.Namespace) -> int:
     except (ConfigError, InferencerError) as exc:
         print(f"bench: error: {exc}", file=sys.stderr)
         return 2
+    return 0
+
+
+def run_opencode_command(args: argparse.Namespace) -> int:
+    """Drive the OpenCode benchmark for one model (Story 10.1-001).
+
+    Resolves the configured model, layers the CLI provenance/endpoint overrides on
+    top, and invokes both fixed task prompts deterministically. Missing/unknown
+    models raise ``ConfigError`` so the shared outer handler reports them on stderr
+    with exit 2, like the rest of the CLI.
+    """
+
+    if not args.model:
+        raise ConfigError("opencode requires --model")
+    models = load_models(args.config)
+    try:
+        model = models[args.model]
+    except KeyError as exc:
+        available = ", ".join(sorted(models)) or "(none)"
+        raise ConfigError(f"unknown model '{args.model}'. Available models: {available}") from exc
+
+    overrides = OpenCodeOverrides(
+        endpoint=args.endpoint,
+        engine=args.engine,
+        quant=args.quant,
+        provider=args.provider,
+    )
+    result_path, records = run_opencode(
+        model=model,
+        overrides=overrides,
+        mode=args.opencode_mode,
+        prompts_dir=args.prompts_dir,
+        results_dir=args.results_dir,
+        seed=args.seed,
+        temperature=args.temperature,
+        max_tokens=args.max_tokens,
+        progress=lambda message: print(message, flush=True),
+    )
+    print(
+        f"opencode model={model.name} mode={args.opencode_mode} "
+        f"tasks={len(records)} results={result_path}"
+    )
     return 0
 
 
