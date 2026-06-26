@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.34.0 (2026-06-26)
+
+### Features
+
+- **opencode-local-benchmark**: Structured classification (#10.3-001)
+  ([`aed2739`](https://github.com/fxmartin/local-code-bench/commit/aed273970e3d089ecfd143d3a6f681ec4f3efdf8))
+
+### Testing
+
+- **opencode-local-benchmark**: Structured classification (#10.3-001)
+  ([`ae5bd63`](https://github.com/fxmartin/local-code-bench/commit/ae5bd63012dd54552e4dca8731f157e37e3037b3))
+
+
 ## v0.33.0 (2026-06-26)
 
 ### Features
