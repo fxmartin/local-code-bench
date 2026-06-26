@@ -7,8 +7,17 @@ from pathlib import Path
 
 import pytest
 
-from local_code_bench.cli import _make_confirm, _parse_context_sizes, build_parser, main
-from local_code_bench.config import AgentConfig, InferencerConfig, ModelConfig, TokenPrices
+from local_code_bench.cli import (
+    _emit_power,
+    _format_optional_seconds,
+    _make_confirm,
+    _parse_context_sizes,
+    build_parser,
+    main,
+    run_single_prompt,
+)
+from local_code_bench.config import AgentConfig, ConfigError, InferencerConfig, ModelConfig, TokenPrices
+from local_code_bench.power import PowerSummary
 from local_code_bench.inferencers.manager import InferencerError, InferencerStatus
 from local_code_bench.metrics import StreamEvent
 from local_code_bench.results import append_jsonl, read_jsonl
@@ -318,9 +327,26 @@ def test_inferencer_dashboard_config_error_exits_2(monkeypatch, capsys) -> None:
 def test_unified_dashboard_command_invokes_server(monkeypatch) -> None:
     captured: dict = {}
 
-    def fake_serve(config, state_dir, result_paths, *, host, port, progress) -> None:
+    def fake_serve(
+        config,
+        state_dir,
+        result_paths,
+        *,
+        models_path,
+        results_dir,
+        suites_path,
+        host,
+        port,
+        progress,
+    ) -> None:
         captured.update(
-            config=config, state_dir=state_dir, result_paths=result_paths, host=host, port=port
+            config=config,
+            state_dir=state_dir,
+            result_paths=result_paths,
+            models_path=models_path,
+            suites_path=suites_path,
+            host=host,
+            port=port,
         )
 
     monkeypatch.setattr("local_code_bench.unified_dashboard.serve_dashboard", fake_serve)
@@ -334,6 +360,9 @@ def test_unified_dashboard_command_invokes_server(monkeypatch) -> None:
     assert captured["config"] == "x.yaml"
     assert captured["host"] == "127.0.0.1"
     assert captured["result_paths"] == [Path("results/a.jsonl")]
+    # the Run launcher's catalogs come from the model + suite registries
+    assert captured["models_path"] == "configs/models.yaml"
+    assert captured["suites_path"] == "configs/suites.yaml"
 
 
 def test_unified_dashboard_discovers_results_dir(monkeypatch, tmp_path) -> None:
@@ -342,7 +371,9 @@ def test_unified_dashboard_discovers_results_dir(monkeypatch, tmp_path) -> None:
     (tmp_path / "notes.txt").write_text("ignore me")
     captured: dict = {}
 
-    def fake_serve(config, state_dir, result_paths, *, host, port, progress) -> None:
+    def fake_serve(
+        config, state_dir, result_paths, *, models_path, results_dir, suites_path, host, port, progress
+    ) -> None:
         captured["result_paths"] = result_paths
 
     monkeypatch.setattr("local_code_bench.unified_dashboard.serve_dashboard", fake_serve)
@@ -356,7 +387,9 @@ def test_unified_dashboard_discovers_results_dir(monkeypatch, tmp_path) -> None:
 def test_unified_dashboard_missing_results_dir_yields_no_inputs(monkeypatch, tmp_path) -> None:
     captured: dict = {}
 
-    def fake_serve(config, state_dir, result_paths, *, host, port, progress) -> None:
+    def fake_serve(
+        config, state_dir, result_paths, *, models_path, results_dir, suites_path, host, port, progress
+    ) -> None:
         captured["result_paths"] = result_paths
 
     monkeypatch.setattr("local_code_bench.unified_dashboard.serve_dashboard", fake_serve)
@@ -812,3 +845,60 @@ def test_inferencer_config_error_exit_2(monkeypatch, capsys) -> None:
 
     assert exit_code == 2
     assert "bench: error: inferencer config not found" in capsys.readouterr().err
+
+
+# --- helper coverage ---------------------------------------------------------
+
+
+def test_format_optional_seconds_handles_none_and_value() -> None:
+    assert _format_optional_seconds(None) == "n/a"
+    assert _format_optional_seconds(1.5) == "1.500s"
+
+
+def test_run_single_prompt_unknown_model_raises_config_error(tmp_path, monkeypatch) -> None:
+    model = ModelConfig(
+        name="m",
+        type="openai",
+        base_url="http://example.test/v1",
+        model_id="m",
+        pinned_revision="test",
+        price_per_1k_tokens=TokenPrices(input=0, output=0),
+    )
+    monkeypatch.setattr("local_code_bench.cli.load_models", lambda _path: {"m": model})
+
+    with pytest.raises(ConfigError, match="unknown model 'ghost'. Available models: m"):
+        run_single_prompt(
+            config_path=tmp_path / "models.yaml",
+            model_name="ghost",
+            prompt="hi",
+            results_dir=tmp_path,
+        )
+
+
+def test_single_prompt_mode_config_error_exits_2(monkeypatch, capsys) -> None:
+    def boom(**_kwargs) -> None:
+        raise ConfigError("unknown model 'ghost'. Available models: m")
+
+    monkeypatch.setattr("local_code_bench.cli.run_single_prompt", boom)
+
+    exit_code = main(["--model", "ghost", "--prompt", "hi"])
+
+    assert exit_code == 2
+    assert "bench: error: unknown model 'ghost'" in capsys.readouterr().err
+
+
+def test_emit_power_warns_when_requested_but_no_samples(tmp_path, capsys) -> None:
+    class FakeSampler:
+        def result(self) -> PowerSummary:
+            return PowerSummary.unavailable()
+
+    _emit_power(
+        FakeSampler(),
+        tmp_path / "run.jsonl",
+        models=[],
+        requested=True,
+    )
+
+    err = capsys.readouterr().err
+    assert "power: powermetrics produced no samples" in err
+    assert not (tmp_path / "run.jsonl").exists()

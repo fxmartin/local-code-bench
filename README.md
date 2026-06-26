@@ -369,14 +369,22 @@ between them client-side with no reload and no build step:
 uv run bench dashboard                       # serve on http://127.0.0.1:8765
 uv run bench dashboard --port 8888           # pick a different localhost port
 uv run bench dashboard --input results/run.jsonl   # Results section reads these files
+uv run bench dashboard --models configs/models.yaml --suites configs/suites.yaml  # Run launcher catalogs
 ```
 
 It composes the existing surfaces rather than duplicating them: the **Inferencers**
 section drives the same exclusive start/stop as `bench inferencer` (exactly one
 headless server ever holds the GPU), and the **Results** section reuses the live
 aggregates, so a still-running run shows up on refresh without a restart. The
-**Run** section is the navigable seam the benchmark launcher plugs into next. By
-default the Results section reads every `*.jsonl` under `--results-dir` (default
+**Run** section composes a benchmark from a model, an inferencer, and one or more
+test suites: the selectors are populated from `--models` (`configs/models.yaml`),
+`--config` (`configs/inferencers.yaml`), and the available-suites catalog (built-in
+suites plus any custom suites registered in `--suites`, `configs/suites.yaml`).
+Unavailable suites (e.g. a missing EvalPlus cache file) are shown disabled with the
+reason. The form warns when the chosen inferencer differs from the model's declared
+`inferencer` before anything is launched, and submitting a valid composition posts
+to the launch endpoint, which exclusively starts the inferencer and runs the suites.
+By default the Results section reads every `*.jsonl` under `--results-dir` (default
 `results/`); pass `--input` one or more times to view specific files instead.
 `--config` and `--state-dir` point at the inferencer registry and its state dir.
 The server binds localhost only and exposes no API keys, `.env` contents, or host

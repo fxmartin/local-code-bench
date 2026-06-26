@@ -59,10 +59,20 @@
 
 **Technical Notes**: Pure dashboard UI + a small read endpoint that returns the current model/inferencer/suite catalogs as JSON (reusing `load_models`, `load_inferencers`, and the suite catalog from 09.5-001). Validation mirrors the harness's existing config-validation tone. Multi-suite selection maps to running the chosen suites in sequence for the selected model. Keep the form a thin client; all authority lives in the launch endpoint (09.3-001).
 
+**Implementation**: `src/local_code_bench/unified_dashboard.py` — `catalog_action`
+behind `GET /api/catalog` returns `{models, inferencers, suites}` (models carry their
+declared `inferencer` for the differ-warning; suites come from `suite_catalog`'s
+availability-aware payload), and the Run-section form is a thin client that populates
+the three selectors, validates the combo client-side (rejecting empty/invalid with an
+actionable message, warning on inferencer mismatch), and posts a valid composition to
+`POST /api/run` — wired here to delegate to the 09.3-001 orchestrator (`launch_action`).
+`serve_dashboard` loads the model registry and builds the `RunOrchestrator`; the
+`bench dashboard` CLI gains `--models` / `--suites`. Tests in `tests/test_unified_dashboard.py`.
+
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 09.1-001, 09.3-001, 09.5-001
 **Risk Level**: Medium
@@ -212,7 +222,8 @@ writing JSONL via `new_run_path`. Tests in `tests/test_launch.py`.
 **Risk Level**: Low
 
 ## Epic Progress
-**Completed**: 2 / 8 stories · 10 / 32 points
+**Completed**: 3 / 8 stories · 15 / 32 points
 
 - [x] 09.1-001 — Single-page unified dashboard with Inferencers / Results / Run sections (5 pts)
+- [x] 09.2-001 — Compose a benchmark from model + inferencer + suites (5 pts) (`src/local_code_bench/unified_dashboard.py`)
 - 09.3-001 Launch orchestration endpoint — done (`src/local_code_bench/launch.py`)

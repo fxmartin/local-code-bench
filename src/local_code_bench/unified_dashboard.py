@@ -30,8 +30,10 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from . import dashboard_server as results_panel
-from .config import InferencerConfig, load_inferencers
+from .config import InferencerConfig, ModelConfig, load_inferencers, load_models
 from .inferencers import dashboard as inferencer_panel
+from .launch import RunOrchestrator, launch_action
+from .suite_catalog import catalog_payload
 
 _TRUTHY = {"1", "true", "yes", "on"}
 
@@ -44,11 +46,20 @@ class DashboardContext:
     paths drive the Results section. Result files are re-read on every ``/api/data``
     request (never preloaded), so a still-running benchmark's records appear on
     refresh without a restart.
+
+    The Run section (story 09.2-001) adds the model registry plus the suite-catalog
+    lookups (``cache_dir`` / ``suites_path``) behind ``/api/catalog``, and a launch
+    ``orchestrator`` (story 09.3-001) behind ``/api/run`` so the launcher form is a
+    thin client whose authority lives in the orchestrator.
     """
 
     configs: dict[str, InferencerConfig]
     state_dir: str | Path
     result_paths: list[str | Path] = field(default_factory=list)
+    models: dict[str, ModelConfig] = field(default_factory=dict)
+    orchestrator: RunOrchestrator | None = None
+    cache_dir: str | Path = ".cache/benchmarks"
+    suites_path: str | Path = "configs/suites.yaml"
 
 
 @dataclass(frozen=True)
@@ -68,7 +79,25 @@ def _is_truthy(values: list[str]) -> bool:
     return bool(values) and values[0].lower() in _TRUTHY
 
 
-def handle_request(method: str, path: str, ctx: DashboardContext) -> Response:
+def catalog_action(ctx: DashboardContext) -> tuple[int, dict]:
+    """Return the model/inferencer/suite catalogs the launcher form populates from.
+
+    Each surface is projected onto JSON-safe identity fields only — no base URLs,
+    API-key env names, or host paths — so the localhost page can render selectors
+    without any secret reaching the browser. Models carry their declared
+    ``inferencer`` so the form can warn when the chosen inferencer differs.
+    """
+
+    models = [
+        {"name": cfg.name, "type": cfg.type, "inferencer": cfg.inferencer}
+        for cfg in ctx.models.values()
+    ]
+    inferencers = [{"name": cfg.name, "lifecycle": cfg.lifecycle} for cfg in ctx.configs.values()]
+    suites = catalog_payload(cache_dir=ctx.cache_dir, suites_path=ctx.suites_path)["suites"]
+    return 200, {"models": models, "inferencers": inferencers, "suites": suites}
+
+
+def handle_request(method: str, path: str, ctx: DashboardContext, body: bytes = b"") -> Response:
     """Route one request to the unified page or a delegated section action."""
 
     parts = urlsplit(path)
@@ -92,15 +121,31 @@ def handle_request(method: str, path: str, ctx: DashboardContext) -> Response:
         return _json(*inferencer_panel.stop_action(name, ctx.configs, ctx.state_dir))
     if method == "GET" and route == "/api/data":
         return _json(*results_panel.data_action(ctx.result_paths))
+    if method == "GET" and route == "/api/catalog":
+        return _json(*catalog_action(ctx))
+    if method == "POST" and route == "/api/run":
+        return _json(*_run_action(ctx, body))
     return _json(404, {"error": "not found"})
+
+
+def _run_action(ctx: DashboardContext, body: bytes) -> tuple[int, dict]:
+    """Delegate a launch request to the orchestrator (story 09.3-001 authority)."""
+
+    if ctx.orchestrator is None:
+        return 503, {"error": "benchmark launcher is not available"}
+    try:
+        parsed = json.loads(body or b"{}")
+    except json.JSONDecodeError:
+        return 400, {"error": "invalid JSON body"}
+    return launch_action(ctx.orchestrator, parsed)
 
 
 def make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
     """Build a request-handler class closed over the dashboard context."""
 
     class _DashboardHandler(BaseHTTPRequestHandler):
-        def _dispatch(self, method: str) -> None:
-            response = handle_request(method, self.path, ctx)
+        def _dispatch(self, method: str, body: bytes = b"") -> None:
+            response = handle_request(method, self.path, ctx, body)
             self.send_response(response.status)
             self.send_header("Content-Type", response.content_type)
             self.send_header("Content-Length", str(len(response.body)))
@@ -111,7 +156,9 @@ def make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
             self._dispatch("GET")
 
         def do_POST(self) -> None:  # noqa: N802 - http.server callback name
-            self._dispatch("POST")
+            length = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(length) if length else b""
+            self._dispatch("POST", body)
 
         def log_message(self, format: str, *args: object) -> None:  # silence default logging
             return
@@ -135,14 +182,39 @@ def serve_dashboard(
     state_dir: str | Path,
     result_paths: list[str | Path],
     *,
+    models_path: str | Path = "configs/models.yaml",
+    results_dir: str | Path = "results",
+    cache_dir: str | Path = ".cache/benchmarks",
+    suites_path: str | Path = "configs/suites.yaml",
     host: str = "127.0.0.1",
     port: int = 8765,
     progress: Callable[[str], None] | None = None,
 ) -> None:
-    """Load the inferencer registry and serve the unified dashboard until interrupted."""
+    """Load the inferencer + model registries and serve the unified dashboard.
+
+    Serves until interrupted. The launch orchestrator is wired here so the Run
+    section's form (story 09.2-001) posts to the same single-run authority Epic-08's
+    exclusive start lives behind (story 09.3-001).
+    """
 
     configs = load_inferencers(config_path)
-    ctx = DashboardContext(configs=configs, state_dir=state_dir, result_paths=list(result_paths))
+    models = load_models(models_path)
+    orchestrator = RunOrchestrator(
+        models=models,
+        inferencers=configs,
+        state_dir=state_dir,
+        results_dir=results_dir,
+        cache_dir=cache_dir,
+    )
+    ctx = DashboardContext(
+        configs=configs,
+        state_dir=state_dir,
+        result_paths=list(result_paths),
+        models=models,
+        orchestrator=orchestrator,
+        cache_dir=cache_dir,
+        suites_path=suites_path,
+    )
     server = make_server(ctx, host=host, port=port)
     if progress is not None:
         progress(f"unified dashboard on http://{host}:{port} (Ctrl-C to stop)")
@@ -207,6 +279,18 @@ _PAGE = """<!DOCTYPE html>
   #warnings li { font-family: ui-monospace, monospace; font-size: 0.85rem; }
   .empty { color: #888; }
   .note { color: #888; max-width: 44rem; line-height: 1.5; }
+  .err { color: #c0392b; min-height: 1.2rem; }
+  .warn { color: #b9770e; min-height: 1.2rem; }
+  .run-grid { display: flex; gap: 2rem; flex-wrap: wrap; }
+  .run-grid select { font: inherit; min-width: 18rem; padding: 0.3rem 0.4rem; }
+  #run-suites { border: 1px solid #8884; border-radius: 0.4rem; padding: 0.6rem 0.9rem;
+    max-width: 40rem; display: flex; flex-direction: column; gap: 0.3rem; }
+  #run-suites label { display: flex; gap: 0.5rem; align-items: baseline; }
+  #run-suites label.disabled { color: #888; }
+  #run-suites .reason { color: #888; font-size: 0.85rem; }
+  .run-actions { margin-top: 1rem; }
+  #run-msg.ok { color: #1e8449; }
+  #run-msg.bad { color: #c0392b; }
 </style>
 </head>
 <body>
@@ -284,9 +368,26 @@ _PAGE = """<!DOCTYPE html>
 <section id="section-run" class="section" hidden>
   <h2>Run a Benchmark</h2>
   <p class="note">Compose a benchmark from a model, an inferencer, and one or more test
-    suites, then launch it here. The launcher and live run monitoring plug into this
-    section (stories 09.2&ndash;09.4); until then, drive runs from the
-    <code>bench</code> CLI.</p>
+    suites, then launch it. The launch is exclusive: starting a run brings up exactly
+    one inference server. Live run monitoring plugs into this section (story 09.4).</p>
+  <p id="run-load-err" class="err"></p>
+  <div class="run-grid">
+    <div>
+      <h3><label for="run-model">Model</label></h3>
+      <select id="run-model"></select>
+    </div>
+    <div>
+      <h3><label for="run-inferencer">Inferencer</label></h3>
+      <select id="run-inferencer"></select>
+    </div>
+  </div>
+  <p id="run-warn" class="warn"></p>
+  <h3>Test suites</h3>
+  <fieldset id="run-suites"></fieldset>
+  <p class="run-actions">
+    <button class="act" id="run-launch">Launch benchmark</button>
+  </p>
+  <p id="run-msg"></p>
 </section>
 
 </main>
@@ -626,6 +727,162 @@ _PAGE = """<!DOCTYPE html>
 
   refresh();
   setInterval(refresh, 3000);
+})();
+
+// Run section: thin client over /api/catalog (selectors) and /api/run (launch).
+// All launch authority lives in the orchestrator; this only composes the request
+// and surfaces the server's verdict.
+(function () {
+  const modelSel = document.getElementById("run-model");
+  const infSel = document.getElementById("run-inferencer");
+  const suitesBox = document.getElementById("run-suites");
+  const launchBtn = document.getElementById("run-launch");
+  const loadErr = document.getElementById("run-load-err");
+  const warn = document.getElementById("run-warn");
+  const msg = document.getElementById("run-msg");
+  let MODELS = [];
+
+  function setMsg(text, kind) {
+    msg.textContent = text || "";
+    msg.className = kind || "";
+  }
+
+  function option(value, label) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    return opt;
+  }
+
+  async function load() {
+    try {
+      const res = await fetch("/api/catalog");
+      const data = await res.json();
+      MODELS = data.models || [];
+      renderModels(MODELS);
+      renderInferencers(data.inferencers || []);
+      renderSuites(data.suites || []);
+      updateWarning();
+    } catch (e) {
+      loadErr.textContent = "catalog unavailable: " + e;
+    }
+  }
+
+  function renderModels(models) {
+    modelSel.innerHTML = "";
+    modelSel.appendChild(option("", models.length ? "Select a model…" : "No models configured"));
+    for (const m of models) modelSel.appendChild(option(m.name, m.name));
+  }
+
+  function renderInferencers(items) {
+    infSel.innerHTML = "";
+    infSel.appendChild(option("", items.length ? "Select an inferencer…" : "No inferencers configured"));
+    for (const it of items) {
+      const suffix = it.lifecycle === "app" ? " (app — not launchable)" : "";
+      const opt = option(it.name, it.name + suffix);
+      if (it.lifecycle === "app") opt.disabled = true;
+      infSel.appendChild(opt);
+    }
+  }
+
+  function renderSuites(suites) {
+    suitesBox.innerHTML = "";
+    if (!suites.length) {
+      const span = document.createElement("span");
+      span.className = "empty";
+      span.textContent = "No suites available.";
+      suitesBox.appendChild(span);
+      return;
+    }
+    for (const s of suites) {
+      const label = document.createElement("label");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.value = s.id;
+      box.className = "suite-box";
+      box.disabled = !s.available;
+      label.appendChild(box);
+      const count = s.task_count === null || s.task_count === undefined ? "" : " (" + s.task_count + ")";
+      const name = document.createElement("span");
+      name.textContent = (s.label || s.id) + count;
+      label.appendChild(name);
+      if (!s.available) {
+        label.classList.add("disabled");
+        const reason = document.createElement("span");
+        reason.className = "reason";
+        reason.textContent = "— " + (s.reason || "unavailable");
+        label.appendChild(reason);
+      }
+      suitesBox.appendChild(label);
+    }
+  }
+
+  function selectedSuites() {
+    return Array.from(suitesBox.querySelectorAll(".suite-box:checked")).map((b) => b.value);
+  }
+
+  function updateWarning() {
+    warn.textContent = "";
+    const model = MODELS.find((m) => m.name === modelSel.value);
+    const inf = infSel.value;
+    if (model && inf && model.inferencer && model.inferencer !== inf) {
+      warn.textContent =
+        "Heads up: " + model.name + " declares inferencer '" + model.inferencer +
+        "' but you picked '" + inf + "'. Launching anyway will run against '" + inf + "'.";
+    }
+  }
+
+  function validate() {
+    if (!modelSel.value) return "Select a model before launching.";
+    if (!infSel.value) return "Select an inferencer before launching.";
+    if (!selectedSuites().length) return "Select at least one test suite before launching.";
+    return null;
+  }
+
+  async function launch(confirm, force) {
+    const problem = validate();
+    if (problem) { setMsg(problem, "bad"); return; }
+    setMsg("Launching…", "");
+    launchBtn.disabled = true;
+    try {
+      const res = await fetch("/api/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: modelSel.value,
+          inferencer: infSel.value,
+          suites: selectedSuites(),
+          confirm: !!confirm,
+          force: !!force,
+        }),
+      });
+      let body = {};
+      try { body = await res.json(); } catch (e) { body = {}; }
+      if (res.status === 202) {
+        setMsg("Run accepted (id " + (body.run_id || "?") + "). Watch the Results section.", "ok");
+      } else if (res.status === 409 && body.needs_confirmation) {
+        setMsg((body.message || "A server is already running.") + " Launch again to stop it and proceed.", "bad");
+        launchBtn.dataset.confirm = "1";
+        return;
+      } else {
+        setMsg(body.message || body.error || ("launch failed (" + res.status + ")"), "bad");
+      }
+    } catch (e) {
+      setMsg("launch failed: " + e, "bad");
+    } finally {
+      launchBtn.disabled = false;
+    }
+  }
+
+  modelSel.addEventListener("change", updateWarning);
+  infSel.addEventListener("change", updateWarning);
+  launchBtn.addEventListener("click", () => {
+    const confirm = launchBtn.dataset.confirm === "1";
+    launchBtn.dataset.confirm = "";
+    launch(confirm, false);
+  });
+
+  load();
 })();
 </script>
 </body>
