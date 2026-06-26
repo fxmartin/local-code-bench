@@ -7,8 +7,17 @@ from pathlib import Path
 
 import pytest
 
-from local_code_bench.cli import _make_confirm, _parse_context_sizes, build_parser, main
-from local_code_bench.config import AgentConfig, InferencerConfig, ModelConfig, TokenPrices
+from local_code_bench.cli import (
+    _emit_power,
+    _format_optional_seconds,
+    _make_confirm,
+    _parse_context_sizes,
+    build_parser,
+    main,
+    run_single_prompt,
+)
+from local_code_bench.config import AgentConfig, ConfigError, InferencerConfig, ModelConfig, TokenPrices
+from local_code_bench.power import PowerSummary
 from local_code_bench.inferencers.manager import InferencerError, InferencerStatus
 from local_code_bench.metrics import StreamEvent
 from local_code_bench.results import append_jsonl, read_jsonl
@@ -836,3 +845,60 @@ def test_inferencer_config_error_exit_2(monkeypatch, capsys) -> None:
 
     assert exit_code == 2
     assert "bench: error: inferencer config not found" in capsys.readouterr().err
+
+
+# --- helper coverage ---------------------------------------------------------
+
+
+def test_format_optional_seconds_handles_none_and_value() -> None:
+    assert _format_optional_seconds(None) == "n/a"
+    assert _format_optional_seconds(1.5) == "1.500s"
+
+
+def test_run_single_prompt_unknown_model_raises_config_error(tmp_path, monkeypatch) -> None:
+    model = ModelConfig(
+        name="m",
+        type="openai",
+        base_url="http://example.test/v1",
+        model_id="m",
+        pinned_revision="test",
+        price_per_1k_tokens=TokenPrices(input=0, output=0),
+    )
+    monkeypatch.setattr("local_code_bench.cli.load_models", lambda _path: {"m": model})
+
+    with pytest.raises(ConfigError, match="unknown model 'ghost'. Available models: m"):
+        run_single_prompt(
+            config_path=tmp_path / "models.yaml",
+            model_name="ghost",
+            prompt="hi",
+            results_dir=tmp_path,
+        )
+
+
+def test_single_prompt_mode_config_error_exits_2(monkeypatch, capsys) -> None:
+    def boom(**_kwargs) -> None:
+        raise ConfigError("unknown model 'ghost'. Available models: m")
+
+    monkeypatch.setattr("local_code_bench.cli.run_single_prompt", boom)
+
+    exit_code = main(["--model", "ghost", "--prompt", "hi"])
+
+    assert exit_code == 2
+    assert "bench: error: unknown model 'ghost'" in capsys.readouterr().err
+
+
+def test_emit_power_warns_when_requested_but_no_samples(tmp_path, capsys) -> None:
+    class FakeSampler:
+        def result(self) -> PowerSummary:
+            return PowerSummary.unavailable()
+
+    _emit_power(
+        FakeSampler(),
+        tmp_path / "run.jsonl",
+        models=[],
+        requested=True,
+    )
+
+    err = capsys.readouterr().err
+    assert "power: powermetrics produced no samples" in err
+    assert not (tmp_path / "run.jsonl").exists()
