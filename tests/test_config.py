@@ -135,7 +135,7 @@ def test_default_models_inferencers_line_up_with_ports() -> None:
     models = load_models("configs/models.yaml")
     inferencers = load_inferencers("configs/inferencers.yaml")
 
-    for model_name in ("local-dflash-qwen", "local-turboquant-qwen-moe"):
+    for model_name in ("local-dflash-qwen", "local-turboquant-qwen-moe", "local-mtplx-qwen"):
         declared = models[model_name].inferencer
         assert declared in inferencers, f"{model_name} declares unknown inferencer {declared!r}"
         assert urlparse(models[model_name].base_url).port == inferencers[declared].port

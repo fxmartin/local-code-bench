@@ -66,6 +66,7 @@ class InferencerConfig:
     health_url: str
     start: tuple[str, ...] | None = None
     stop: tuple[str, ...] | None = None
+    url: str | None = None
 
 
 def resolve_health_url(cfg: InferencerConfig) -> str:
@@ -181,6 +182,7 @@ def _parse_inferencer(entry: Any, index: int) -> InferencerConfig:
         health_url=_required_str(entry, "health_url", index, root="inferencers"),
         start=start,
         stop=stop,
+        url=_optional_str(entry, "url", index, root="inferencers"),
     )
 
 

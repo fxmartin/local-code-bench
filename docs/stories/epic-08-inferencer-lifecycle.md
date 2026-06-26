@@ -196,15 +196,15 @@
 **Technical Notes**: Schema change is additive — add an `optional` `url: str | None` to `InferencerConfig`/`load_inferencers` in `config.py` via the existing `_optional_str` helper; no validation beyond "string if present". Backfill `url` on all current entries: dflash and turboquant → the reference Medium series in `articles/` (confirm canonical project links with FX before pinning), mlx-lm → `https://github.com/ml-explore/mlx-lm`, llama-cpp → `https://github.com/ggml-org/llama.cpp`, ollama → `https://ollama.com`, mlc-llm → `https://github.com/mlc-ai/mlc-llm`, vllm-mlx → `https://github.com/vllm-project/vllm`, exo → `https://github.com/exo-explore/exo`, lm-studio → `https://lmstudio.ai`, gpt4all → `https://github.com/nomic-ai/gpt4all`, mtplx → `https://github.com/youssofal/mtplx`. MTPLX is a `server`-lifecycle binary (`mtplx`), so it reuses the existing `manager.py` start/stop/health path with no new lifecycle code — only the registry row plus the `url` field and a list/status output tweak. Add an MTPLX model entry to `configs/models.yaml` (`inferencer: mtplx`, `concurrency: 1`, `cost: $0` local) pointing at a `Youssofal/...-MTPLX` repo. Extend the loader tests in `tests/test_config.py` for the new `url` field (present / absent) and the duplicate-port guard if one is added; assert detection stays read-only. No engine is installed in CI — detection is monkeypatched as in 08.1-001.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated (manual-install note + per-engine links; MTPLX model-artifact + tuning caveat)
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated (manual-install note + per-engine links; MTPLX model-artifact + tuning caveat)
 
 **Dependencies**: 08.1-001 (registry + detection), 08.4-001 (`bench inferencer` CLI surface), 08.5-001 (model `inferencer` field for auto-start)
 **Risk Level**: Low
 
 ## Epic Progress
-**Completed**: 6 / 7 stories · 22 / 25 points
-- 08.1-001 ✅ · 08.2-001 ✅ · 08.3-001 ✅ · 08.4-001 ✅ · 08.5-001 ✅ · 08.6-001 ✅ · 08.7-001 ⬜
+**Completed**: 7 / 7 stories · 25 / 25 points
+- 08.1-001 ✅ · 08.2-001 ✅ · 08.3-001 ✅ · 08.4-001 ✅ · 08.5-001 ✅ · 08.6-001 ✅ · 08.7-001 ✅
 - 08.3-001 (exclusive start) was delivered as part of 08.4-001 (`start_exclusive`/`running_others` in `manager.py`, `tests/test_inferencers_exclusive.py`); its separately-built branch was redundant and dropped.
 - 08.7-001 (MTPLX + reference URLs) reopens the epic to onboard a new engine and codify the manual-install / link-only rule across the registry.

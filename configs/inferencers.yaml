@@ -10,6 +10,9 @@
 #   health_url liveness probe; `{port}` is substituted at load time.
 #   start/stop argv lists. `server` entries require `start`; `app` entries must
 #              define neither (GUI apps are never started/stopped headlessly).
+#   url        optional reference link (official website or GitHub). The harness
+#              NEVER installs an engine — when one is not installed it points you
+#              to this URL to install it manually. See docs/INFERENCER-INSTALLATION.md.
 inferencers:
   # --- Headless servers (full lifecycle) ---------------------------------
   - name: dflash
@@ -19,6 +22,7 @@ inferencers:
     port: 8000
     health_url: http://127.0.0.1:{port}/v1/models
     start: ["dflash", "serve"]
+    url: https://github.com/bstnxbt/dflash-mlx
   - name: turboquant
     lifecycle: server
     detect:
@@ -26,6 +30,7 @@ inferencers:
     port: 8002
     health_url: http://127.0.0.1:{port}/v1/models
     start: ["turboquant-serve"]
+    url: https://github.com/helgklaizar/turboquant-mlx
   - name: mlx-lm
     lifecycle: server
     detect:
@@ -33,6 +38,7 @@ inferencers:
     port: 8080
     health_url: http://127.0.0.1:{port}/v1/models
     start: ["mlx_lm.server", "--port", "8080"]
+    url: https://github.com/ml-explore/mlx-lm
   - name: llama-cpp
     lifecycle: server
     detect:
@@ -40,6 +46,7 @@ inferencers:
     port: 8081
     health_url: http://127.0.0.1:{port}/v1/models
     start: ["llama-server", "--port", "8081"]
+    url: https://github.com/ggml-org/llama.cpp
   - name: ollama
     lifecycle: server
     detect:
@@ -48,6 +55,7 @@ inferencers:
     health_url: http://127.0.0.1:{port}/api/tags
     start: ["ollama", "serve"]
     stop: ["ollama", "stop"]
+    url: https://ollama.com
   - name: mlc-llm
     lifecycle: server
     detect:
@@ -55,6 +63,7 @@ inferencers:
     port: 8082
     health_url: http://127.0.0.1:{port}/v1/models
     start: ["mlc_llm", "serve", "--port", "8082"]
+    url: https://github.com/mlc-ai/mlc-llm
   - name: vllm-mlx
     lifecycle: server
     # The standalone `vllm-mlx` package ships a `vllm-mlx` console script
@@ -66,6 +75,7 @@ inferencers:
     port: 8001
     health_url: http://127.0.0.1:{port}/v1/models
     start: ["vllm-mlx", "serve", "--port", "8001"]
+    url: https://github.com/vllm-project/vllm
   - name: exo
     lifecycle: server
     # exo upstream runs as `uv run exo` from its clone; expose an `exo` wrapper on
@@ -76,6 +86,21 @@ inferencers:
     port: 52415
     health_url: http://127.0.0.1:{port}/v1/models
     start: ["exo"]
+    url: https://github.com/exo-explore/exo
+  - name: mtplx
+    lifecycle: server
+    # Native Multi-Token-Prediction MLX runtime: the model drafts ahead with its
+    # own built-in MTP heads and verifies them in one batched pass (no external
+    # drafter). OpenAI/Anthropic-compatible server, so it drops into the endpoint
+    # protocol like dflash/turboquant. MTPLX defaults to 8000 (owned by dflash) —
+    # remapped to 8003 to avoid the collision. Requires its own pre-built MTP
+    # models (the Youssofal Hugging Face catalog); see docs/INFERENCER-INSTALLATION.md.
+    detect:
+      binary: mtplx
+    port: 8003
+    health_url: http://127.0.0.1:{port}/v1/models
+    start: ["mtplx", "serve", "--port", "8003"]
+    url: https://github.com/youssofal/mtplx
   # --- Detect-only GUI apps ----------------------------------------------
   - name: lm-studio
     lifecycle: app
@@ -83,9 +108,11 @@ inferencers:
       app: "LM Studio.app"
     port: 1234
     health_url: http://127.0.0.1:{port}/v1/models
+    url: https://lmstudio.ai
   - name: gpt4all
     lifecycle: app
     detect:
       app: "GPT4All.app"
     port: 4891
     health_url: http://127.0.0.1:{port}/v1/models
+    url: https://github.com/nomic-ai/gpt4all

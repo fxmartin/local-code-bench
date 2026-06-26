@@ -27,6 +27,20 @@ def test_is_installed_binary_uses_which(monkeypatch) -> None:
     assert detect.is_installed(_cfg("binary", "missing")) is False
 
 
+def test_is_installed_mtplx_not_installed_is_read_only(monkeypatch) -> None:
+    """MTPLX absent → not-installed via read-only `shutil.which` (no install attempted)."""
+    calls: list[str] = []
+
+    def fake_which(name: str) -> None:
+        calls.append(name)
+        return None
+
+    monkeypatch.setattr(detect.shutil, "which", fake_which)
+
+    assert detect.is_installed(_cfg("binary", "mtplx")) is False
+    assert calls == ["mtplx"]  # detection only looked it up; nothing else ran
+
+
 def test_is_installed_module_uses_find_spec(monkeypatch) -> None:
     monkeypatch.setattr(
         detect.importlib.util,

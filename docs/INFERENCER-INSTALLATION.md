@@ -70,6 +70,7 @@ Detection runs in the **same environment the harness runs from** (its `uv` venv)
 | `mlc-llm` | module `mlc_llm` | 8082 | `pip install --pre -f https://mlc.ai/wheels mlc-llm mlc-ai` | server | [llm.mlc.ai](https://llm.mlc.ai) |
 | `vllm-mlx` | binary `vllm-mlx` | 8001 | `uv tool install vllm-mlx` | server | [waybarrios/vllm-mlx](https://github.com/waybarrios/vllm-mlx) |
 | `exo` | binary `exo` | 52415 | clone + `uv run exo` (see §8) | server | [exo-explore/exo](https://github.com/exo-explore/exo) |
+| `mtplx` | binary `mtplx` | 8003 | `uv tool install mtplx` (see §9) | server | [youssofal/mtplx](https://github.com/youssofal/mtplx) |
 | `lm-studio` | app `LM Studio.app` | 1234 | download app, enable server | app (detect-only) | [lmstudio.ai](https://lmstudio.ai) |
 | `gpt4all` | app `GPT4All.app` | 4891 | download app, enable API | app (detect-only) | [nomic.ai/gpt4all](https://www.nomic.ai/gpt4all) |
 
@@ -247,7 +248,46 @@ uv run exo                           # serves the API/dashboard at http://localh
 
 ---
 
-## 9. LM Studio (`LM Studio.app`) — port 1234 — detect-only
+## 9. MTPLX (`mtplx`) — port 8003
+
+**What it is**: native **Multi-Token-Prediction** MLX runtime for Apple Silicon. A model
+drafts several tokens ahead with its own built-in MTP heads, verifies them in one batched
+forward pass, and keeps only what passes exact rejection sampling — **no external drafter**
+(unlike DFlash's separate draft model). It exposes an OpenAI- and Anthropic-compatible
+server, so it drops into the endpoint protocol exactly like dflash/turboquant. This is the
+roster's third acceleration family (alongside DFlash spec-decoding and TurboQuant MoE).
+
+```bash
+# Install so the `mtplx` CLI is on PATH
+uv tool install mtplx               # or: pipx install mtplx
+
+# Start (matches configs/inferencers.yaml: ["mtplx", "serve", "--port", "8003"])
+# Port remapped to 8003: MTPLX defaults to 8000, which dflash already owns.
+mtplx serve --port 8003
+```
+
+> **Own pre-built models required.** MTPLX runs only **MTP-specific model builds** — the
+> [`Youssofal` Hugging Face catalog](https://huggingface.co/Youssofal) (Qwen 3.5/3.6,
+> Gemma 4). Verify a downloaded model with `mtplx inspect <path-or-repo>` before serving.
+> Because the artifact differs from the other engines' models, the `local-mtplx-qwen` row
+> in `configs/models.yaml` points at an MTPLX-specific repo and **a strict same-artifact
+> A/B against other engines is not claimed** — each run's metadata records the model build.
+
+> **Optional auto-tuning is a manual pre-step.** MTPLX can per-machine auto-tune its
+> acceptance/draft settings. Run that **once yourself, outside the harness** — the harness
+> neither triggers tuning nor depends on it. The benchmark measures whatever MTPLX serves.
+
+**Verify**:
+```bash
+curl -s http://127.0.0.1:8003/v1/models
+uv run bench inferencer start mtplx       # harness-managed start (stops other engines first)
+```
+**M3 Max / 48 GB**: pick an MTPLX build sized to leave KV headroom. Source:
+<https://github.com/youssofal/mtplx>
+
+---
+
+## 10. LM Studio (`LM Studio.app`) — port 1234 — detect-only
 
 **What it is**: polished GUI with llama.cpp **and** MLX backends. The harness only detects
 it and reports status/health — **start and stop it from its own UI** (the harness refuses
@@ -264,7 +304,7 @@ to manage GUI apps headlessly).
 
 ---
 
-## 10. GPT4All (`GPT4All.app`) — port 4891 — detect-only
+## 11. GPT4All (`GPT4All.app`) — port 4891 — detect-only
 
 **What it is**: consumer chat app (llama.cpp backend). Detect-only, like LM Studio.
 

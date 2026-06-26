@@ -598,7 +598,7 @@ def test_agent_mode_unknown_agent_errors_exit_2(monkeypatch, capsys) -> None:
 # --- bench inferencer subcommands -------------------------------------------
 
 
-def _server_cfg(name: str = "dflash", port: int = 8000) -> InferencerConfig:
+def _server_cfg(name: str = "dflash", port: int = 8000, url: str | None = None) -> InferencerConfig:
     return InferencerConfig(
         name=name,
         lifecycle="server",
@@ -607,6 +607,7 @@ def _server_cfg(name: str = "dflash", port: int = 8000) -> InferencerConfig:
         port=port,
         health_url="http://127.0.0.1:{port}/v1/models",
         start=(name, "serve"),
+        url=url,
     )
 
 
@@ -650,6 +651,41 @@ def test_inferencer_list_prints_install_lifecycle_and_port(monkeypatch, capsys) 
     assert exit_code == 0
     assert "dflash" in out and "server" in out and "8000" in out
     assert "lm-studio" in out and "app" in out and "1234" in out
+
+
+def test_inferencer_list_shows_url_and_manual_install_note(monkeypatch, capsys) -> None:
+    configs = {
+        "mtplx": _server_cfg("mtplx", 8003, url="https://github.com/youssofal/mtplx"),
+    }
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _path: configs)
+    monkeypatch.setattr(
+        "local_code_bench.inferencers.detect.is_installed",
+        lambda cfg: False,
+    )
+
+    exit_code = main(["inferencer", "list"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    # The reference URL is shown so an uninstalled engine points to its install page.
+    assert "https://github.com/youssofal/mtplx" in out
+    # The output makes clear the harness never installs engines.
+    assert "manual" in out.lower() and "install" in out.lower()
+
+
+def test_inferencer_status_shows_url(monkeypatch, capsys) -> None:
+    configs = {"mtplx": _server_cfg("mtplx", 8003, url="https://github.com/youssofal/mtplx")}
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _path: configs)
+    monkeypatch.setattr(
+        "local_code_bench.cli.manager.status_all",
+        lambda cfgs, sd: {"mtplx": _status("mtplx", port=8003)},
+    )
+
+    exit_code = main(["inferencer", "status"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "https://github.com/youssofal/mtplx" in out
 
 
 def test_inferencer_status_prints_table(monkeypatch, capsys) -> None:

@@ -524,7 +524,7 @@ def run_inferencer_command(args: argparse.Namespace) -> int:
         if args.watch:
             _watch_status(configs, args.state_dir, args.interval)
         else:
-            _print_status_table(manager.status_all(configs, args.state_dir))
+            _print_status_table(manager.status_all(configs, args.state_dir), configs)
         return 0
 
     # start / stop both need a named engine.
@@ -581,17 +581,29 @@ def _make_confirm(*, assume_yes: bool) -> Callable[[list[InferencerStatus]], boo
     return confirm
 
 
+_MANUAL_INSTALL_NOTE = (
+    "Note: the harness never installs engines — installation is manual. "
+    "Install an engine yourself from its URL above, then it is detected here."
+)
+
+
 def _print_inferencer_list(configs: dict[str, InferencerConfig]) -> None:
-    rows = [("ENGINE", "INSTALLED", "LIFECYCLE", "PORT")]
+    rows = [("ENGINE", "INSTALLED", "LIFECYCLE", "PORT", "URL")]
     for name, cfg in configs.items():
         installed = "yes" if detect.is_installed(cfg) else "no"
-        rows.append((name, installed, cfg.lifecycle, str(cfg.port)))
+        rows.append((name, installed, cfg.lifecycle, str(cfg.port), cfg.url or "-"))
     _print_rows(rows)
+    print(_MANUAL_INSTALL_NOTE)
 
 
-def _print_status_table(statuses: dict[str, InferencerStatus]) -> None:
-    rows = [("ENGINE", "INSTALLED", "RUNNING", "HEALTHY", "PID", "DETAIL")]
+def _print_status_table(
+    statuses: dict[str, InferencerStatus],
+    configs: dict[str, InferencerConfig] | None = None,
+) -> None:
+    configs = configs or {}
+    rows = [("ENGINE", "INSTALLED", "RUNNING", "HEALTHY", "PID", "URL", "DETAIL")]
     for st in statuses.values():
+        cfg = configs.get(st.name)
         rows.append(
             (
                 st.name,
@@ -599,10 +611,12 @@ def _print_status_table(statuses: dict[str, InferencerStatus]) -> None:
                 "yes" if st.running else "no",
                 "yes" if st.healthy else "no",
                 str(st.pid) if st.pid is not None else "-",
+                (cfg.url if cfg and cfg.url else "-"),
                 st.detail,
             )
         )
     _print_rows(rows)
+    print(_MANUAL_INSTALL_NOTE)
 
 
 def _watch_status(
@@ -617,7 +631,7 @@ def _watch_status(
     try:
         while True:
             sys.stdout.write("\033[2J\033[H")
-            _print_status_table(manager.status_all(configs, state_dir))
+            _print_status_table(manager.status_all(configs, state_dir), configs)
             sys.stdout.flush()
             time.sleep(interval)
     except KeyboardInterrupt:

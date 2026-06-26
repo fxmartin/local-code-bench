@@ -90,3 +90,22 @@ models:
     price_per_1k_tokens:
       input: 0.0
       output: 0.0
+  - name: local-mtplx-qwen
+    type: openai
+    base_url: http://localhost:8003/v1
+    # MTPLX needs its OWN pre-built MTP models (the Youssofal HF catalog: Qwen 3.5/3.6,
+    # Gemma 4), verified by `mtplx inspect`. This points at an MTPLX-specific repo, so a
+    # strict same-artifact A/B against other engines is NOT claimed — the run metadata
+    # records the differing model build. MTPLX's optional per-machine auto-tuning is a
+    # MANUAL pre-step FX runs once outside the harness; see docs/INFERENCER-INSTALLATION.md.
+    model_id: Youssofal/Qwen3.6-27B-MTPLX
+    pinned_revision: manual-2026-06-26
+    concurrency: 1
+    # Declares the engine `--manage-inferencers` auto-starts (port 8003 = mtplx).
+    inferencer: mtplx
+    # Native MTP speculative decoding; like the other Qwen3.6 entries it reasons inline,
+    # so give the solution room to terminate.
+    max_tokens: 2048
+    price_per_1k_tokens:
+      input: 0.0
+      output: 0.0

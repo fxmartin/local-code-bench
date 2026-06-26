@@ -339,13 +339,13 @@ your own runs (results JSONL is gitignored).
 
 `bench inferencer` detects, inspects, and controls the local inference engines
 declared in `configs/inferencers.yaml` (DFlash, TurboQuant, MLX-LM, llama.cpp,
-Ollama, and friends; LM Studio / GPT4All are detect-only GUI apps). Exactly one
-headless server is allowed to hold the GPU at a time, so timing measurements stay
-valid:
+Ollama, MTPLX, and friends; LM Studio / GPT4All are detect-only GUI apps). Exactly
+one headless server is allowed to hold the GPU at a time, so timing measurements
+stay valid:
 
 ```bash
-uv run bench inferencer list              # installed state, lifecycle, and port
-uv run bench inferencer status            # installed/running/healthy/pid table
+uv run bench inferencer list              # installed state, lifecycle, port, and reference URL
+uv run bench inferencer status            # installed/running/healthy/pid/url table
 uv run bench inferencer status --watch    # live table, refreshes on --interval (ANSI clear)
 uv run bench inferencer start dflash      # prompts to stop any other running engines first
 uv run bench inferencer start dflash --yes    # auto-confirm stopping others (non-tty defaults to no)
@@ -359,9 +359,22 @@ running GUI app blocks the start with a warning to quit it manually unless `--fo
 is passed; the harness never force-quits a GUI app. State lives under
 `.runtime/inferencers/` (gitignored). Override paths with `--config` and `--state-dir`.
 
-The harness never installs an engine — it only detects what you have. For step-by-step,
-per-engine setup on the M3 Max (install, start, verify), see
+The harness never installs an engine — it only detects what you have, and `list`/`status`
+print each engine's reference `url` so an uninstalled engine points you to its own install
+page. Installation is always manual and link-guided. For step-by-step, per-engine setup on
+the M3 Max (install, start, verify), see
 [`docs/INFERENCER-INSTALLATION.md`](docs/INFERENCER-INSTALLATION.md).
+
+**MTPLX (native MTP).** [MTPLX](https://github.com/youssofal/mtplx) is an MLX-native
+Multi-Token-Prediction runtime: the model drafts tokens ahead with its own built-in MTP
+heads and verifies them in one batched pass (no external drafter), exposing an
+OpenAI/Anthropic-compatible server on port **8003** (remapped off its 8000 default, which
+DFlash owns). It requires its **own pre-built MTP models** (the `Youssofal` Hugging Face
+catalog — Qwen 3.5/3.6, Gemma 4 — verified with `mtplx inspect`), so the `local-mtplx-qwen`
+model row points at an MTPLX-specific repo and a strict same-artifact A/B against other
+engines is **not** claimed; the run metadata records the differing model build. MTPLX's
+optional per-machine auto-tuning is a **manual** one-time pre-step you run yourself outside
+the harness — the harness neither triggers it nor depends on it.
 
 ## Unified Dashboard
 
