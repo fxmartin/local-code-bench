@@ -15,8 +15,18 @@ def run_metadata(
     temperature: float = 0.0,
     seed: int = 0,
     hardware_tag: str = "M3 Max 48 GB",
+    tier: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    return {
+    """Build a run's metadata header.
+
+    ``tier`` carries Epic-12 tier provenance (served tier, whether the model was
+    promoted from external first, whether it was served in place from external —
+    see :meth:`inferencers.tiering.TierResolution.metadata`). It is included only
+    when supplied, so non-tiered runs keep their existing header shape and the
+    leaderboard/dashboard can caveat external-served speed when present.
+    """
+
+    metadata: dict[str, object] = {
         "record_type": "metadata",
         "timestamp": datetime.now(tz=UTC).isoformat(),
         "seed": seed,
@@ -33,3 +43,6 @@ def run_metadata(
             for model in models
         },
     }
+    if tier is not None:
+        metadata["tier"] = tier
+    return metadata

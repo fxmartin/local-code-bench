@@ -33,21 +33,23 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import ExternalRepoConfig, InferencerConfig
 from . import manager
 from .external import check_availability
-from .inventory import LocalModel, expand_store_path
+from .inventory import LocalModel, Tier, expand_store_path
 
 __all__ = [
     "PromoteError",
     "PromotePlan",
     "PromoteResult",
+    "TierResolution",
     "plan_promotion",
     "promote_model",
+    "resolve_benchmark_target",
     "serving_blockers",
 ]
 
@@ -234,6 +236,137 @@ def promote_model(
         bytes_copied=plan.size_bytes,
         verified=True,
     )
+
+
+# --- Benchmark target resolution (Story 12.5-001) --------------------------
+
+
+@dataclass(frozen=True)
+class TierResolution:
+    """How a benchmark launch should obtain its target model across tiers.
+
+    ``path`` is the on-disk location the inferencer should be pointed at; ``tier``
+    is where the model is served from after resolution. ``promoted`` is ``True``
+    when an external-only model was copied local first (the default, for clean
+    speed metrics); ``served_from_external`` is ``True`` when it is served in place
+    from the external SSD (a speed caveat — its load time includes the external
+    read). ``result`` carries the underlying :class:`PromoteResult` when a
+    promotion occurred, else ``None``.
+    """
+
+    name: str
+    path: str
+    tier: Tier
+    promoted: bool
+    served_from_external: bool
+    result: PromoteResult | None = None
+
+    def metadata(self) -> dict[str, object]:
+        """Tier provenance for the run-metadata header (see :func:`metadata.run_metadata`)."""
+
+        return {
+            "served_tier": self.tier,
+            "promoted": self.promoted,
+            "served_from_external": self.served_from_external,
+        }
+
+
+def resolve_benchmark_target(
+    target: str,
+    local_models: Iterable[LocalModel],
+    external_models: Iterable[LocalModel],
+    inferencer: InferencerConfig,
+    external_cfg: ExternalRepoConfig,
+    configs: Mapping[str, InferencerConfig],
+    state_dir: str | Path,
+    *,
+    serve_from_external: bool = False,
+    home: Path | None = None,
+    free_bytes: Callable[[Path], int] = lambda path: shutil.disk_usage(path).free,
+    status_fn: Callable[[InferencerConfig, str | Path], manager.InferencerStatus] = manager.status,
+    copy_fn: Callable[[Path, Path], None] | None = None,
+) -> TierResolution:
+    """Decide how a benchmark should obtain its ``target`` model across tiers.
+
+    Local is always preferred: when ``target`` has a local copy it is served as-is,
+    with no promotion or external serving — and the external tier is never even
+    consulted, so this works while the SSD is offline. Otherwise the model must be
+    external-only:
+
+    * **offline** — the external SSD holding the only copy is not mounted: fails
+      fast with a clear error *before any model is loaded*, regardless of
+      ``serve_from_external``.
+    * **serve-from-external** (``serve_from_external=True``) — the inferencer is
+      pointed at the external path with no copy; the result flags
+      ``served_from_external`` so the run records that its speed includes external
+      load and is not silently compared against local-loaded runs.
+    * **default** — the model is promoted into ``inferencer``'s local store first
+      (reusing :func:`promote_model`, with its in-use / free-space guards), and the
+      result flags ``promoted``.
+
+    Raises :class:`PromoteError` when ``target`` is on neither tier, when the only
+    copy is on an offline external tier, or for any guard :func:`promote_model`
+    enforces.
+    """
+
+    local = _first_named(local_models, target)
+    if local is not None:
+        return TierResolution(
+            name=target,
+            path=local.path,
+            tier="local",
+            promoted=False,
+            served_from_external=False,
+        )
+
+    external = _first_named(external_models, target)
+    if external is None:
+        raise PromoteError(f"{target}: model not found on the local or external tier")
+
+    status = check_availability(external_cfg, home=home)
+    if not status.is_mounted:
+        raise PromoteError(
+            f"{target}: external repo offline at {status.root} — "
+            "plug in the SSD or choose a local model"
+        )
+
+    if serve_from_external:
+        return TierResolution(
+            name=target,
+            path=external.path,
+            tier="external",
+            promoted=False,
+            served_from_external=True,
+        )
+
+    result = promote_model(
+        external,
+        inferencer,
+        external_cfg,
+        configs,
+        state_dir,
+        home=home,
+        free_bytes=free_bytes,
+        status_fn=status_fn,
+        copy_fn=copy_fn,
+    )
+    return TierResolution(
+        name=target,
+        path=str(result.destination),
+        tier="local",
+        promoted=True,
+        served_from_external=False,
+        result=result,
+    )
+
+
+def _first_named(models: Iterable[LocalModel], target: str) -> LocalModel | None:
+    """Return the first model whose ``name`` matches ``target``, else ``None``."""
+
+    for model in models:
+        if model.name == target:
+            return model
+    return None
 
 
 # --- Filesystem helpers (pure given their inputs) --------------------------
