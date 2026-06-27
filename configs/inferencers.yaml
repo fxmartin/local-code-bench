@@ -19,6 +19,22 @@
 #              is one of gguf | ollama | hf-safetensors | mlx. Set both or neither.
 #              Engines with no fixed store dir (e.g. llama.cpp, fed an explicit
 #              model path per run) simply omit them.
+#
+# external_repo  optional (Epic-12): a second-tier model repository on an attached
+#              USB/Thunderbolt SSD. `root` is the repo root on the external volume
+#              (`~` expanded); `volume_marker` (default `.local-code-bench-external`)
+#              is a sentinel file written into `root` so the same repo is recognised
+#              across remounts and the tier reads `mounted` only when root + marker
+#              are present (else `offline`, never an error). `subpaths` optionally
+#              overrides the per-format subdir layout, which by default mirrors the
+#              local store (one subdir per gguf | ollama | hf-safetensors | mlx).
+#              Omit the whole block for a single-tier (local-only) setup. Example:
+#
+# external_repo:
+#   root: /Volumes/ModelsSSD/local-code-bench
+#   volume_marker: .local-code-bench-external
+#   subpaths:
+#     hf-safetensors: hf-cache
 inferencers:
   # --- Headless servers (full lifecycle) ---------------------------------
   - name: dflash
