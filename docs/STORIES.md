@@ -36,6 +36,7 @@
 | Epic-11 | Local Model Inventory & Sharing | Per-inferencer, format-aware view of downloaded models and detection of models several engines can share | 6 | 24 | Should Have (v1.x) |
 | Epic-12 | Tiered Model Storage (Local + External) | Two-tier model repository (internal disk + external SSD) with promote/demote, auto-tiering, and serve-from-external | 8 | 39 | Should Have (v1.x) |
 | Epic-13 | Context-Optimization Proxy Layer | Measure context-compression proxies (Headroom) as a bare-vs-proxied A/B treatment — tokens prefilled, latency, and correctness cost | 4 | 14 | Should Have (v2) |
+| Epic-14 | Additional Coding-Agent Harnesses | Generalize the Codex-only runner into a pluggable adapter and add Claude Code (cloud baseline) + Qwen Code (drives local models) | 3 | 11 | Should Have (v1.x) |
 | NFR | Non-Functional Requirements | Accuracy, security, quality, portability, hardware fit | 5 | 12 | Mixed (SEC/QUAL = MVP) |
 
 ## Epic Navigation
@@ -53,6 +54,7 @@
 - **[Epic-11: Local Model Inventory & Sharing](./stories/epic-11-local-model-inventory.md)** — per-inferencer, format-aware scanner of downloaded models (GGUF, Ollama blobs, HF/MLX caches, LM Studio/GPT4All dirs), normalized inventory records, shared-repository detection, CLI + dashboard inventory views, and a duplicate-download disk report.
 - **[Epic-12: Tiered Model Storage (Local + External)](./stories/epic-12-tiered-model-storage.md)** — external USB/Thunderbolt SSD as a second model repository with mount/availability detection, a tier-aware unified inventory built on Epic-11, integrity-checked promote/demote moves, disk-budget + LRU auto-tiering with pinning, serve-from-external (with auto-promote-before-benchmark for clean metrics), and CLI + dashboard tier surfaces.
 - **[Epic-13: Context-Optimization Proxy Layer](./stories/epic-13-context-optimization-proxy.md)** — `configs/optimizers.yaml` registry (detect-only, manual-install, link-guided) for OpenAI-compatible context-compression proxies, chained `proxy → inferencer` lifecycle, and a bare-vs-proxied A/B measurement treatment reporting tokens prefilled, latency, and correctness/task-success deltas; Headroom is the first proxy, scoped to agent mode.
+- **[Epic-14: Additional Coding-Agent Harnesses](./stories/epic-14-additional-agent-harnesses.md)** — generalize the Codex-only agent runner into a pluggable harness-adapter registry (command builder + output parser + read-only detection, reusing Epic-06's workspace + scoring + agent JSONL), then add Claude Code (frontier/cloud baseline; cannot natively target local OpenAI endpoints) and Qwen Code (OpenAI-compatible, drives the project's local models directly). Manual-install / link-only.
 - **[Non-Functional Requirements](./stories/non-functional-requirements.md)** — performance, security, quality, integration, infrastructure.
 
 ## MVP Summary
