@@ -431,9 +431,14 @@ uv run bench inferencer start dflash      # prompts to stop any other running en
 uv run bench inferencer start dflash --yes    # auto-confirm stopping others (non-tty defaults to no)
 uv run bench inferencer start dflash --force  # start past a running GUI app instead of refusing
 uv run bench inferencer stop dflash       # idempotent stop
-uv run bench inferencer models            # downloaded models per engine: format, quant, size
+uv run bench inferencer models            # downloaded models per engine: format, quant, size, tier
 uv run bench inferencer models --shared   # only models several engines can serve (sharing sets)
 uv run bench inferencer models --json     # emit the inventory as JSON
+uv run bench inferencer models --tier external   # filter to one tier (local|external|external-offline)
+uv run bench inferencer promote qwen      # copy an external model to local disk (verified move)
+uv run bench inferencer demote qwen       # evict a local model out to the external SSD (verified move)
+uv run bench inferencer tier              # auto-tiering plan (dry-run: shows evictions, moves nothing)
+uv run bench inferencer tier --apply      # apply the auto-tiering plan via the verified demote path
 ```
 
 `bench inferencer models` scans each engine's configured `model_store` with a
@@ -441,8 +446,23 @@ format-aware strategy and lists what is actually downloaded — name, format, qu
 and on-disk size. `--shared` collapses copies of the same on-disk artifact (one HF
 cache entry, the same `.gguf`, or one Ollama blob) into a single logical model and
 names every engine that can serve it, so several MLX engines sharing one download
-show up once. `--json` emits the same inventory machine-readably. A config or scan
-failure prints `bench: error: ...` and exits 2, like the other verbs.
+show up once. `--json` emits the same inventory machine-readably. Each row also
+carries a `TIER` column (`local`, `external`, or `external-offline`) and `--tier`
+filters the listing to one tier. A config or scan failure prints `bench: error: ...`
+and exits 2, like the other verbs.
+
+**Move commands (Epic-12).** `bench inferencer promote <model>` copies a model from
+the external SSD to local disk, and `demote <model>` evicts a local model out to the
+external SSD — both run the verified copy → integrity-check → publish move from the
+tiering layer (promote never deletes the external source; demote removes the local
+copy only after a verified external copy exists, and reuses a redundant external copy
+when one is already present). Each prints the bytes moved and the model's new tier.
+`bench inferencer tier` shows the disk-budget auto-tiering plan (a safe dry-run by
+default — which least-recently-used models it would evict and the bytes reclaimed,
+moving nothing); `tier --apply` applies it through the same verified demote path,
+respecting pins and pausing when the SSD is offline. Any move/tier failure (offline
+SSD, no space, in-use model, unknown model, or no `external_repo`/`auto_tier`
+configured) prints `bench: error: ...` and exits 2.
 
 **External tier (Epic-12).** An optional `external_repo` block in
 `configs/inferencers.yaml` registers a second-tier model repository on an attached

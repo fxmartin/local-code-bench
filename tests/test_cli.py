@@ -1460,3 +1460,430 @@ def test_opencode_repeat_runs_n_times_and_reports_variance(
     assert "3 runs" in md
     out = capsys.readouterr().out
     assert "run=1/3" in out and "run=3/3" in out
+
+
+# --- bench inferencer tier inventory + move commands (Story 12.6-001) --------
+
+
+def _local_model(inferencer, name, fmt, path, size, *, identity=None):
+    from local_code_bench.inferencers.inventory import LocalModel
+
+    return LocalModel(
+        inferencer=inferencer,
+        store_format=fmt,
+        name=name,
+        path=path,
+        size_bytes=size,
+        quant=None,
+        provider=None,
+        identity=identity or path,
+        tier="local",
+    )
+
+
+def _ext_model(inferencer, name, fmt, path, size, *, identity=None):
+    from local_code_bench.inferencers.inventory import LocalModel
+
+    return LocalModel(
+        inferencer=inferencer,
+        store_format=fmt,
+        name=name,
+        path=path,
+        size_bytes=size,
+        quant=None,
+        provider=None,
+        identity=identity or path,
+        tier="external",
+    )
+
+
+def _ext_cfg(root="/Volumes/ext"):
+    from local_code_bench.config import ExternalRepoConfig
+
+    return ExternalRepoConfig(root=root)
+
+
+def _mounted(is_mounted):
+    from local_code_bench.inferencers.external import (
+        ExternalRepoStatus,
+        TierAvailability,
+    )
+
+    return ExternalRepoStatus(
+        availability=TierAvailability.MOUNTED if is_mounted else TierAvailability.OFFLINE,
+        root=Path("/Volumes/ext"),
+        marker=Path("/Volumes/ext/.marker"),
+    )
+
+
+def test_models_listing_gains_tier_column_local_and_external(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr(
+        "local_code_bench.cli.scan_inferencers",
+        lambda configs: [],
+    )
+    monkeypatch.setattr(
+        "local_code_bench.cli.normalize_all",
+        lambda stored: [_local_model("dflash", "llama-local", "gguf", "/cache/llama", 1000)],
+    )
+    monkeypatch.setattr("local_code_bench.cli.load_external_repo", lambda _p: _ext_cfg())
+    monkeypatch.setattr("local_code_bench.cli.check_availability", lambda cfg, **k: _mounted(True))
+    monkeypatch.setattr(
+        "local_code_bench.cli.scan_external_tier",
+        lambda cfg, infs, **k: [_ext_model("dflash", "qwen-ext", "gguf", "/ext/qwen", 2000)],
+    )
+
+    exit_code = main(["inferencer", "models"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "TIER" in out
+    assert "llama-local" in out and "local" in out
+    assert "qwen-ext" in out and "external" in out
+
+
+def test_models_external_offline_renders_external_offline(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr("local_code_bench.cli.scan_inferencers", lambda configs: [])
+    monkeypatch.setattr("local_code_bench.cli.normalize_all", lambda stored: [])
+    monkeypatch.setattr("local_code_bench.cli.load_external_repo", lambda _p: _ext_cfg())
+    monkeypatch.setattr("local_code_bench.cli.check_availability", lambda cfg, **k: _mounted(False))
+    monkeypatch.setattr(
+        "local_code_bench.cli.read_external_catalog",
+        lambda state_dir: [_ext_model("dflash", "qwen-cached", "gguf", "/ext/qwen", 2000)],
+    )
+
+    exit_code = main(["inferencer", "models"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "qwen-cached" in out
+    assert "external-offline" in out
+
+
+def test_models_tier_filter_keeps_only_requested_tier(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr("local_code_bench.cli.scan_inferencers", lambda configs: [])
+    monkeypatch.setattr(
+        "local_code_bench.cli.normalize_all",
+        lambda stored: [_local_model("dflash", "llama-local", "gguf", "/cache/llama", 1000)],
+    )
+    monkeypatch.setattr("local_code_bench.cli.load_external_repo", lambda _p: _ext_cfg())
+    monkeypatch.setattr("local_code_bench.cli.check_availability", lambda cfg, **k: _mounted(True))
+    monkeypatch.setattr(
+        "local_code_bench.cli.scan_external_tier",
+        lambda cfg, infs, **k: [_ext_model("dflash", "qwen-ext", "gguf", "/ext/qwen", 2000)],
+    )
+
+    exit_code = main(["inferencer", "models", "--tier", "external"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "qwen-ext" in out
+    assert "llama-local" not in out
+
+
+def test_models_json_includes_tier_field(monkeypatch, capsys) -> None:
+    import json
+
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr("local_code_bench.cli.scan_inferencers", lambda configs: [])
+    monkeypatch.setattr(
+        "local_code_bench.cli.normalize_all",
+        lambda stored: [_local_model("dflash", "llama-local", "gguf", "/cache/llama", 1000)],
+    )
+    monkeypatch.setattr("local_code_bench.cli.load_external_repo", lambda _p: None)
+
+    exit_code = main(["inferencer", "models", "--json"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    data = json.loads(out)
+    assert data[0]["tier"] == "local"
+
+
+def test_promote_success_prints_summary(monkeypatch, capsys) -> None:
+    from local_code_bench.inferencers.tiering import PromotePlan, PromoteResult
+
+    cfg = InferencerConfig(
+        name="dflash",
+        lifecycle="server",
+        detect_kind="binary",
+        detect_target="dflash",
+        port=1,
+        health_url="http://127.0.0.1:{port}/h",
+        model_store=("~/models",),
+        store_format="gguf",
+    )
+    ext = _ext_model("dflash", "qwen", "gguf", "/ext/qwen.gguf", 2000)
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {"dflash": cfg})
+    monkeypatch.setattr("local_code_bench.cli.load_external_repo", lambda _p: _ext_cfg())
+    monkeypatch.setattr("local_code_bench.cli.check_availability", lambda c, **k: _mounted(True))
+    monkeypatch.setattr("local_code_bench.cli.scan_external_tier", lambda c, infs, **k: [ext])
+
+    plan = PromotePlan(
+        name="qwen",
+        store_format="gguf",
+        source=Path("/ext/qwen.gguf"),
+        destination=Path("/local/qwen.gguf"),
+        size_bytes=2000,
+    )
+
+    def fake_promote(model, inferencer, external_cfg, configs, state_dir, **k):
+        return PromoteResult(plan=plan, destination=Path("/local/qwen.gguf"), bytes_copied=2000, verified=True)
+
+    monkeypatch.setattr("local_code_bench.cli.promote_model", fake_promote)
+
+    exit_code = main(["inferencer", "promote", "qwen"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "promoted" in out.lower()
+    assert "qwen" in out
+    assert "local" in out
+
+
+def test_promote_offline_exits_2(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr("local_code_bench.cli.load_external_repo", lambda _p: _ext_cfg())
+    monkeypatch.setattr("local_code_bench.cli.check_availability", lambda c, **k: _mounted(False))
+
+    exit_code = main(["inferencer", "promote", "qwen"])
+
+    err = capsys.readouterr().err
+    assert exit_code == 2
+    assert err.startswith("bench: error:")
+    assert "offline" in err
+
+
+def test_promote_no_external_repo_exits_2(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr("local_code_bench.cli.load_external_repo", lambda _p: None)
+
+    exit_code = main(["inferencer", "promote", "qwen"])
+
+    err = capsys.readouterr().err
+    assert exit_code == 2
+    assert err.startswith("bench: error:")
+
+
+def test_promote_missing_name_exits_2(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr("local_code_bench.cli.load_external_repo", lambda _p: _ext_cfg())
+
+    exit_code = main(["inferencer", "promote"])
+
+    err = capsys.readouterr().err
+    assert exit_code == 2
+    assert err.startswith("bench: error:")
+
+
+def test_demote_success_prints_summary(monkeypatch, capsys) -> None:
+    from local_code_bench.inferencers.tiering import DemotePlan, DemoteResult
+
+    local = _local_model("dflash", "qwen", "gguf", "/local/qwen.gguf", 2000)
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr("local_code_bench.cli.load_external_repo", lambda _p: _ext_cfg())
+    monkeypatch.setattr("local_code_bench.cli.scan_inferencers", lambda configs: [])
+    monkeypatch.setattr("local_code_bench.cli.normalize_all", lambda stored: [local])
+
+    plan = DemotePlan(
+        name="qwen",
+        store_format="gguf",
+        source=Path("/local/qwen.gguf"),
+        destination=Path("/ext/qwen.gguf"),
+        size_bytes=2000,
+    )
+
+    def fake_demote(model, external_cfg, configs, state_dir, **k):
+        return DemoteResult(
+            plan=plan,
+            destination=Path("/ext/qwen.gguf"),
+            bytes_reclaimed=2000,
+            verified=True,
+            reused_existing=False,
+        )
+
+    monkeypatch.setattr("local_code_bench.cli.demote_model", fake_demote)
+
+    exit_code = main(["inferencer", "demote", "qwen"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "demoted" in out.lower()
+    assert "external" in out
+
+
+def test_demote_not_found_exits_2(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr("local_code_bench.cli.load_external_repo", lambda _p: _ext_cfg())
+    monkeypatch.setattr("local_code_bench.cli.scan_inferencers", lambda configs: [])
+    monkeypatch.setattr("local_code_bench.cli.normalize_all", lambda stored: [])
+
+    exit_code = main(["inferencer", "demote", "ghost"])
+
+    err = capsys.readouterr().err
+    assert exit_code == 2
+    assert err.startswith("bench: error:")
+
+
+def test_demote_move_error_exits_2(monkeypatch, capsys) -> None:
+    from local_code_bench.inferencers.tiering import DemoteError
+
+    local = _local_model("dflash", "qwen", "gguf", "/local/qwen.gguf", 2000)
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr("local_code_bench.cli.load_external_repo", lambda _p: _ext_cfg())
+    monkeypatch.setattr("local_code_bench.cli.scan_inferencers", lambda configs: [])
+    monkeypatch.setattr("local_code_bench.cli.normalize_all", lambda stored: [local])
+
+    def boom(*a, **k):
+        raise DemoteError("dflash is running and could be serving qwen")
+
+    monkeypatch.setattr("local_code_bench.cli.demote_model", boom)
+
+    exit_code = main(["inferencer", "demote", "qwen"])
+
+    err = capsys.readouterr().err
+    assert exit_code == 2
+    assert "bench: error: dflash is running" in err
+
+
+def _autotier_cfg(max_local_gb=1.0, pins=()):
+    from local_code_bench.config import AutoTierConfig
+
+    return AutoTierConfig(max_local_gb=max_local_gb, pins=pins)
+
+
+def test_tier_dry_run_prints_plan_without_applying(monkeypatch, capsys) -> None:
+    # Two local models, ~3 GiB total, budget 1 GiB → evict the LRU one.
+    big = 2 * 1024**3
+    small = 1 * 1024**3
+    a = _local_model("dflash", "old", "gguf", "/local/old.gguf", big, identity="id-old")
+    b = _local_model("dflash", "new", "gguf", "/local/new.gguf", small, identity="id-new")
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr("local_code_bench.cli.load_external_repo", lambda _p: _ext_cfg())
+    monkeypatch.setattr("local_code_bench.cli.load_autotier", lambda _p: _autotier_cfg(max_local_gb=1.0))
+    monkeypatch.setattr("local_code_bench.cli.scan_inferencers", lambda configs: [])
+    monkeypatch.setattr("local_code_bench.cli.normalize_all", lambda stored: [a, b])
+    monkeypatch.setattr("local_code_bench.cli.check_availability", lambda c, **k: _mounted(True))
+    # Deterministic LRU: "old" is least-recently used.
+    monkeypatch.setattr(
+        "local_code_bench.cli._local_free_bytes", lambda configs: None
+    )
+    monkeypatch.setattr(
+        "local_code_bench.inferencers.autotier.mtime_last_used",
+        lambda m: 1.0 if m.name == "old" else 2.0,
+    )
+
+    applied = {"called": False}
+
+    def fake_apply(*a, **k):
+        applied["called"] = True
+        return []
+
+    monkeypatch.setattr("local_code_bench.inferencers.autotier.apply_plan", fake_apply)
+
+    exit_code = main(["inferencer", "tier"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "old" in out  # the eviction candidate is shown
+    assert applied["called"] is False  # dry-run moves nothing
+
+
+def test_tier_apply_executes_plan(monkeypatch, capsys) -> None:
+    big = 2 * 1024**3
+    a = _local_model("dflash", "old", "gguf", "/local/old.gguf", big, identity="id-old")
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr("local_code_bench.cli.load_external_repo", lambda _p: _ext_cfg())
+    monkeypatch.setattr("local_code_bench.cli.load_autotier", lambda _p: _autotier_cfg(max_local_gb=1.0))
+    monkeypatch.setattr("local_code_bench.cli.scan_inferencers", lambda configs: [])
+    monkeypatch.setattr("local_code_bench.cli.normalize_all", lambda stored: [a])
+    monkeypatch.setattr("local_code_bench.cli.check_availability", lambda c, **k: _mounted(True))
+    monkeypatch.setattr("local_code_bench.cli._local_free_bytes", lambda configs: None)
+
+    from local_code_bench.inferencers.tiering import DemotePlan, DemoteResult
+
+    calls = {"n": 0}
+
+    def fake_apply(plan, external_cfg, configs, state_dir, **k):
+        calls["n"] = len(plan.evictions)
+        return [
+            DemoteResult(
+                plan=DemotePlan(
+                    name=ev.name,
+                    store_format=ev.store_format,
+                    source=Path(ev.model.path),
+                    destination=Path("/ext") / ev.name,
+                    size_bytes=ev.size_bytes,
+                ),
+                destination=Path("/ext") / ev.name,
+                bytes_reclaimed=ev.size_bytes,
+                verified=True,
+                reused_existing=False,
+            )
+            for ev in plan.evictions
+        ]
+
+    monkeypatch.setattr("local_code_bench.inferencers.autotier.apply_plan", fake_apply)
+
+    exit_code = main(["inferencer", "tier", "--apply"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert calls["n"] == 1
+    assert "applied" in out.lower()
+
+
+def test_tier_paused_when_external_offline(monkeypatch, capsys) -> None:
+    big = 2 * 1024**3
+    a = _local_model("dflash", "old", "gguf", "/local/old.gguf", big, identity="id-old")
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr("local_code_bench.cli.load_external_repo", lambda _p: _ext_cfg())
+    monkeypatch.setattr("local_code_bench.cli.load_autotier", lambda _p: _autotier_cfg(max_local_gb=1.0))
+    monkeypatch.setattr("local_code_bench.cli.scan_inferencers", lambda configs: [])
+    monkeypatch.setattr("local_code_bench.cli.normalize_all", lambda stored: [a])
+    monkeypatch.setattr("local_code_bench.cli.check_availability", lambda c, **k: _mounted(False))
+    monkeypatch.setattr("local_code_bench.cli._local_free_bytes", lambda configs: None)
+
+    exit_code = main(["inferencer", "tier"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "paused" in out.lower()
+
+
+def test_tier_apply_offline_exits_2(monkeypatch, capsys) -> None:
+    big = 2 * 1024**3
+    a = _local_model("dflash", "old", "gguf", "/local/old.gguf", big, identity="id-old")
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr("local_code_bench.cli.load_external_repo", lambda _p: _ext_cfg())
+    monkeypatch.setattr("local_code_bench.cli.load_autotier", lambda _p: _autotier_cfg(max_local_gb=1.0))
+    monkeypatch.setattr("local_code_bench.cli.scan_inferencers", lambda configs: [])
+    monkeypatch.setattr("local_code_bench.cli.normalize_all", lambda stored: [a])
+    monkeypatch.setattr("local_code_bench.cli.check_availability", lambda c, **k: _mounted(False))
+    monkeypatch.setattr("local_code_bench.cli._local_free_bytes", lambda configs: None)
+
+    exit_code = main(["inferencer", "tier", "--apply"])
+
+    err = capsys.readouterr().err
+    assert exit_code == 2
+    assert err.startswith("bench: error:")
+
+
+def test_tier_no_policy_configured_exits_2(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr("local_code_bench.cli.load_external_repo", lambda _p: _ext_cfg())
+    monkeypatch.setattr("local_code_bench.cli.load_autotier", lambda _p: None)
+
+    exit_code = main(["inferencer", "tier"])
+
+    err = capsys.readouterr().err
+    assert exit_code == 2
+    assert err.startswith("bench: error:")
+
+
+def test_parser_accepts_tier_and_move_actions() -> None:
+    for action in ("promote", "demote", "tier"):
+        args = build_parser().parse_args(["inferencer", action, "m"])
+        assert args.action == action
