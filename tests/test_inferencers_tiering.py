@@ -642,6 +642,54 @@ def test_demote_reuses_verified_existing_external_copy(tmp_path: Path) -> None:
     assert not source.exists()  # local reclaimed immediately
 
 
+def test_demote_reuses_verified_existing_external_directory_copy(tmp_path: Path) -> None:
+    # The reuse fast-path compares a *directory tree* (size + order-stable tree
+    # hash), not just a single file: an identical multi-file model already on
+    # external is reused with no re-copy, and the local tree is reclaimed.
+    ext_root = tmp_path / "ext"
+    _mount(ext_root)
+    source = _write_model_dir(tmp_path / "local" / "mlx", "Qwen3")
+    existing = _write_model_dir(ext_root / "mlx", "Qwen3")  # byte-identical tree
+    cfg = _inferencer("mlx-engine", tmp_path / "local" / "mlx", "mlx")
+
+    def must_not_copy(src: Path, dst: Path) -> None:
+        raise AssertionError("demote re-copied despite a verified external tree")
+
+    result = demote_model(
+        _local_model(source, name="Qwen3", store_format="mlx"),
+        _external_cfg(ext_root), {"mlx-engine": cfg}, tmp_path,
+        free_bytes=_plenty, status_fn=_not_running, copy_fn=must_not_copy,
+    )
+
+    assert result.reused_existing is True
+    assert result.verified is True
+    assert result.bytes_reclaimed == _tree_size(existing)
+    assert (existing / "tokenizer" / "tokenizer.json").exists()  # external untouched
+    assert not source.exists()  # local tree reclaimed immediately
+
+
+def test_demote_refuses_when_external_directory_copy_differs(tmp_path: Path) -> None:
+    # A same-named external *tree* whose contents differ (one altered file) must
+    # be refused, not clobbered: the tree hash diverges, so local and external
+    # are both left exactly as they were.
+    ext_root = tmp_path / "ext"
+    _mount(ext_root)
+    source = _write_model_dir(tmp_path / "local" / "mlx", "Qwen3")
+    stale = _write_model_dir(ext_root / "mlx", "Qwen3")
+    (stale / "model.safetensors").write_bytes(b"different-tensor" * 500)  # diverge
+    cfg = _inferencer("mlx-engine", tmp_path / "local" / "mlx", "mlx")
+
+    with pytest.raises(DemoteError, match="differs"):
+        demote_model(
+            _local_model(source, name="Qwen3", store_format="mlx"),
+            _external_cfg(ext_root), {"mlx-engine": cfg}, tmp_path,
+            free_bytes=_plenty, status_fn=_not_running,
+        )
+
+    assert (source / "model.safetensors").exists()  # local tree preserved
+    assert (stale / "model.safetensors").read_bytes() == b"different-tensor" * 500
+
+
 def test_demote_uses_default_seams_for_idle_local_engine(tmp_path: Path) -> None:
     # Exercise the real default free_bytes (shutil.disk_usage) and a real manager
     # status lookup with no state file (engine reported down) — no injection.
