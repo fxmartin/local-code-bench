@@ -139,9 +139,9 @@
 **Technical Notes**: A new section in the Epic-09 unified dashboard (09.1-001) fed by the inventory scanner's JSON, reusing the dashboard's localhost server and the launcher form (09.2-001) for the cross-link. No business logic duplicated — the section is a thin client over the scanner output.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 11.3-001, 09.1-001, 09.2-001
 **Risk Level**: Medium
@@ -171,4 +171,4 @@
 **Risk Level**: Low
 
 ## Epic Progress
-**Completed**: 4 / 6 stories · 16 / 24 points
+**Completed**: 5 / 6 stories · 21 / 24 points

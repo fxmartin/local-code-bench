@@ -520,6 +520,17 @@ multi-turn pane (with a Stop control that cancels the stream cleanly). It is par
 the same self-contained page — inlined CSS/JS, no CDN or build step — and never starts
 a server, so bring one up in the Inferencers or Run section first.
 
+The **Inventory** section is a thin browser client over a `GET /api/inventory`
+endpoint that surfaces the Epic-11 local model-store scanner: it lists the models
+downloaded on this box per inferencer, grouped by on-disk format with their quant,
+provider, and size, and a second table flags the *shared* ones — a single stored
+artifact (the same HuggingFace cache entry, `.gguf` file, or Ollama blob) several
+engines can serve, so you are not storing it more than once. Clicking a downloaded
+model jumps to the **Run** section with a compatible inferencer pre-filled, so you can
+benchmark a local download visually. The endpoint projects only what identifies a
+model (name, format, quant, provider, size, and serving inferencers); on-disk paths
+are never sent, and like every section it binds localhost only.
+
 ## Verification Status
 
 Last automated verification: 2026-06-21.
