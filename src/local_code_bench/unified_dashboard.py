@@ -41,6 +41,7 @@ from .config import (
     load_models,
 )
 from .inferencers import dashboard as inferencer_panel
+from .inferencers import inventory
 from .suite_catalog import catalog_payload
 
 _TRUTHY = {"1", "true", "yes", "on"}
@@ -163,6 +164,54 @@ def catalog_action(ctx: DashboardContext) -> tuple[int, dict]:
     return 200, {"models": models, "inferencers": inferencers, "suites": suites}
 
 
+def inventory_action(ctx: DashboardContext) -> tuple[int, dict]:
+    """Return the local model inventory: per-inferencer downloads + shared sets.
+
+    A thin projection over the Epic-11 scanner (story 11.5-001): it scans each
+    configured inferencer's model store, normalizes the hits, and groups them into
+    logical models so the dashboard can render downloads per inferencer and flag the
+    ones several engines can serve. Only identity fields reach the browser — name,
+    format, quant, provider, size, and owning inferencer(s); the on-disk path and
+    content identity are deliberately omitted so no host-sensitive path leaks (AC4).
+    """
+
+    models = inventory.normalize_all(inventory.scan_inferencers(ctx.configs.values()))
+    return 200, {
+        "models": [
+            {
+                "name": model.name,
+                "format": model.store_format,
+                "quant": model.quant,
+                "provider": model.provider,
+                "size_bytes": model.size_bytes,
+                "inferencer": model.inferencer,
+            }
+            for model in models
+        ],
+        "shared": [_shared_payload(group) for group in inventory.shared_models(models)],
+    }
+
+
+def _shared_payload(group: inventory.SharedModel) -> dict:
+    """Project one shared logical model: identity fields from its first member.
+
+    A :class:`inventory.SharedModel` carries the grouping key and its member
+    records; name/quant/provider/size live on the members, so the head model
+    supplies them (every member shares the same on-disk artifact). The on-disk
+    path and content identity are deliberately omitted (AC4).
+    """
+
+    head = group.models[0]
+    return {
+        "name": head.name,
+        "format": group.store_format,
+        "quant": head.quant,
+        "provider": head.provider,
+        "size_bytes": head.size_bytes,
+        "inferencers": list(group.inferencers),
+    }
+
+
 def _resolve_result_paths(ctx: DashboardContext) -> list[str | Path]:
     """Explicit ``--input`` files plus any ``*.jsonl`` under ``results_dir``.
 
@@ -216,6 +265,8 @@ def handle_request(
         return _json(*results_panel.data_action(_resolve_result_paths(ctx)))
     if method == "GET" and route == "/api/catalog":
         return _json(*catalog_action(ctx))
+    if method == "GET" and route == "/api/inventory":
+        return _json(*inventory_action(ctx))
     if method == "POST" and route == "/api/run":
         if ctx.orchestrator is None:
             return _json(503, {"error": "launching is unavailable: no model registry loaded"})
@@ -485,6 +536,7 @@ _PAGE = """<!DOCTYPE html>
   <nav id="nav">
     <button data-section="inferencers" class="active">Inferencers</button>
     <button data-section="results">Results</button>
+    <button data-section="inventory">Inventory</button>
     <button data-section="run">Run</button>
     <button data-section="chat">Chat</button>
   </nav>
@@ -550,6 +602,36 @@ _PAGE = """<!DOCTYPE html>
 
   <h3 id="warnings-title" hidden>Data-quality warnings</h3>
   <ul id="warnings"></ul>
+</section>
+
+<section id="section-inventory" class="section" hidden>
+  <h2>Local Model Inventory</h2>
+  <p class="note">Models downloaded on this box, grouped by inferencer and on-disk
+    format. Click a row to jump to the Run section with a compatible inferencer
+    pre-filled. The shared table flags one logical model several engines can serve —
+    a single download, reusable — so you are not storing it more than once.</p>
+  <p id="inv-err" class="err"></p>
+  <h3>Downloads by inferencer</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Inferencer</th><th>Format</th><th>Model</th><th>Quant</th>
+        <th>Provider</th><th class="num">Size</th>
+      </tr>
+    </thead>
+    <tbody id="inv-models"></tbody>
+  </table>
+  <h3>Shared across inferencers</h3>
+  <p class="empty">One stored artifact several engines can serve.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Format</th><th>Model</th><th>Quant</th>
+        <th class="num">Size</th><th>Inferencers</th>
+      </tr>
+    </thead>
+    <tbody id="inv-shared"></tbody>
+  </table>
 </section>
 
 <section id="section-run" class="section" hidden>
@@ -644,6 +726,7 @@ _PAGE = """<!DOCTYPE html>
   const sections = {
     inferencers: document.getElementById("section-inferencers"),
     results: document.getElementById("section-results"),
+    inventory: document.getElementById("section-inventory"),
     run: document.getElementById("section-run"),
     chat: document.getElementById("section-chat"),
   };
@@ -652,6 +735,8 @@ _PAGE = """<!DOCTYPE html>
     buttons.forEach((b) => b.classList.toggle("active", b.dataset.section === name));
   }
   buttons.forEach((b) => b.addEventListener("click", () => show(b.dataset.section)));
+  // Exposed so the Inventory section can jump to the Run launcher on row-click.
+  window.showSection = show;
   show("inferencers");
 })();
 
@@ -1113,6 +1198,18 @@ _PAGE = """<!DOCTYPE html>
     }
   }
 
+  // Exposed so the Inventory section can pre-fill the launcher with a chosen
+  // download and a compatible inferencer (story 11.5-001, AC3). The model is only
+  // selected when the registry actually offers it as an option; the inferencer is
+  // always set so a downloaded repo maps onto an engine that can serve it.
+  window.prefillRun = function (model, inferencer) {
+    if (inferencer) infSel.value = inferencer;
+    if (model && Array.from(modelSel.options).some((o) => o.value === model)) {
+      modelSel.value = model;
+    }
+    updateWarning();
+  };
+
   modelSel.addEventListener("change", updateWarning);
   infSel.addEventListener("change", updateWarning);
   launchBtn.addEventListener("click", () => {
@@ -1336,6 +1433,89 @@ _PAGE = """<!DOCTYPE html>
   });
 
   load();
+})();
+
+// Inventory section: a thin client over /api/inventory (story 11.5-001). Renders
+// downloads grouped by inferencer + format, and the shared-model sets; a row-click
+// jumps to the Run launcher pre-filled with a compatible inferencer.
+(function () {
+  const modelsBody = document.getElementById("inv-models");
+  const sharedBody = document.getElementById("inv-shared");
+  const err = document.getElementById("inv-err");
+
+  function humanSize(bytes) {
+    if (bytes === null || bytes === undefined) return "-";
+    let n = Number(bytes);
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let i = 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return (i === 0 ? n : n.toFixed(1)) + " " + units[i];
+  }
+  function cell(text, numeric) {
+    const td = document.createElement("td");
+    if (numeric) td.className = "num";
+    td.textContent = text;
+    return td;
+  }
+  function fillEmpty(tbody, cols, label) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = cols;
+    td.className = "empty";
+    td.textContent = label;
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  }
+
+  function renderModels(models) {
+    modelsBody.innerHTML = "";
+    if (!models.length) { fillEmpty(modelsBody, 6, "No downloaded models found."); return; }
+    // Group by inferencer then format so the table reads per-engine, per-format.
+    const sorted = models.slice().sort((a, b) =>
+      (a.inferencer || "").localeCompare(b.inferencer || "") ||
+      (a.format || "").localeCompare(b.format || "") ||
+      (a.name || "").localeCompare(b.name || ""));
+    for (const m of sorted) {
+      const tr = document.createElement("tr");
+      tr.className = "row-clickable";
+      tr.append(
+        cell(m.inferencer), cell(m.format), cell(m.name),
+        cell(m.quant || "-"), cell(m.provider || "-"), cell(humanSize(m.size_bytes), true),
+      );
+      tr.addEventListener("click", () => {
+        if (window.showSection) window.showSection("run");
+        if (window.prefillRun) window.prefillRun(m.name, m.inferencer);
+      });
+      modelsBody.appendChild(tr);
+    }
+  }
+
+  function renderShared(shared) {
+    sharedBody.innerHTML = "";
+    if (!shared.length) { fillEmpty(sharedBody, 5, "No models shared across inferencers."); return; }
+    for (const s of shared) {
+      const tr = document.createElement("tr");
+      tr.append(
+        cell(s.format), cell(s.name), cell(s.quant || "-"),
+        cell(humanSize(s.size_bytes), true), cell((s.inferencers || []).join(", ")),
+      );
+      sharedBody.appendChild(tr);
+    }
+  }
+
+  async function refresh() {
+    try {
+      const res = await fetch("/api/inventory");
+      const data = await res.json();
+      err.textContent = "";
+      renderModels(data.models || []);
+      renderShared(data.shared || []);
+    } catch (e) {
+      err.textContent = "inventory unavailable: " + e;
+    }
+  }
+
+  refresh();
 })();
 </script>
 </body>
