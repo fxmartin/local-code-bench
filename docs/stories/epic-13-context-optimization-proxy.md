@@ -99,7 +99,7 @@
 - [ ] Tests written and passing
 - [ ] Documentation updated
 
-**Dependencies**: 13.2-001, 06.x (agent-mode runner + task scoring)
+**Dependencies**: 13.2-001, 06.1-002 (Codex exec runner), 06.1-003 (agent-mode scoring)
 **Risk Level**: Medium
 
 ### Feature 13.4: Headroom Onboarding & Surface
@@ -125,7 +125,7 @@
 - [ ] Tests written and passing
 - [ ] Documentation updated
 
-**Dependencies**: 13.1-001, 13.2-001, 13.3-001 (CLI surfaces the registry, lifecycle, and A/B run); 08.4-001 (CLI subparser pattern); Epic-09 (optional dashboard panel)
+**Dependencies**: 13.1-001, 13.2-001, 13.3-001 (CLI surfaces the registry, lifecycle, and A/B run); 08.4-001 (CLI subparser pattern); 09.1-001 (optional dashboard panel)
 **Risk Level**: Low
 
 ## Epic Progress

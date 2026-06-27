@@ -153,9 +153,9 @@ on completion. Tests in `tests/test_launch.py` and `tests/test_unified_dashboard
 **Technical Notes**: A `suite_catalog()` helper that enumerates the existing `SuiteName` suites plus any entries from an optional `configs/suites.yaml` (id, loader hint, source path), reusing the Epic-02 `load_suite`/dataset-cache logic to compute availability and counts. Surface it as a JSON endpoint consumed by 09.2-001. Keep "custom suite" definition minimal — point at a loadable dataset; do not build a full plugin system. Test the catalog with built-ins present, a registered custom suite, and an unavailable (missing-cache) suite.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 02.1-001 (suite loaders), 09.2-001
 **Risk Level**: Medium
@@ -177,9 +177,9 @@ on completion. Tests in `tests/test_launch.py` and `tests/test_unified_dashboard
 **Technical Notes**: Cross-link the sections (launch → `GET /api/run/<id>` → results pointed at the run's JSONL; Inferencers panel reads the same `status_all`). Centralize a response-sanitization pass so no secrets reach the browser. Re-assert the Epic-08 safety rules at the unified layer rather than re-implementing them. This story is the integration/security seam — its tests assert the launch→watch→results path end-to-end (with backend pieces faked) and that security ACs hold across endpoints.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 09.1-001, 09.4-001
 **Risk Level**: Medium
@@ -252,7 +252,7 @@ via `textContent` (no HTML injection). Tests in `tests/test_unified_dashboard.py
 **Risk Level**: Low
 
 ## Epic Progress
-**Completed**: 6 / 8 stories · 26 / 32 points
+**Completed**: 8 / 8 stories · 32 / 32 points
 
 - [x] 09.1-001 — Single-page unified dashboard with Inferencers / Results / Run sections (5 pts)
 - [x] 09.2-001 — Compose a benchmark from model + inferencer + suites (5 pts) (`src/local_code_bench/unified_dashboard.py`)

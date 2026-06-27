@@ -39,9 +39,9 @@
 **Technical Notes**: New `src/local_code_bench/inferencers/inventory.py` with a per-format scan strategy dispatched on the config's `format`. Reuse the Epic-08 config-loading style in `config.py` for the new `model_store`/`format` fields (optional, defaulted, so existing entries stay valid). Darwin-aware path handling like `power.py`. Keep each strategy pure and filesystem-only for testability (monkeypatch a base dir / `pathlib` walks, as `tests/test_config.py` and the planned Epic-08 detection tests do).
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 08.1-001
 **Risk Level**: Medium
@@ -64,9 +64,9 @@
 **Technical Notes**: `LocalModel` frozen dataclass in `inventory.py`. Content identity = `os.path.realpath` of the model file/dir (or the Ollama blob sha) so it is symlink-stable and reused by sharing detection (11.3). Quant/provider parsing shared with Epic-10's scorecard provenance logic to avoid two implementations.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 11.1-001
 **Risk Level**: Low
@@ -171,4 +171,4 @@
 **Risk Level**: Low
 
 ## Epic Progress
-**Completed**: 5 / 6 stories · 21 / 24 points
+**Completed**: 6 / 6 stories · 24 / 24 points

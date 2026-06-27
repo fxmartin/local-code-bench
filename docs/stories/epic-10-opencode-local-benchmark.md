@@ -61,9 +61,9 @@ Severity rules (given verbatim to the model, and the ground truth for Task B):
 **Technical Notes**: Reuse `provider_for_model` (`src/local_code_bench/provider.py:120`), `capture_stream_metrics` (`src/local_code_bench/metrics.py:35`), and `ChatRequest`. Add optional, defaulted fields to `ModelConfig` in `config.py` (`quant`, `provider`, `engine`, `thinking_extra_body`) so existing entries and tests are unaffected; allow CLI overrides (`--quant/--provider/--engine`) and an `--endpoint` override via `dataclasses.replace`. Branch `bench opencode` at the top of `main` (`cli.py`) with its own flag namespace, keeping the existing flat `--mode` flow intact; `run-bench.sh` = `exec uv run bench opencode "$@"`. A new `opencode/engines.py` maps the 10 Epic-08 engines to default `/v1` endpoints for `--engine`.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 01.1-003 (OpenAI-compatible provider), 01.2-001 (streaming metrics)
 **Risk Level**: Low
@@ -87,9 +87,9 @@ Severity rules (given verbatim to the model, and the ground truth for Task B):
 **Technical Notes**: A Go-aware variant of `extract_code` (`src/local_code_bench/scoring.py:19`). `opencode/blackbox.py` runs the compiled binary via `subprocess.run` (the model's Go is compiled, not exec'd as Python — distinct from the existing Python sandbox path). Ship `opencode/reference/classifier.go` as the canonical correct implementation so the black-box suite — and the DoD "reference runs clean end-to-end" — is verifiable with no live model. Tests skip-guard when `shutil.which("go")` is None (Go 1.24.7 confirmed in CI here).
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 10.1-001
 **Risk Level**: Medium
@@ -174,4 +174,4 @@ Severity rules (given verbatim to the model, and the ground truth for Task B):
 - Determinism verified: same inputs, same scores on rerun.
 
 ## Epic Progress
-**Completed**: 3 / 5 stories · 11 / 21 points (10.3-001, 10.4-001, 10.5-001)
+**Completed**: 5 / 5 stories · 21 / 21 points
