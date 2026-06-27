@@ -16,13 +16,26 @@ handling in ``power.py``.
 from __future__ import annotations
 
 import json
+import os
+import re
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import InferencerConfig, StoreFormat
 
-__all__ = ["StoredModel", "scan_inferencer", "scan_inferencers", "expand_store_path"]
+__all__ = [
+    "StoredModel",
+    "LocalModel",
+    "scan_inferencer",
+    "scan_inferencers",
+    "expand_store_path",
+    "normalize",
+    "normalize_all",
+    "parse_quant",
+    "parse_provider",
+    "content_identity",
+]
 
 
 @dataclass(frozen=True)
@@ -96,6 +109,148 @@ def scan_inferencer(
                 )
             )
     return models
+
+
+# --- Normalized inventory record (Story 11.2-001) -------------------------
+
+
+@dataclass(frozen=True)
+class LocalModel:
+    """One discovered model normalized with provenance and a content identity.
+
+    Built from a :class:`StoredModel` by :func:`normalize`, this is the shape
+    inventory views and sharing detection (Story 11.3) consume. ``quant`` and
+    ``provider`` are parsed from the path/name where present and degrade to
+    ``None`` otherwise. ``identity`` is symlink-stable (``os.path.realpath`` of
+    the model file/dir, or the Ollama model-weights blob sha) so two engines
+    pointing at the same on-disk artifact resolve to one logical model.
+    """
+
+    inferencer: str
+    store_format: StoreFormat
+    name: str
+    path: str
+    size_bytes: int
+    quant: str | None
+    provider: str | None
+    identity: str
+
+
+def normalize(model: StoredModel) -> LocalModel:
+    """Turn a raw :class:`StoredModel` into a provenance-carrying :class:`LocalModel`.
+
+    Quant and provider are parsed from the model name first, then its path, so a
+    token living in either a filename or a parent directory is recognised. Never
+    raises: unparseable provenance degrades to ``None``.
+    """
+
+    quant = parse_quant(model.name) or parse_quant(model.path)
+    provider = parse_provider(model.name) or parse_provider(model.path)
+    return LocalModel(
+        inferencer=model.inferencer,
+        store_format=model.store_format,
+        name=model.name,
+        path=model.path,
+        size_bytes=model.size_bytes,
+        quant=quant,
+        provider=provider,
+        identity=content_identity(model),
+    )
+
+
+def normalize_all(models: Iterable[StoredModel]) -> list[LocalModel]:
+    """Normalize every scanned model, preserving order."""
+
+    return [normalize(model) for model in models]
+
+
+#: Recognised GGUF / MLX quantization tokens, e.g. ``Q4_K_M``, ``IQ3_XXS``,
+#: ``Q8_0``, ``F16``/``BF16``, and MLX bit suffixes like ``4bit`` / ``8-bit``.
+_QUANT_RE = re.compile(
+    r"(?<![A-Za-z0-9])("
+    r"I?Q\d+(?:_[A-Za-z0-9]+)*"  # Q4_K_M, IQ3_XXS, Q8_0, Q6_K
+    r"|B?F(?:16|32)"  # F16, F32, BF16
+    r"|\d+-?bit"  # 4bit, 4-bit, 8bit
+    r")(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
+
+#: Known quant publishers — the Unsloth-vs-Bartowski provenance lesson (Epic-10).
+#: Matched case-insensitively against the model path/name; canonical casing is
+#: the HuggingFace org name so it lines up with the scorecard's ``provider``.
+_KNOWN_PROVIDERS: tuple[str, ...] = (
+    "unsloth",
+    "bartowski",
+    "mradermacher",
+    "TheBloke",
+    "mlx-community",
+    "lmstudio-community",
+)
+
+
+def parse_quant(text: str) -> str | None:
+    """Extract a quant token (``Q4_K_M``, ``IQ3_XXS``, ``4bit``) from ``text``.
+
+    Returns the matched substring with its original casing, or ``None`` when no
+    quant token is present. Parameter counts (``7B``) and versions (``2.5``) are
+    not mistaken for quants.
+    """
+
+    match = _QUANT_RE.search(text)
+    return match.group(1) if match else None
+
+
+def parse_provider(text: str) -> str | None:
+    """Extract a known quant publisher (Unsloth/Bartowski/...) from ``text``.
+
+    Matches a curated set of publishers case-insensitively anywhere in the
+    path/name and returns the canonical name; ``None`` when none is present.
+    """
+
+    lowered = text.lower()
+    for provider in _KNOWN_PROVIDERS:
+        if provider.lower() in lowered:
+            return provider
+    return None
+
+
+def content_identity(model: StoredModel) -> str:
+    """Symlink-stable identity used to recognise the same on-disk artifact.
+
+    For file/dir stores this is ``os.path.realpath`` of the model path (stable
+    across scans and collapsing symlinks). For Ollama — a content-addressed
+    store — it is the model-weights blob sha from the manifest, falling back to
+    the manifest realpath when that is unavailable.
+    """
+
+    if model.store_format == "ollama":
+        sha = _ollama_model_blob_sha(Path(model.path))
+        if sha is not None:
+            return sha
+    return os.path.realpath(model.path)
+
+
+def _ollama_model_blob_sha(manifest: Path) -> str | None:
+    """Return the ``sha256:`` digest of an Ollama manifest's model-weights layer."""
+
+    try:
+        doc = json.loads(manifest.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return None
+    if not isinstance(doc, dict):
+        return None
+    for layer in doc.get("layers") or []:
+        if not isinstance(layer, dict):
+            continue
+        media_type = layer.get("mediaType")
+        digest = layer.get("digest")
+        if (
+            isinstance(media_type, str)
+            and media_type.endswith(".model")
+            and isinstance(digest, str)
+        ):
+            return digest
+    return None
 
 
 # --- Per-format scan strategies -------------------------------------------
