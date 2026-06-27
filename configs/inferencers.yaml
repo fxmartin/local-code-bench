@@ -13,6 +13,12 @@
 #   url        optional reference link (official website or GitHub). The harness
 #              NEVER installs an engine — when one is not installed it points you
 #              to this URL to install it manually. See docs/INFERENCER-INSTALLATION.md.
+#   model_store / format  optional (Epic-11): where this engine keeps downloaded
+#              models and the on-disk format the inventory scanner reads them with.
+#              `model_store` is one path or a list of paths (`~` expanded); `format`
+#              is one of gguf | ollama | hf-safetensors | mlx. Set both or neither.
+#              Engines with no fixed store dir (e.g. llama.cpp, fed an explicit
+#              model path per run) simply omit them.
 inferencers:
   # --- Headless servers (full lifecycle) ---------------------------------
   - name: dflash
@@ -23,6 +29,9 @@ inferencers:
     health_url: http://127.0.0.1:{port}/v1/models
     start: ["dflash", "serve"]
     url: https://github.com/bstnxbt/dflash-mlx
+    # MLX engines read pre-quantized repos from the shared HuggingFace hub cache.
+    model_store: ~/.cache/huggingface/hub
+    format: hf-safetensors
   - name: turboquant
     lifecycle: server
     detect:
@@ -31,6 +40,8 @@ inferencers:
     health_url: http://127.0.0.1:{port}/v1/models
     start: ["turboquant-serve"]
     url: https://github.com/helgklaizar/turboquant-mlx
+    model_store: ~/.cache/huggingface/hub
+    format: hf-safetensors
   - name: mlx-lm
     lifecycle: server
     detect:
@@ -39,6 +50,8 @@ inferencers:
     health_url: http://127.0.0.1:{port}/v1/models
     start: ["mlx_lm.server", "--port", "8080"]
     url: https://github.com/ml-explore/mlx-lm
+    model_store: ~/.cache/huggingface/hub
+    format: hf-safetensors
   - name: llama-cpp
     lifecycle: server
     detect:
@@ -56,6 +69,9 @@ inferencers:
     start: ["ollama", "serve"]
     stop: ["ollama", "stop"]
     url: https://ollama.com
+    # Content-addressed blob store (manifests/ + sha256 blobs/), not plain files.
+    model_store: ~/.ollama/models
+    format: ollama
   - name: mlc-llm
     lifecycle: server
     detect:
@@ -64,6 +80,8 @@ inferencers:
     health_url: http://127.0.0.1:{port}/v1/models
     start: ["mlc_llm", "serve", "--port", "8082"]
     url: https://github.com/mlc-ai/mlc-llm
+    model_store: ~/.cache/huggingface/hub
+    format: hf-safetensors
   - name: vllm-mlx
     lifecycle: server
     # The standalone `vllm-mlx` package ships a `vllm-mlx` console script
@@ -76,6 +94,8 @@ inferencers:
     health_url: http://127.0.0.1:{port}/v1/models
     start: ["vllm-mlx", "serve", "--port", "8001"]
     url: https://github.com/vllm-project/vllm
+    model_store: ~/.cache/huggingface/hub
+    format: hf-safetensors
   - name: exo
     lifecycle: server
     # exo upstream runs as `uv run exo` from its clone; expose an `exo` wrapper on
@@ -87,6 +107,8 @@ inferencers:
     health_url: http://127.0.0.1:{port}/v1/models
     start: ["exo"]
     url: https://github.com/exo-explore/exo
+    model_store: ~/.cache/huggingface/hub
+    format: hf-safetensors
   - name: mtplx
     lifecycle: server
     # Native Multi-Token-Prediction MLX runtime: the model drafts ahead with its
@@ -101,6 +123,9 @@ inferencers:
     health_url: http://127.0.0.1:{port}/v1/models
     start: ["mtplx", "serve", "--port", "8003"]
     url: https://github.com/youssofal/mtplx
+    # Pre-built MTP models from the Youssofal HF catalog, cached in the hub.
+    model_store: ~/.cache/huggingface/hub
+    format: hf-safetensors
   # --- Detect-only GUI apps ----------------------------------------------
   - name: lm-studio
     lifecycle: app
@@ -109,6 +134,9 @@ inferencers:
     port: 1234
     health_url: http://127.0.0.1:{port}/v1/models
     url: https://lmstudio.ai
+    # LM Studio downloads publisher/model GGUF files under its models dir.
+    model_store: ~/.cache/lm-studio/models
+    format: gguf
   - name: gpt4all
     lifecycle: app
     detect:
@@ -116,3 +144,6 @@ inferencers:
     port: 4891
     health_url: http://127.0.0.1:{port}/v1/models
     url: https://github.com/nomic-ai/gpt4all
+    # GPT4All stores GGUF files in its application-support models dir.
+    model_store: ~/Library/Application Support/nomic.ai/GPT4All
+    format: gguf
