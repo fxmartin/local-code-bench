@@ -226,12 +226,22 @@ Budget + pins are configured via an optional `auto_tier` block (`config.load_aut
 **Technical Notes**: Extend the Epic-08 `inferencer` subcommand with `promote`/`demote`/`tier` verbs and tier columns/filters on `models`, reusing the existing table-rendering and error-mapping conventions. Thin CLI over the 12.2–12.4 logic; no business logic in the command layer.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 12.4-001, 11.4-001, 08.4-001
 **Risk Level**: Low
+
+**Status**: ✅ Done — `bench inferencer` gained a `tier` column plus `--tier`
+filter on `models` (live external scan when the SSD is mounted, the persisted
+offline catalog otherwise), and `promote` / `demote` / `tier` verbs as a thin
+shell over the 12.2–12.4 logic: `promote`/`demote` run the verified
+`tiering.promote_model` / `demote_model` moves with a bytes-moved + new-tier
+summary, and `tier` shows the `autotier.plan_autotier` dry-run plan by default
+and applies it via the verified demote path with `--apply`. Every refusal
+(offline SSD, missing model, no `external_repo`/`auto_tier`, or a move guard)
+maps to `bench: error: ...` with exit 2, consistent with the other verbs.
 
 ##### Story 12.6-002: Dashboard tier view and move controls
 **User Story**: As FX, I want the dashboard inventory panel to show each model's tier and let me promote/demote and trigger auto-tiering with a click, so that I can manage storage visually alongside everything else.

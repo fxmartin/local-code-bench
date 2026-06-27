@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -15,18 +16,29 @@ from local_code_bench.config import (
     InferencerConfig,
     ModelConfig,
     load_agents,
+    load_autotier,
+    load_external_repo,
     load_inferencers,
     load_models,
 )
-from local_code_bench.inferencers import detect, manager
+from local_code_bench.inferencers import autotier, detect, manager
+from local_code_bench.inferencers.external import check_availability
 from local_code_bench.inferencers.inventory import (
     LocalModel,
     SharedModel,
+    expand_store_path,
     group_models,
     normalize_all,
     scan_inferencers,
 )
 from local_code_bench.inferencers.manager import InferencerError, InferencerStatus
+from local_code_bench.inferencers.tiered import read_external_catalog, scan_external_tier
+from local_code_bench.inferencers.tiering import (
+    DemoteError,
+    PromoteError,
+    demote_model,
+    promote_model,
+)
 from local_code_bench.leaderboard import generate_leaderboard
 from local_code_bench.metrics import CompletionMeasurement, capture_stream_metrics
 from local_code_bench.opencode.blackbox import score_task_a
@@ -186,10 +198,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     inferencer.add_argument(
         "action",
-        choices=["list", "status", "start", "stop", "dashboard", "models"],
+        choices=[
+            "list",
+            "status",
+            "start",
+            "stop",
+            "dashboard",
+            "models",
+            "promote",
+            "demote",
+            "tier",
+        ],
         help="inferencer operation to perform",
     )
-    inferencer.add_argument("name", nargs="?", help="engine name (required for start/stop)")
+    inferencer.add_argument(
+        "name",
+        nargs="?",
+        help="engine name (start/stop) or model name (promote/demote)",
+    )
     inferencer.add_argument(
         "--config",
         default="configs/inferencers.yaml",
@@ -241,6 +267,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="models: emit the inventory as JSON instead of a table",
+    )
+    inferencer.add_argument(
+        "--tier",
+        choices=["local", "external", "external-offline"],
+        help="models: show only models on the given storage tier",
+    )
+    inferencer.add_argument(
+        "--apply",
+        action="store_true",
+        help="tier: apply the auto-tiering plan instead of only showing it",
+    )
+    inferencer.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="tier: only show the auto-tiering plan (the default; moves nothing)",
     )
 
     dashboard = subparsers.add_parser(
@@ -755,6 +796,15 @@ def run_inferencer_command(args: argparse.Namespace) -> int:
     if args.action == "models":
         return _run_inferencer_models(args, configs)
 
+    if args.action == "promote":
+        return _run_inferencer_promote(args, configs)
+
+    if args.action == "demote":
+        return _run_inferencer_demote(args, configs)
+
+    if args.action == "tier":
+        return _run_inferencer_tier(args, configs)
+
     if args.action == "list":
         _print_inferencer_list(configs)
         return 0
@@ -801,33 +851,281 @@ def _run_inferencer_models(
     """
 
     try:
-        stored = scan_inferencers(configs.values())
+        local = normalize_all(scan_inferencers(configs.values()))
     except OSError as exc:
         print(f"bench: error: {exc}", file=sys.stderr)
         return 2
 
-    models = normalize_all(stored)
-
     if args.shared:
-        shared = [group for group in group_models(models) if group.is_shared]
+        # Sharing sets are an Epic-11 local-tier concept; the external tier does
+        # not change which engines co-own a local download.
+        shared = [group for group in group_models(local) if group.is_shared]
         if args.json:
             print(json.dumps([_shared_model_json(group) for group in shared], indent=2))
         else:
             _print_shared_models(shared)
         return 0
 
+    external, external_offline = _scan_external_models(args, configs)
+    models = local + external
+    if args.tier:
+        models = [m for m in models if _tier_label(m, external_offline) == args.tier]
+
     if args.json:
-        print(json.dumps([_local_model_json(model) for model in models], indent=2))
+        print(
+            json.dumps(
+                [_local_model_json(model, external_offline) for model in models], indent=2
+            )
+        )
     else:
-        _print_models_table(models)
+        _print_models_table(models, external_offline)
     return 0
 
 
-def _print_models_table(models: list[LocalModel]) -> None:
+def _scan_external_models(
+    args: argparse.Namespace, configs: dict[str, InferencerConfig]
+) -> tuple[list[LocalModel], bool]:
+    """Return the external-tier models and whether they came from the offline cache.
+
+    A live scan of the mounted SSD is the truth; when the drive is offline the
+    lightweight catalog persisted by Epic-12 is read instead (flagged so rows render
+    ``external-offline``). A config without an ``external_repo`` block yields no
+    external rows. Never raises — a missing/offline tier simply contributes nothing.
+    """
+
+    external_cfg = load_external_repo(args.config)
+    if external_cfg is None:
+        return [], False
+    if check_availability(external_cfg).is_mounted:
+        return scan_external_tier(external_cfg, list(configs.values())), False
+    cached = read_external_catalog(args.state_dir)
+    return cached, bool(cached)
+
+
+def _tier_label(model: LocalModel, external_offline: bool) -> str:
+    """Render a model's storage tier as ``local`` / ``external`` / ``external-offline``."""
+
+    if model.tier == "local":
+        return "local"
+    return "external-offline" if external_offline else "external"
+
+
+def _find_named(models: list[LocalModel], name: str) -> LocalModel | None:
+    """First model whose ``name`` matches, else ``None``."""
+
+    for model in models:
+        if model.name == name:
+            return model
+    return None
+
+
+def _run_inferencer_promote(
+    args: argparse.Namespace, configs: dict[str, InferencerConfig]
+) -> int:
+    """Promote a named external model to local disk (Story 12.6-001, AC2).
+
+    A thin shell over :func:`tiering.promote_model`: it locates the model on the
+    mounted external tier, resolves the engine whose store it lands in, and runs the
+    verified copy-then-publish move, printing the bytes moved and the new tier. Every
+    refusal — no external repo, offline SSD, missing name, or a move guard — surfaces
+    as ``bench: error: ...`` with exit 2.
+    """
+
+    external_cfg = load_external_repo(args.config)
+    if external_cfg is None:
+        print(
+            "bench: error: no external_repo configured — add one to promote models",
+            file=sys.stderr,
+        )
+        return 2
+    if not args.name:
+        print("bench: error: inferencer promote requires a model name", file=sys.stderr)
+        return 2
+
+    try:
+        if not check_availability(external_cfg).is_mounted:
+            raise PromoteError(
+                f"external tier is offline — plug in the SSD before promoting {args.name}"
+            )
+        external = scan_external_tier(external_cfg, list(configs.values()))
+        model = _find_named(external, args.name)
+        if model is None:
+            raise PromoteError(f"{args.name}: model not found on the external tier")
+        target = configs.get(model.inferencer)
+        if target is None:
+            raise PromoteError(f"{args.name}: no inferencer configured to promote it into")
+        print(f"promoting {args.name} from external to local …", flush=True)
+        result = promote_model(model, target, external_cfg, configs, args.state_dir)
+    except (PromoteError, DemoteError) as exc:
+        print(f"bench: error: {exc}", file=sys.stderr)
+        return 2
+
+    print(
+        f"promoted {result.plan.name}: {_format_size(result.bytes_copied)} copied → "
+        f"tier=local at {result.destination}"
+    )
+    return 0
+
+
+def _run_inferencer_demote(
+    args: argparse.Namespace, configs: dict[str, InferencerConfig]
+) -> int:
+    """Demote a named local model out to the external tier (Story 12.6-001, AC2).
+
+    A thin shell over :func:`tiering.demote_model`: it locates the local model and
+    runs the verified copy-verify-then-remove-local move, printing the bytes
+    reclaimed and the new tier (noting when a redundant external copy was reused). A
+    scan failure or any move guard surfaces as ``bench: error: ...`` with exit 2.
+    """
+
+    external_cfg = load_external_repo(args.config)
+    if external_cfg is None:
+        print(
+            "bench: error: no external_repo configured — add one to demote models",
+            file=sys.stderr,
+        )
+        return 2
+    if not args.name:
+        print("bench: error: inferencer demote requires a model name", file=sys.stderr)
+        return 2
+
+    try:
+        local = normalize_all(scan_inferencers(configs.values()))
+    except OSError as exc:
+        print(f"bench: error: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        model = _find_named(local, args.name)
+        if model is None:
+            raise DemoteError(f"{args.name}: model not found on the local tier")
+        print(f"demoting {args.name} from local to external …", flush=True)
+        result = demote_model(model, external_cfg, configs, args.state_dir)
+    except (PromoteError, DemoteError) as exc:
+        print(f"bench: error: {exc}", file=sys.stderr)
+        return 2
+
+    reused = " (reused existing external copy)" if result.reused_existing else ""
+    print(
+        f"demoted {result.plan.name}: {_format_size(result.bytes_reclaimed)} reclaimed → "
+        f"tier=external at {result.destination}{reused}"
+    )
+    return 0
+
+
+def _local_free_bytes(configs: dict[str, InferencerConfig]) -> int | None:
+    """Free bytes on the local volume, probed at the first existing model store.
+
+    Used as the ``min_free_gb`` signal for the auto-tiering planner. Returns ``None``
+    when no configured store directory exists yet (the planner then relies on the
+    ``max_local_gb`` dimension only).
+    """
+
+    for cfg in configs.values():
+        for raw in cfg.model_store or ():
+            path = expand_store_path(raw)
+            if path.exists():
+                try:
+                    return shutil.disk_usage(path).free
+                except OSError:
+                    continue
+    return None
+
+
+def _run_inferencer_tier(
+    args: argparse.Namespace, configs: dict[str, InferencerConfig]
+) -> int:
+    """Show or apply the disk-budget auto-tiering plan (Story 12.6-001, AC3).
+
+    A thin shell over :mod:`autotier`: it plans LRU evictions against the configured
+    budget and pins, prints the dry-run plan (the default), and — with ``--apply`` —
+    replays it through the verified demote path. A missing policy/repo, a scan
+    failure, or applying a paused (offline) plan surfaces as ``bench: error: ...``
+    with exit 2.
+    """
+
+    autotier_cfg = load_autotier(args.config)
+    if autotier_cfg is None:
+        print(
+            "bench: error: no auto_tier policy configured — add an auto_tier block to "
+            f"{args.config}",
+            file=sys.stderr,
+        )
+        return 2
+    external_cfg = load_external_repo(args.config)
+    if external_cfg is None:
+        print(
+            "bench: error: no external_repo configured — auto-tiering needs an external tier",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        local = normalize_all(scan_inferencers(configs.values()))
+    except OSError as exc:
+        print(f"bench: error: {exc}", file=sys.stderr)
+        return 2
+
+    store = autotier.LastUsedStore(args.state_dir)
+    plan = autotier.plan_autotier(
+        local,
+        autotier.budget_from_config(autotier_cfg),
+        pins=autotier_cfg.pins,
+        external_available=check_availability(external_cfg).is_mounted,
+        free_bytes=_local_free_bytes(configs),
+        last_used=store.last_used,
+    )
+    _print_tier_plan(plan)
+
+    if not args.apply:
+        return 0
+
+    try:
+        results = autotier.apply_plan(
+            plan,
+            external_cfg,
+            configs,
+            args.state_dir,
+            now=time.time(),
+            last_used_store=store,
+        )
+    except (autotier.AutoTierError, PromoteError, DemoteError) as exc:
+        print(f"bench: error: {exc}", file=sys.stderr)
+        return 2
+
+    reclaimed = sum(result.bytes_reclaimed for result in results)
+    print(f"applied: evicted {len(results)} model(s), {_format_size(reclaimed)} reclaimed")
+    return 0
+
+
+def _print_tier_plan(plan: autotier.AutoTierPlan) -> None:
+    """Render an auto-tiering plan: paused notice, the eviction table, or a clear bill."""
+
+    used = _format_size(plan.local_total_bytes)
+    if plan.paused:
+        print(f"auto-tiering paused: external repo offline — no changes ({used} local)")
+    elif plan.is_empty:
+        print(f"local tier within budget: {used} used, nothing to evict")
+    else:
+        print(
+            f"plan: evict {len(plan.evictions)} model(s), reclaim "
+            f"{_format_size(plan.bytes_reclaimed)} (of {used} local):"
+        )
+        rows = [("NAME", "FORMAT", "SIZE")]
+        for eviction in plan.evictions:
+            rows.append(
+                (eviction.name, eviction.store_format, _format_size(eviction.size_bytes))
+            )
+        _print_rows(rows)
+    for warning in plan.warnings:
+        print(f"warning: {warning}")
+
+
+def _print_models_table(models: list[LocalModel], external_offline: bool) -> None:
     if not models:
         print("no downloaded models found")
         return
-    rows = [("ENGINE", "NAME", "FORMAT", "QUANT", "SIZE")]
+    rows = [("ENGINE", "NAME", "FORMAT", "QUANT", "SIZE", "TIER")]
     for model in models:
         rows.append(
             (
@@ -836,6 +1134,7 @@ def _print_models_table(models: list[LocalModel]) -> None:
                 model.store_format,
                 model.quant or "-",
                 _format_size(model.size_bytes),
+                _tier_label(model, external_offline),
             )
         )
     _print_rows(rows)
@@ -860,7 +1159,7 @@ def _print_shared_models(groups: list[SharedModel]) -> None:
     _print_rows(rows)
 
 
-def _local_model_json(model: LocalModel) -> dict[str, object]:
+def _local_model_json(model: LocalModel, external_offline: bool) -> dict[str, object]:
     return {
         "inferencer": model.inferencer,
         "store_format": model.store_format,
@@ -870,6 +1169,7 @@ def _local_model_json(model: LocalModel) -> dict[str, object]:
         "quant": model.quant,
         "provider": model.provider,
         "identity": model.identity,
+        "tier": _tier_label(model, external_offline),
     }
 
 
@@ -988,7 +1288,7 @@ def _watch_status(
         print()
 
 
-def _print_rows(rows: list[tuple[str, ...]]) -> None:
+def _print_rows(rows: Sequence[tuple[str, ...]]) -> None:
     widths = [max(len(row[col]) for row in rows) for col in range(len(rows[0]))]
     for row in rows:
         print("  ".join(cell.ljust(widths[col]) for col, cell in enumerate(row)))
