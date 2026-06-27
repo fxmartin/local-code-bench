@@ -56,6 +56,10 @@ class AgentConfig:
 
 Lifecycle = Literal["server", "app"]
 DetectKind = Literal["binary", "module", "app"]
+StoreFormat = Literal["gguf", "ollama", "hf-safetensors", "mlx"]
+
+#: On-disk model-store formats the inventory scanner (Epic-11) understands.
+STORE_FORMATS: frozenset[str] = frozenset({"gguf", "ollama", "hf-safetensors", "mlx"})
 
 
 @dataclass(frozen=True)
@@ -71,6 +75,11 @@ class InferencerConfig:
     start: tuple[str, ...] | None = None
     stop: tuple[str, ...] | None = None
     url: str | None = None
+    # Epic-11 model inventory: where this engine keeps downloaded models, and the
+    # on-disk format so the scanner can read it with the right strategy. Optional
+    # and defaulted so pre-Epic-11 entries stay valid; both are set together.
+    model_store: tuple[str, ...] | None = None
+    store_format: StoreFormat | None = None
 
 
 def resolve_health_url(cfg: InferencerConfig) -> str:
@@ -160,9 +169,7 @@ def _parse_inferencer(entry: Any, index: int) -> InferencerConfig:
         raise ConfigError(f"inferencers[{index}].detect must be a mapping")
     kinds = [kind for kind in ("binary", "module", "app") if kind in detect]
     if len(kinds) != 1:
-        raise ConfigError(
-            f"inferencers[{index}].detect must have exactly one of binary/module/app"
-        )
+        raise ConfigError(f"inferencers[{index}].detect must have exactly one of binary/module/app")
     detect_kind = kinds[0]
     detect_target = _required_str(detect, detect_kind, index, root="inferencers")
 
@@ -177,6 +184,11 @@ def _parse_inferencer(entry: Any, index: int) -> InferencerConfig:
     if lifecycle == "app" and (start is not None or stop is not None):
         raise ConfigError(f"inferencers[{index}] app lifecycle must not define start/stop")
 
+    model_store = _optional_store_paths(entry, "model_store", index)
+    store_format = _optional_store_format(entry, "format", index)
+    if (model_store is None) != (store_format is None):
+        raise ConfigError(f"inferencers[{index}] model_store and format must be set together")
+
     return InferencerConfig(
         name=_required_str(entry, "name", index, root="inferencers"),
         lifecycle=lifecycle,  # type: ignore[arg-type]
@@ -187,7 +199,42 @@ def _parse_inferencer(entry: Any, index: int) -> InferencerConfig:
         start=start,
         stop=stop,
         url=_optional_str(entry, "url", index, root="inferencers"),
+        model_store=model_store,
+        store_format=store_format,  # type: ignore[arg-type]
     )
+
+
+def _optional_store_paths(
+    entry: dict[str, Any],
+    field: str,
+    index: int,
+) -> tuple[str, ...] | None:
+    """Parse `model_store` as a single path string or a non-empty list of them."""
+
+    value = entry.get(field)
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list) or not value:
+        raise ConfigError(f"inferencers[{index}].{field} must be a path or non-empty list of paths")
+    if not all(isinstance(path, str) and path.strip() for path in value):
+        raise ConfigError(f"inferencers[{index}].{field} must be a path or non-empty list of paths")
+    return tuple(value)
+
+
+def _optional_store_format(
+    entry: dict[str, Any],
+    field: str,
+    index: int,
+) -> str | None:
+    value = entry.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, str) or value not in STORE_FORMATS:
+        allowed = " | ".join(sorted(STORE_FORMATS))
+        raise ConfigError(f"inferencers[{index}].{field} must be one of: {allowed}")
+    return value
 
 
 def _optional_command(
