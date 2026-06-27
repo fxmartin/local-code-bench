@@ -431,7 +431,18 @@ uv run bench inferencer start dflash      # prompts to stop any other running en
 uv run bench inferencer start dflash --yes    # auto-confirm stopping others (non-tty defaults to no)
 uv run bench inferencer start dflash --force  # start past a running GUI app instead of refusing
 uv run bench inferencer stop dflash       # idempotent stop
+uv run bench inferencer models            # downloaded models per engine: format, quant, size
+uv run bench inferencer models --shared   # only models several engines can serve (sharing sets)
+uv run bench inferencer models --json     # emit the inventory as JSON
 ```
+
+`bench inferencer models` scans each engine's configured `model_store` with a
+format-aware strategy and lists what is actually downloaded — name, format, quant,
+and on-disk size. `--shared` collapses copies of the same on-disk artifact (one HF
+cache entry, the same `.gguf`, or one Ollama blob) into a single logical model and
+names every engine that can serve it, so several MLX engines sharing one download
+show up once. `--json` emits the same inventory machine-readably. A config or scan
+failure prints `bench: error: ...` and exits 2, like the other verbs.
 
 Starting an engine enforces the one-active invariant: any other running headless
 servers are listed and stopped only after you confirm, then the target starts. A

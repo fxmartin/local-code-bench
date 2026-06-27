@@ -931,6 +931,168 @@ def test_inferencer_config_error_exit_2(monkeypatch, capsys) -> None:
     assert "bench: error: inferencer config not found" in capsys.readouterr().err
 
 
+# --- bench inferencer models (Story 11.4-001) -------------------------------
+
+
+def _stored(inferencer, name, fmt, path, size):
+    from local_code_bench.inferencers.inventory import StoredModel
+
+    return StoredModel(
+        inferencer=inferencer, store_format=fmt, name=name, path=path, size_bytes=size
+    )
+
+
+def test_inferencer_models_lists_per_inferencer_with_format_quant_size(
+    monkeypatch, capsys
+) -> None:
+    stored = [
+        _stored(
+            "dflash",
+            "mlx-community/Llama-3.2-Q4_K_M",
+            "hf-safetensors",
+            "/cache/llama",
+            1_500_000_000,
+        ),
+        _stored("ollama", "llama3.1:8b", "ollama", "/ollama/manifest", 4_000_000_000),
+    ]
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr("local_code_bench.cli.scan_inferencers", lambda configs: stored)
+
+    exit_code = main(["inferencer", "models"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "dflash" in out and "mlx-community/Llama-3.2-Q4_K_M" in out
+    assert "hf-safetensors" in out
+    assert "Q4_K_M" in out  # quant parsed from the name
+    assert "ollama" in out and "llama3.1:8b" in out
+    # Sizes are human-readable, not raw byte counts.
+    assert "1500000000" not in out
+
+
+def test_inferencer_models_empty_inventory_prints_notice(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr("local_code_bench.cli.scan_inferencers", lambda configs: [])
+
+    exit_code = main(["inferencer", "models"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "no downloaded models" in out.lower()
+
+
+def test_inferencer_models_shared_groups_engines(monkeypatch, capsys) -> None:
+    # Two engines pointing at the same on-disk artifact share one logical model;
+    # an engine owning a model alone is not listed in the shared view.
+    stored = [
+        _stored("dflash", "org/Model", "hf-safetensors", "/cache/repo", 1000),
+        _stored("turboquant", "org/Model", "hf-safetensors", "/cache/repo", 1000),
+        _stored("ollama", "solo:8b", "ollama", "/ollama/solo", 2000),
+    ]
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr("local_code_bench.cli.scan_inferencers", lambda configs: stored)
+
+    exit_code = main(["inferencer", "models", "--shared"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "org/Model" in out
+    assert "dflash" in out and "turboquant" in out
+    assert "solo:8b" not in out  # single-owner model is not shared
+
+
+def test_inferencer_models_shared_none_prints_notice(monkeypatch, capsys) -> None:
+    stored = [_stored("dflash", "org/Model", "hf-safetensors", "/cache/repo", 1000)]
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr("local_code_bench.cli.scan_inferencers", lambda configs: stored)
+
+    exit_code = main(["inferencer", "models", "--shared"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "no shared models" in out.lower()
+
+
+def test_inferencer_models_json_emits_inventory(monkeypatch, capsys) -> None:
+    import json
+
+    stored = [
+        _stored("dflash", "org/Model-Q4_K_M", "hf-safetensors", "/cache/repo", 1234)
+    ]
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr("local_code_bench.cli.scan_inferencers", lambda configs: stored)
+
+    exit_code = main(["inferencer", "models", "--json"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    data = json.loads(out)
+    assert isinstance(data, list)
+    assert data[0]["inferencer"] == "dflash"
+    assert data[0]["name"] == "org/Model-Q4_K_M"
+    assert data[0]["store_format"] == "hf-safetensors"
+    assert data[0]["quant"] == "Q4_K_M"
+    assert data[0]["size_bytes"] == 1234
+
+
+def test_inferencer_models_json_shared_emits_sharing_sets(monkeypatch, capsys) -> None:
+    import json
+
+    stored = [
+        _stored("dflash", "org/Model", "hf-safetensors", "/cache/repo", 1000),
+        _stored("turboquant", "org/Model", "hf-safetensors", "/cache/repo", 1000),
+        _stored("ollama", "solo:8b", "ollama", "/ollama/solo", 2000),
+    ]
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+    monkeypatch.setattr("local_code_bench.cli.scan_inferencers", lambda configs: stored)
+
+    exit_code = main(["inferencer", "models", "--shared", "--json"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    data = json.loads(out)
+    assert isinstance(data, list)
+    assert len(data) == 1  # only the shared model
+    assert data[0]["name"] == "org/Model"
+    assert data[0]["inferencers"] == ["dflash", "turboquant"]  # sorted, deduped
+    assert data[0]["is_shared"] is True
+
+
+def test_inferencer_models_scan_failure_exits_2(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", lambda _p: {})
+
+    def boom(configs):
+        raise OSError("model store unreadable")
+
+    monkeypatch.setattr("local_code_bench.cli.scan_inferencers", boom)
+
+    exit_code = main(["inferencer", "models"])
+
+    assert exit_code == 2
+    assert "bench: error: model store unreadable" in capsys.readouterr().err
+
+
+def test_inferencer_models_config_error_exits_2(monkeypatch, capsys) -> None:
+    def boom(_path):
+        raise ConfigError("inferencer config not found: missing.yaml")
+
+    monkeypatch.setattr("local_code_bench.cli.load_inferencers", boom)
+
+    exit_code = main(["inferencer", "models", "--config", "missing.yaml"])
+
+    assert exit_code == 2
+    assert "bench: error: inferencer config not found" in capsys.readouterr().err
+
+
+def test_format_size_renders_human_readable_units() -> None:
+    from local_code_bench.cli import _format_size
+
+    assert _format_size(0) == "0 B"
+    assert _format_size(512) == "512 B"
+    assert _format_size(1024).endswith("KiB")
+    assert _format_size(1_500_000_000).endswith("GiB")
+
+
 # --- helper coverage ---------------------------------------------------------
 
 
