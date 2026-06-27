@@ -455,6 +455,14 @@ def test_load_agents_reports_missing_file(tmp_path) -> None:
         load_agents(tmp_path / "absent.yaml")
 
 
+def test_load_agents_reports_invalid_yaml(tmp_path) -> None:
+    config_path = tmp_path / "agents.yaml"
+    config_path.write_text("agents: [unterminated", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="invalid YAML"):
+        load_agents(config_path)
+
+
 def test_load_agents_requires_agents_list(tmp_path) -> None:
     config_path = tmp_path / "agents.yaml"
     config_path.write_text("agents: nope\n", encoding="utf-8")
