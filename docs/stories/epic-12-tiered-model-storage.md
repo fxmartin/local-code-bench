@@ -247,12 +247,23 @@ Budget + pins are configured via an optional `auto_tier` block (`config.load_aut
 **Technical Notes**: Extend the Epic-09/Epic-11 inventory section (11.5-001) with tier badges and move/tier controls backed by the dashboard's localhost server calling the 12.2–12.4 logic. Reuse the dashboard's live-progress mechanism for moves; keep the panel a thin client over the tiering API.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 12.4-001, 11.5-001, 09.1-001
 **Risk Level**: Medium
+
+**Status**: ✅ Done — the unified dashboard's Inventory section gained a tier-aware
+**Storage tiers** view (`GET /api/tiers`): one row per logical model with its tier
+badge, the external SSD's availability, present-in-both flagging, and an across-tier
+reclaimable hint. Per-row **Promote** / **Demote** controls call `POST /api/promote` /
+`POST /api/demote` (the verified 12.3 move path) and refresh the model's tier on
+completion; an **Auto-tiering** sub-panel renders the 12.4 dry-run eviction plan
+(`GET /api/tier-plan`) with an explicit **Apply** action (`POST /api/tier-apply`) that
+respects pins. When the SSD is offline, external rows are marked offline and all
+move/apply actions are disabled; every tier endpoint projects only model-identity
+fields (never an on-disk path) and binds localhost only.
 
 ## Epic Progress
 **Completed**: 6 / 8 stories · 31 / 39 points
