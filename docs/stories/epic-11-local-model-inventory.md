@@ -163,12 +163,12 @@
 **Technical Notes**: A summarisation function over the inventory + sharing sets. Distinguish "shared" (one stored artifact, several capable engines — good) from "duplicated" (the same base model materialised more than once on disk — reclaimable). Surface the report in both the CLI (`models --disk`) and the dashboard panel.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 11.3-001
 **Risk Level**: Low
 
 ## Epic Progress
-**Completed**: 3 / 6 stories · 13 / 24 points
+**Completed**: 4 / 6 stories · 16 / 24 points

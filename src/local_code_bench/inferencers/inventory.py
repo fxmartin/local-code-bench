@@ -38,6 +38,12 @@ __all__ = [
     "content_identity",
     "group_models",
     "shared_models",
+    "FormatUsage",
+    "EngineUsage",
+    "DuplicateGroup",
+    "DiskReport",
+    "base_model_key",
+    "disk_report",
 ]
 
 
@@ -235,6 +241,150 @@ def shared_models(models: Iterable[LocalModel]) -> list[SharedModel]:
     """Logical models served by more than one inferencer, in first-seen order."""
 
     return [group for group in group_models(models) if group.is_shared]
+
+
+# --- Disk footprint & duplicate-download report (Story 11.6-001) -----------
+
+
+@dataclass(frozen=True)
+class FormatUsage:
+    """Total on-disk bytes held in one store format across all engines."""
+
+    store_format: StoreFormat
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class EngineUsage:
+    """Total on-disk bytes one inferencer can serve.
+
+    A shared artifact is attributed in full to every engine that can serve it,
+    so the per-engine totals may sum to more than :attr:`DiskReport.total_bytes`
+    (the de-duplicated grand total). That is intentional: it answers "how much is
+    this engine responsible for", not "how much would removing it reclaim".
+    """
+
+    inferencer: str
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class DuplicateGroup:
+    """One base model materialised as more than one distinct artifact on disk.
+
+    Distinct from *shared* (one stored artifact, several engines): here the same
+    base model is physically present more than once — as GGUF and MLX, or copied
+    across stores. ``reclaimable_bytes`` is what consolidating onto a single copy
+    would save: the total minus the single largest copy (the one kept).
+    """
+
+    base: str
+    artifacts: tuple[SharedModel, ...]
+    total_bytes: int
+    reclaimable_bytes: int
+
+
+@dataclass(frozen=True)
+class DiskReport:
+    """Summary of disk usage and reclaimable duplicate downloads.
+
+    ``total_bytes`` is the de-duplicated footprint (each distinct stored artifact
+    counted once, so shared copies are not double-counted). ``by_format`` and
+    ``by_engine`` break that down; ``duplicates`` flags base models present in
+    more than one physical copy with the bytes consolidation would reclaim.
+    """
+
+    total_bytes: int
+    by_format: tuple[FormatUsage, ...]
+    by_engine: tuple[EngineUsage, ...]
+    duplicates: tuple[DuplicateGroup, ...]
+
+
+#: Format markers appended to repo/file names that are not part of the base model
+#: identity (e.g. ``Qwen2.5-Coder-7B-GGUF`` / ``...-mlx``).
+_FORMAT_SUFFIX_RE = re.compile(r"[-_.](?:gguf|mlx|safetensors)$", re.IGNORECASE)
+
+
+def base_model_key(name: str) -> str:
+    """Normalize a model name to a base-model key for duplicate detection.
+
+    Collapses the provider prefix, quant token, format suffix, and Ollama tag so
+    that a GGUF file and an MLX/HF repo of the same base model produce one key —
+    e.g. both ``Qwen2.5-Coder-7B-Q4_K_M`` and ``mlx-community/Qwen2.5-Coder-7B``
+    map to ``qwen2.5-coder-7b``. Pure string normalization; never raises.
+    """
+
+    # Drop any provider/org prefix, keep the trailing model segment.
+    segment = name.rsplit("/", 1)[-1]
+    # Ollama tags (``model:tag``) join with a dash so ``qwen:7b`` lines up with
+    # ``Qwen-7B`` from a file/repo name.
+    segment = segment.replace(":", "-")
+    segment = segment.strip().lower()
+    segment = _FORMAT_SUFFIX_RE.sub("", segment)
+    # Strip a trailing quant token (and the separator that precedes it).
+    quant = parse_quant(segment)
+    if quant is not None and segment.lower().endswith(quant.lower()):
+        segment = segment[: -len(quant)]
+    return segment.strip("-_.")
+
+
+def disk_report(models: Iterable[LocalModel]) -> DiskReport:
+    """Summarise inventory disk usage and flag reclaimable duplicate downloads.
+
+    Pure over its input. Works off the logical (de-duplicated) view so a shared
+    artifact is one copy: ``total_bytes`` and ``by_format`` count it once, while
+    ``by_engine`` attributes it to each serving engine. A base model represented
+    by more than one *distinct* logical artifact is reported as a duplicate with
+    the reclaimable bytes; a single copy (shared or not) is never flagged.
+    """
+
+    logical = group_models(models)
+
+    total = 0
+    by_format_bytes: dict[StoreFormat, int] = {}
+    by_engine_bytes: dict[str, int] = {}
+    by_base: dict[str, list[SharedModel]] = {}
+    for group in logical:
+        size = group.models[0].size_bytes
+        name = group.models[0].name
+        total += size
+        by_format_bytes[group.store_format] = by_format_bytes.get(group.store_format, 0) + size
+        for engine in group.inferencers:
+            by_engine_bytes[engine] = by_engine_bytes.get(engine, 0) + size
+        by_base.setdefault(base_model_key(name), []).append(group)
+
+    by_format = tuple(
+        FormatUsage(store_format=fmt, size_bytes=size)
+        for fmt, size in sorted(by_format_bytes.items())
+    )
+    by_engine = tuple(
+        EngineUsage(inferencer=engine, size_bytes=size)
+        for engine, size in sorted(by_engine_bytes.items())
+    )
+
+    duplicates: list[DuplicateGroup] = []
+    for base, artifacts in sorted(by_base.items()):
+        if len(artifacts) < 2:
+            continue
+        sizes = [a.models[0].size_bytes for a in artifacts]
+        total_bytes = sum(sizes)
+        # Keep the single largest copy; the rest is reclaimable.
+        reclaimable = total_bytes - max(sizes)
+        duplicates.append(
+            DuplicateGroup(
+                base=base,
+                artifacts=tuple(artifacts),
+                total_bytes=total_bytes,
+                reclaimable_bytes=reclaimable,
+            )
+        )
+
+    return DiskReport(
+        total_bytes=total,
+        by_format=by_format,
+        by_engine=by_engine,
+        duplicates=tuple(duplicates),
+    )
 
 
 #: Recognised GGUF / MLX quantization tokens, e.g. ``Q4_K_M``, ``IQ3_XXS``,
