@@ -47,9 +47,9 @@
 **Technical Notes**: Extend the Epic-11 store config in `config.py`; add `external_repo` describing the second-tier root and a `volume_marker` filename. Availability check is filesystem-only and Darwin-aware (`/Volumes/...` style mounts) like `power.py`, kept pure for testability (monkeypatch a base dir). The external root deliberately mirrors the local per-format layout so Epic-11's scan strategies are reused unchanged against a different root.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 11.1-001
 **Risk Level**: Medium
@@ -223,4 +223,5 @@
 **Risk Level**: Medium
 
 ## Epic Progress
-**Completed**: 0 / 8 stories · 0 / 39 points
+**Completed**: 1 / 8 stories · 5 / 39 points
+- 12.1-001 — External repo config + mount/availability detection (Should, 5 pts)

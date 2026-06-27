@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -60,6 +60,34 @@ StoreFormat = Literal["gguf", "ollama", "hf-safetensors", "mlx"]
 
 #: On-disk model-store formats the inventory scanner (Epic-11) understands.
 STORE_FORMATS: frozenset[str] = frozenset({"gguf", "ollama", "hf-safetensors", "mlx"})
+
+#: Default sentinel filename written into the external-repo root so the *same*
+#: repo is recognised across remounts (and a coincidentally-present empty mount
+#: path is not mistaken for it).
+DEFAULT_VOLUME_MARKER = ".local-code-bench-external"
+
+#: Default per-format subdirectory layout under the external-repo root. The
+#: external tier mirrors the local per-format store layout (one subdir per
+#: format) so Epic-11's scan strategies apply unchanged against a different root.
+DEFAULT_EXTERNAL_SUBPATHS: dict[str, str] = {fmt: fmt for fmt in sorted(STORE_FORMATS)}
+
+
+@dataclass(frozen=True)
+class ExternalRepoConfig:
+    """Second-tier (external SSD) model repository (Epic-12, Story 12.1-001).
+
+    ``root`` is the repository root on the external volume; it keeps any ``~``
+    verbatim so expansion happens at availability-check time (mirroring the
+    Epic-11 scanner). The repo mirrors the local per-format store layout — each
+    store format lives under ``root/<subpath>`` so the Epic-11 scan strategies
+    run unchanged. ``volume_marker`` is a sentinel file written into ``root`` so
+    the same repo is recognised across remounts. The tier is optional: a config
+    without an ``external_repo`` block stays a valid single-tier config.
+    """
+
+    root: str
+    volume_marker: str = DEFAULT_VOLUME_MARKER
+    subpaths: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_EXTERNAL_SUBPATHS))
 
 
 @dataclass(frozen=True)
@@ -154,6 +182,66 @@ def load_inferencers(path: str | Path) -> dict[str, InferencerConfig]:
             raise ConfigError(f"inferencers[{index}].name duplicates '{inferencer.name}'")
         inferencers[inferencer.name] = inferencer
     return inferencers
+
+
+def load_external_repo(path: str | Path) -> ExternalRepoConfig | None:
+    """Load the optional external-tier repo config from an inferencers YAML.
+
+    Returns ``None`` when the file declares no ``external_repo`` block, so an
+    existing single-tier config remains valid. Raises :class:`ConfigError` for a
+    missing/invalid file or a malformed ``external_repo`` block.
+    """
+
+    config_path = Path(path)
+    try:
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ConfigError(f"external repo config not found: {config_path}") from exc
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"invalid YAML in {config_path}: {exc}") from exc
+    if raw is not None and not isinstance(raw, dict):
+        raise ConfigError(f"{config_path} must contain a top-level mapping")
+    entry = raw.get("external_repo") if isinstance(raw, dict) else None
+    if entry is None:
+        return None
+    return _parse_external_repo(entry)
+
+
+def _parse_external_repo(entry: Any) -> ExternalRepoConfig:
+    if not isinstance(entry, dict):
+        raise ConfigError("external_repo must be a mapping")
+
+    root = entry.get("root")
+    if not isinstance(root, str) or not root.strip():
+        raise ConfigError("external_repo.root must be a non-empty string")
+
+    marker = entry.get("volume_marker", DEFAULT_VOLUME_MARKER)
+    if not isinstance(marker, str) or not marker.strip() or "/" in marker:
+        raise ConfigError("external_repo.volume_marker must be a non-empty filename (no '/')")
+
+    return ExternalRepoConfig(
+        root=root.strip(),
+        volume_marker=marker.strip(),
+        subpaths=_parse_external_subpaths(entry.get("subpaths")),
+    )
+
+
+def _parse_external_subpaths(value: Any) -> dict[str, str]:
+    """Merge any per-format subpath overrides onto the default mirrored layout."""
+
+    subpaths = dict(DEFAULT_EXTERNAL_SUBPATHS)
+    if value is None:
+        return subpaths
+    if not isinstance(value, dict):
+        raise ConfigError("external_repo.subpaths must be a mapping of format -> subdirectory")
+    for fmt, sub in value.items():
+        if fmt not in STORE_FORMATS:
+            allowed = " | ".join(sorted(STORE_FORMATS))
+            raise ConfigError(f"external_repo.subpaths key '{fmt}' must be one of: {allowed}")
+        if not isinstance(sub, str) or not sub.strip() or sub.strip().startswith("/"):
+            raise ConfigError(f"external_repo.subpaths['{fmt}'] must be a non-empty relative path")
+        subpaths[fmt] = sub.strip()
+    return subpaths
 
 
 def _parse_inferencer(entry: Any, index: int) -> InferencerConfig:

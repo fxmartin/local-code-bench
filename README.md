@@ -444,6 +444,16 @@ names every engine that can serve it, so several MLX engines sharing one downloa
 show up once. `--json` emits the same inventory machine-readably. A config or scan
 failure prints `bench: error: ...` and exits 2, like the other verbs.
 
+**External tier (Epic-12).** An optional `external_repo` block in
+`configs/inferencers.yaml` registers a second-tier model repository on an attached
+USB/Thunderbolt SSD (`root` + a `volume_marker` sentinel file). The harness detects
+the drive purely from the filesystem: the tier reads `mounted` only when the root and
+its marker are both present, and `offline` otherwise — never an error — so tier-aware
+features degrade gracefully whether the SSD is plugged in or not. First-time setup
+writes the marker and a per-format directory skeleton (mirroring the local store
+layout) so subsequent runs recognise the same repo. Omit the block for a single-tier,
+local-only setup.
+
 Starting an engine enforces the one-active invariant: any other running headless
 servers are listed and stopped only after you confirm, then the target starts. A
 running GUI app blocks the start with a warning to quit it manually unless `--force`
