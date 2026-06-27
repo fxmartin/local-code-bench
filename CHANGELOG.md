@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v0.40.0 (2026-06-27)
+
+### Features
+
+- **local-model-inventory**: `bench inferencer models` (#11.4-001)
+  ([#47](https://github.com/fxmartin/local-code-bench/pull/47),
+  [`a02f6a3`](https://github.com/fxmartin/local-code-bench/commit/a02f6a3a1718488d66c968697f91f179583edce7))
+
+### Testing
+
+- **local-model-inventory**: `bench inferencer models` (#11.4-001)
+  ([#47](https://github.com/fxmartin/local-code-bench/pull/47),
+  [`a02f6a3`](https://github.com/fxmartin/local-code-bench/commit/a02f6a3a1718488d66c968697f91f179583edce7))
+
+
 ## v0.39.0 (2026-06-27)
 
 ### Features
