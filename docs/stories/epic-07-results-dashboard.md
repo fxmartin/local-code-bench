@@ -109,7 +109,7 @@ handler. The default path generates the static artifact via
 **Technical Notes**: Python standard library HTTP server is acceptable for the first version. No authentication is required if the server binds to localhost only. Implemented in `src/local_code_bench/dashboard_server.py` as `serve_dashboard(paths, ...)`: a localhost-bound `http.server` whose handler holds only the result-file paths and rebuilds aggregates on every `GET /api/data` request, so appended records appear on refresh without a restart. Aggregation and tolerant JSONL reading (malformed/partial lines become data-quality warnings) are delegated to `dashboard_model.load_dashboard_data` (07.1-001) so the live view shares one interpretation with the static artifact. The two read-only routes (`GET /` page, `GET /api/data` JSON) are all the server exposes; CLI wiring lands with story 07.2-002.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
+- [x] Code implemented and peer reviewed
 - [x] Tests written and passing
 - [x] Documentation updated
 

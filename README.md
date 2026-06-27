@@ -533,10 +533,10 @@ are never sent, and like every section it binds localhost only.
 
 ## Verification Status
 
-Last automated verification: 2026-06-21.
+Last automated verification: 2026-06-27.
 
 ```bash
-uv run pytest        # 105 passed, 86.50% coverage, 80% coverage gate reached
+uv run pytest        # 781 passed, 97.79% coverage, 80% coverage gate reached
 uv run ruff check .  # All checks passed
 ```
 
