@@ -806,3 +806,54 @@ def test_demote_clears_stale_staging_before_copy(tmp_path: Path) -> None:
     assert result.verified is True
     assert (dest_dir / "qwen.gguf").exists()
     assert not source.exists()
+
+
+# --- demote_model: source reclaim failure (external copy is safe) ----------
+
+
+def test_demote_raises_when_local_source_cannot_be_reclaimed(tmp_path: Path) -> None:
+    # The external copy is published and verified, but the local source cannot be
+    # deleted (read-only parent dir). demote must NOT report success — that would
+    # over-state reclaimed space and claim the local copy is gone when it is not.
+    ext_root = tmp_path / "ext"
+    _mount(ext_root)
+    local_dir = tmp_path / "local" / "gguf"
+    source = _write_gguf(local_dir, "qwen")
+    cfg = _inferencer("llama", local_dir)
+    local_dir.chmod(0o500)  # read + execute, no write -> unlink fails
+    try:
+        with pytest.raises(DemoteError, match="could not reclaim"):
+            demote_model(
+                _local_model(source), _external_cfg(ext_root), {"llama": cfg}, tmp_path,
+                free_bytes=_plenty, status_fn=_not_running,
+            )
+    finally:
+        local_dir.chmod(0o700)
+
+    # External copy was still published and verified (no data loss either way).
+    assert (ext_root / "gguf" / "qwen.gguf").exists()
+    assert source.exists()  # local source still present, faithfully reported
+
+
+def test_demote_reuse_raises_when_local_source_cannot_be_reclaimed(tmp_path: Path) -> None:
+    # Same guarantee on the reuse short-circuit: a verified external copy already
+    # exists, but the local source cannot be deleted -> refuse to claim success.
+    ext_root = tmp_path / "ext"
+    _mount(ext_root)
+    payload = b"weights" * 1000
+    local_dir = tmp_path / "local" / "gguf"
+    source = _write_gguf(local_dir, "qwen", payload=payload)
+    existing = _write_gguf(ext_root / "gguf", "qwen", payload=payload)
+    cfg = _inferencer("llama", local_dir)
+    local_dir.chmod(0o500)
+    try:
+        with pytest.raises(DemoteError, match="could not reclaim"):
+            demote_model(
+                _local_model(source), _external_cfg(ext_root), {"llama": cfg}, tmp_path,
+                free_bytes=_plenty, status_fn=_not_running,
+            )
+    finally:
+        local_dir.chmod(0o700)
+
+    assert existing.read_bytes() == payload  # external untouched
+    assert source.exists()  # local source still present

@@ -512,7 +512,7 @@ def demote_model(
         if _path_size(plan.destination) == plan.size_bytes and (
             _content_hash(plan.destination) == source_hash
         ):
-            _remove_path(plan.source)
+            _reclaim_source(plan)
             return DemoteResult(
                 plan=plan,
                 destination=plan.destination,
@@ -558,7 +558,7 @@ def demote_model(
         ) from exc
 
     # Verified external copy now exists: safe to reclaim the local bytes.
-    _remove_path(plan.source)
+    _reclaim_source(plan)
 
     return DemoteResult(
         plan=plan,
@@ -567,6 +567,24 @@ def demote_model(
         verified=True,
         reused_existing=False,
     )
+
+
+def _reclaim_source(plan: DemotePlan) -> None:
+    """Remove the local source after a verified external copy exists.
+
+    Called only once the destination provably holds a byte-faithful copy, so the
+    deletion is the safe direction. ``_remove_path`` swallows I/O errors, so we
+    confirm the source is actually gone and raise :class:`DemoteError` when it is
+    not — refusing to report reclaimed space that was never freed. The external
+    copy stands either way, so this is an honest partial success, not data loss.
+    """
+
+    _remove_path(plan.source)
+    if plan.source.exists():
+        raise DemoteError(
+            f"demoted {plan.name} to {plan.destination} but could not reclaim the local "
+            f"copy at {plan.source} — the external copy is safe; remove the local one by hand"
+        )
 
 
 # --- Filesystem helpers (pure given their inputs) --------------------------
