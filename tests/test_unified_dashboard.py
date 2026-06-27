@@ -1226,3 +1226,125 @@ def test_load_models_safe_degrades_silently_without_progress_callback(monkeypatc
 
     # progress=None: chat is disabled to an empty catalog with no callback to notify.
     assert ud._load_models_safe("configs/models.yaml", None) == {}
+
+
+# ---------------------------------------------------------------------------
+# inventory section: a thin client over the Epic-11 model-store scanner
+# (story 11.5-001) — per-inferencer downloads + shared-model detection
+# ---------------------------------------------------------------------------
+
+
+from local_code_bench.inferencers.inventory import StoredModel  # noqa: E402
+
+
+def _stored(inferencer: str, fmt: str, name: str, path: str, size: int) -> StoredModel:
+    return StoredModel(
+        inferencer=inferencer, store_format=fmt, name=name, path=path, size_bytes=size
+    )
+
+
+def test_api_inventory_lists_models_with_format_quant_and_size(monkeypatch) -> None:
+    # AC1: per-inferencer downloads carry format, quant, provider, and size.
+    monkeypatch.setattr(
+        ud.inventory,
+        "scan_inferencers",
+        lambda configs, **k: [
+            _stored(
+                "dflash", "hf-safetensors", "mlx-community/Qwen2.5-Coder-7B-4bit",
+                "/store/qwen", 4000,
+            )
+        ],
+    )
+
+    resp = ud.handle_request("GET", "/api/inventory", _ctx())
+
+    assert resp.status == 200
+    assert resp.content_type.startswith("application/json")
+    row = json.loads(resp.body)["models"][0]
+    assert row["name"] == "mlx-community/Qwen2.5-Coder-7B-4bit"
+    assert row["format"] == "hf-safetensors"
+    assert row["quant"] == "4bit"
+    assert row["provider"] == "mlx-community"
+    assert row["size_bytes"] == 4000
+    assert row["inferencer"] == "dflash"
+
+
+def test_api_inventory_shared_lists_every_serving_inferencer(monkeypatch) -> None:
+    # AC2: one on-disk artifact reachable by two engines is reported once, both listed.
+    monkeypatch.setattr(
+        ud.inventory,
+        "scan_inferencers",
+        lambda configs, **k: [
+            _stored("mlx-lm", "hf-safetensors", "org/Model", "/shared/cache", 1000),
+            _stored("dflash", "hf-safetensors", "org/Model", "/shared/cache", 1000),
+        ],
+    )
+
+    payload = json.loads(ud.handle_request("GET", "/api/inventory", _ctx()).body)
+
+    assert len(payload["shared"]) == 1
+    shared = payload["shared"][0]
+    assert shared["name"] == "org/Model"
+    assert sorted(shared["inferencers"]) == ["dflash", "mlx-lm"]
+
+
+def test_api_inventory_single_owner_is_not_shared(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ud.inventory,
+        "scan_inferencers",
+        lambda configs, **k: [_stored("dflash", "gguf", "solo", "/store/solo.gguf", 10)],
+    )
+
+    payload = json.loads(ud.handle_request("GET", "/api/inventory", _ctx()).body)
+
+    assert payload["shared"] == []
+    assert payload["models"][0]["name"] == "solo"
+
+
+def test_api_inventory_leaks_no_host_paths(monkeypatch) -> None:
+    # AC4: the projection exposes only what identifies a model — no on-disk paths.
+    monkeypatch.setattr(
+        ud.inventory,
+        "scan_inferencers",
+        lambda configs, **k: [
+            _stored("dflash", "gguf", "model", "/Users/fxmartin/.cache/model.gguf", 10)
+        ],
+    )
+
+    body = ud.handle_request("GET", "/api/inventory", _ctx()).body.decode()
+
+    assert "/Users/fxmartin" not in body
+    assert "/users/" not in body.lower()
+    assert "model.gguf" not in body  # the on-disk path/identity is never projected
+
+
+def test_api_inventory_scans_the_dashboard_configs(monkeypatch) -> None:
+    seen: dict = {}
+    monkeypatch.setattr(
+        ud.inventory, "scan_inferencers",
+        lambda configs, **k: seen.update(configs=list(configs)) or [],
+    )
+
+    ud.handle_request("GET", "/api/inventory", _ctx())
+
+    assert {c.name for c in seen["configs"]} == {"dflash", "turboquant"}
+
+
+def test_post_to_inventory_route_is_404() -> None:
+    assert ud.handle_request("POST", "/api/inventory", _ctx()).status == 404
+
+
+def test_inventory_section_is_navigable_and_thin_client_over_scanner() -> None:
+    body = ud.render_page()
+    assert 'data-section="inventory"' in body
+    assert 'id="section-inventory"' in body
+    assert 'id="inv-models"' in body  # per-inferencer downloads table body
+    assert 'id="inv-shared"' in body  # shared-models table body
+    assert "/api/inventory" in body
+
+
+def test_inventory_section_cross_links_to_launcher() -> None:
+    body = ud.render_page()
+    # AC3: selecting a download pre-fills the Run launcher with a compatible inferencer
+    assert "prefillRun" in body
+    assert "showSection" in body
