@@ -2,6 +2,31 @@
 
 <!-- version list -->
 
+## v0.42.0 (2026-06-27)
+
+### Documentation
+
+- Add Ornith-1.0-35B to the local agentic-coding shortlist
+  ([`72bf29c`](https://github.com/fxmartin/local-code-bench/commit/72bf29c6b0107f1b329ff96304ab9bb00980c54e))
+
+- **stories**: Add Epic-14 — additional coding-agent harnesses (Claude Code, Qwen Code)
+  ([`960db63`](https://github.com/fxmartin/local-code-bench/commit/960db6394ec4877583d655e5b73bdff673fa34fc))
+
+- **stories**: True-up epic progress and tighten epic-13 deps
+  ([#49](https://github.com/fxmartin/local-code-bench/pull/49),
+  [`424acb9`](https://github.com/fxmartin/local-code-bench/commit/424acb9627d98cd8922dbcb3c3db46658dde8210))
+
+### Features
+
+- **tiered-model-storage**: Configure the external (#12.1-001)
+  ([`1e439fd`](https://github.com/fxmartin/local-code-bench/commit/1e439fdb191a948f3d9c95bd599bd6749cf4f2c0))
+
+### Testing
+
+- **tiered-model-storage**: Configure the external (#12.1-001)
+  ([`5e1e551`](https://github.com/fxmartin/local-code-bench/commit/5e1e55130b3a41bd5e379fa534a9dedd0e4a2897))
+
+
 ## v0.41.0 (2026-06-27)
 
 ### Features
