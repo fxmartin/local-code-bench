@@ -114,9 +114,9 @@
 **Technical Notes**: Extend Epic-08's `inferencer` subcommand (08.4-001) with a `models` verb rather than a new top-level command. Reuse the table-rendering and error-mapping conventions from the Epic-08 CLI work.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 11.3-001, 08.4-001
 **Risk Level**: Low

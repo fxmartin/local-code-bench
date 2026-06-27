@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -18,6 +19,13 @@ from local_code_bench.config import (
     load_models,
 )
 from local_code_bench.inferencers import detect, manager
+from local_code_bench.inferencers.inventory import (
+    LocalModel,
+    SharedModel,
+    group_models,
+    normalize_all,
+    scan_inferencers,
+)
 from local_code_bench.inferencers.manager import InferencerError, InferencerStatus
 from local_code_bench.leaderboard import generate_leaderboard
 from local_code_bench.metrics import CompletionMeasurement, capture_stream_metrics
@@ -178,7 +186,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     inferencer.add_argument(
         "action",
-        choices=["list", "status", "start", "stop", "dashboard"],
+        choices=["list", "status", "start", "stop", "dashboard", "models"],
         help="inferencer operation to perform",
     )
     inferencer.add_argument("name", nargs="?", help="engine name (required for start/stop)")
@@ -223,6 +231,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=8765,
         help="dashboard bind port",
+    )
+    inferencer.add_argument(
+        "--shared",
+        action="store_true",
+        help="models: show only models several inferencers can serve (sharing sets)",
+    )
+    inferencer.add_argument(
+        "--json",
+        action="store_true",
+        help="models: emit the inventory as JSON instead of a table",
     )
 
     dashboard = subparsers.add_parser(
@@ -734,6 +752,9 @@ def run_inferencer_command(args: argparse.Namespace) -> int:
 
     configs = load_inferencers(args.config)
 
+    if args.action == "models":
+        return _run_inferencer_models(args, configs)
+
     if args.action == "list":
         _print_inferencer_list(configs)
         return 0
@@ -766,6 +787,117 @@ def run_inferencer_command(args: argparse.Namespace) -> int:
     )
     print(f"started {status.name}: {status.detail}")
     return 0
+
+
+def _run_inferencer_models(
+    args: argparse.Namespace, configs: dict[str, InferencerConfig]
+) -> int:
+    """List the models downloaded per inferencer (Story 11.4-001).
+
+    Scans every configured store, normalizes the hits, and renders them as a
+    table, the cross-engine sharing sets (`--shared`), or JSON (`--json`). A scan
+    failure surfaces as `bench: error: ...` on stderr with exit 2, consistent with
+    the rest of the CLI (config failures already propagate from `load_inferencers`).
+    """
+
+    try:
+        stored = scan_inferencers(configs.values())
+    except OSError as exc:
+        print(f"bench: error: {exc}", file=sys.stderr)
+        return 2
+
+    models = normalize_all(stored)
+
+    if args.shared:
+        shared = [group for group in group_models(models) if group.is_shared]
+        if args.json:
+            print(json.dumps([_shared_model_json(group) for group in shared], indent=2))
+        else:
+            _print_shared_models(shared)
+        return 0
+
+    if args.json:
+        print(json.dumps([_local_model_json(model) for model in models], indent=2))
+    else:
+        _print_models_table(models)
+    return 0
+
+
+def _print_models_table(models: list[LocalModel]) -> None:
+    if not models:
+        print("no downloaded models found")
+        return
+    rows = [("ENGINE", "NAME", "FORMAT", "QUANT", "SIZE")]
+    for model in models:
+        rows.append(
+            (
+                model.inferencer,
+                model.name,
+                model.store_format,
+                model.quant or "-",
+                _format_size(model.size_bytes),
+            )
+        )
+    _print_rows(rows)
+
+
+def _print_shared_models(groups: list[SharedModel]) -> None:
+    if not groups:
+        print("no shared models found")
+        return
+    rows = [("NAME", "FORMAT", "QUANT", "SIZE", "INFERENCERS")]
+    for group in groups:
+        head = group.models[0]
+        rows.append(
+            (
+                head.name,
+                group.store_format,
+                head.quant or "-",
+                _format_size(head.size_bytes),
+                ", ".join(group.inferencers),
+            )
+        )
+    _print_rows(rows)
+
+
+def _local_model_json(model: LocalModel) -> dict[str, object]:
+    return {
+        "inferencer": model.inferencer,
+        "store_format": model.store_format,
+        "name": model.name,
+        "path": model.path,
+        "size_bytes": model.size_bytes,
+        "quant": model.quant,
+        "provider": model.provider,
+        "identity": model.identity,
+    }
+
+
+def _shared_model_json(group: SharedModel) -> dict[str, object]:
+    head = group.models[0]
+    return {
+        "store_format": group.store_format,
+        "identity": group.identity,
+        "name": head.name,
+        "size_bytes": head.size_bytes,
+        "quant": head.quant,
+        "provider": head.provider,
+        "inferencers": list(group.inferencers),
+        "is_shared": group.is_shared,
+    }
+
+
+def _format_size(num_bytes: int) -> str:
+    """Render a byte count as a human-readable size (``1.4 GiB``, ``512 B``)."""
+
+    size = float(num_bytes)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if size < 1024 or unit == "GiB":
+            if unit == "B":
+                return f"{int(size)} {unit}"
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TiB"  # pragma: no cover - loop always returns at GiB
 
 
 def _select_inferencer(
