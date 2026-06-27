@@ -191,6 +191,42 @@ def test_normalize_quant_from_name_falls_back_to_path(tmp_path) -> None:
     assert normalize(stored).quant == "Q5_K_M"
 
 
+def test_normalize_prefers_quant_from_name_over_path(tmp_path) -> None:
+    # When both the name and the path carry a quant token, the name wins
+    # (``parse_quant(name) or parse_quant(path)``) — provenance is most reliable
+    # on the model identifier itself.
+    store = tmp_path / "Q5_K_M-build"
+    store.mkdir()
+    target = store / "weights.gguf"
+    target.write_bytes(b"w" * 6)
+    stored = StoredModel(
+        inferencer="llama-cpp",
+        store_format="gguf",
+        name="Qwen-7B-Q4_K_M",  # name token differs from the path token
+        path=str(target),
+        size_bytes=6,
+    )
+
+    assert normalize(stored).quant == "Q4_K_M"
+
+
+def test_normalize_prefers_provider_from_name_over_path(tmp_path) -> None:
+    # Likewise the publisher on the name takes precedence over one on the path.
+    store = tmp_path / "bartowski"
+    store.mkdir()
+    target = store / "model-Q4_K_M.gguf"
+    target.write_bytes(b"w" * 6)
+    stored = StoredModel(
+        inferencer="llama-cpp",
+        store_format="gguf",
+        name="unsloth/Qwen-7B-Q4_K_M",  # name org differs from the path dir
+        path=str(target),
+        size_bytes=6,
+    )
+
+    assert normalize(stored).provider == "unsloth"
+
+
 def test_local_model_is_frozen(tmp_path) -> None:
     model = normalize(_stored(tmp_path, name="m"))
     with pytest.raises(AttributeError):
@@ -302,6 +338,73 @@ def test_content_identity_ollama_skips_non_dict_layer(tmp_path) -> None:
     )
 
     assert content_identity(stored) == "sha256:w"
+
+
+def test_content_identity_ollama_malformed_json_is_realpath(tmp_path) -> None:
+    # An existing-but-corrupt manifest (invalid JSON) degrades to realpath via the
+    # ValueError branch — distinct from the missing-file OSError branch below.
+    store = tmp_path / "ollama" / "manifests" / "library" / "corrupt"
+    store.mkdir(parents=True)
+    manifest = store / "2b"
+    manifest.write_text("{not valid json", encoding="utf-8")
+
+    stored = StoredModel(
+        inferencer="ollama",
+        store_format="ollama",
+        name="corrupt:2b",
+        path=str(manifest),
+        size_bytes=0,
+    )
+
+    assert content_identity(stored) == os.path.realpath(str(manifest))
+
+
+def test_content_identity_ollama_model_layer_non_string_digest_is_realpath(tmp_path) -> None:
+    # A model-weights layer whose digest is not a string is not a usable identity;
+    # the parser keeps scanning and degrades to realpath when none qualifies.
+    store = tmp_path / "ollama" / "manifests" / "library" / "baddigest"
+    store.mkdir(parents=True)
+    manifest = store / "4b"
+    doc = {
+        "layers": [
+            {"digest": None, "mediaType": "application/vnd.ollama.image.model"},
+        ]
+    }
+    manifest.write_text(json.dumps(doc), encoding="utf-8")
+
+    stored = StoredModel(
+        inferencer="ollama",
+        store_format="ollama",
+        name="baddigest:4b",
+        path=str(manifest),
+        size_bytes=0,
+    )
+
+    assert content_identity(stored) == os.path.realpath(str(manifest))
+
+
+def test_content_identity_ollama_returns_first_model_layer_sha(tmp_path) -> None:
+    # With multiple model-weights layers the first one's digest is the identity.
+    store = tmp_path / "ollama" / "manifests" / "library" / "multi"
+    store.mkdir(parents=True)
+    manifest = store / "5b"
+    doc = {
+        "layers": [
+            {"digest": "sha256:first", "mediaType": "application/vnd.ollama.image.model"},
+            {"digest": "sha256:second", "mediaType": "application/vnd.ollama.image.model"},
+        ]
+    }
+    manifest.write_text(json.dumps(doc), encoding="utf-8")
+
+    stored = StoredModel(
+        inferencer="ollama",
+        store_format="ollama",
+        name="multi:5b",
+        path=str(manifest),
+        size_bytes=0,
+    )
+
+    assert content_identity(stored) == "sha256:first"
 
 
 def test_content_identity_ollama_missing_manifest_is_realpath(tmp_path) -> None:
