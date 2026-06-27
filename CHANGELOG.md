@@ -2,6 +2,33 @@
 
 <!-- version list -->
 
+## v0.44.0 (2026-06-27)
+
+### Bug Fixes
+
+- **tiered-model-storage**: Demote / evict a model from (#12.3-002)
+  ([`eff227c`](https://github.com/fxmartin/local-code-bench/commit/eff227c977fc581090485efff1f89542c78556eb))
+
+### Features
+
+- **tiered-model-storage**: Demote / evict a model from (#12.3-002)
+  ([`7a98a37`](https://github.com/fxmartin/local-code-bench/commit/7a98a37a19a0b1b617db41ccdd94c8e1af07bd09))
+
+### Testing
+
+- **tiered-model-storage**: Demote / evict a model from (#12.3-002)
+  ([`a92f003`](https://github.com/fxmartin/local-code-bench/commit/a92f003c236af2c685b24c0203e3a3b7f3ae3304))
+
+- **tiered-model-storage**: Demote / evict a model from (#12.3-002)
+  ([`7267e8d`](https://github.com/fxmartin/local-code-bench/commit/7267e8d1d02bdc03b37adbece3342f629de930ed))
+
+- **tiered-model-storage**: Promote a model from external (#12.3-001)
+  ([`98194d5`](https://github.com/fxmartin/local-code-bench/commit/98194d5b6495acdad2eed1a702b0bd6a99c8ed3d))
+
+- **tiered-model-storage**: Serve directly from external, (#12.5-001)
+  ([`ac9607a`](https://github.com/fxmartin/local-code-bench/commit/ac9607afc154d8fe6351353f627d2243c6cddf41))
+
+
 ## v0.43.0 (2026-06-27)
 
 ### Features
