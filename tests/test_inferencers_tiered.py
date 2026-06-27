@@ -157,6 +157,29 @@ def test_scan_external_skips_formats_no_engine_can_serve(tmp_path) -> None:
     assert scan_external_tier(cfg, [_inferencer("mlx", "mlx")]) == []
 
 
+def test_scan_external_ignores_inferencer_without_store_format(tmp_path) -> None:
+    # An inferencer with no store_format (e.g. an API-only engine) contributes
+    # no format bucket, so it is skipped without error.
+    root = tmp_path / "ext"
+    _mount_external(root)
+    _write_gguf(root / "gguf", "Qwen-7B-Q4_K_M")
+    cfg = _external_cfg(root)
+    formatless = InferencerConfig(
+        name="api-only",
+        lifecycle="server",
+        detect_kind="binary",
+        detect_target="api-only",
+        port=1234,
+        health_url="http://127.0.0.1:{port}/health",
+        model_store=None,
+        store_format=None,
+    )
+
+    models = scan_external_tier(cfg, [formatless, _inferencer("llama.cpp", "gguf")])
+
+    assert {m.inferencer for m in models} == {"llama.cpp"}
+
+
 # --- merge_tiers -----------------------------------------------------------
 
 
@@ -252,6 +275,42 @@ def test_read_catalog_version_mismatch_returns_empty(tmp_path) -> None:
     assert read_external_catalog(tmp_path) == []
 
 
+def test_read_catalog_models_not_a_list_returns_empty(tmp_path) -> None:
+    # Right version, but ``models`` is not a list -> degrade to empty, not raise.
+    external_catalog_path(tmp_path).write_text(
+        json.dumps({"version": 1, "models": "oops"}), encoding="utf-8"
+    )
+    assert read_external_catalog(tmp_path) == []
+
+
+def test_read_catalog_skips_malformed_entries(tmp_path) -> None:
+    # A non-dict entry and a dict missing a required key are both dropped,
+    # while the well-formed entry survives.
+    good = {
+        "inferencer": "llama.cpp",
+        "store_format": "gguf",
+        "name": "Qwen-7B",
+        "path": "/ext/qwen.gguf",
+        "size_bytes": 4096,
+        "quant": None,
+        "provider": None,
+        "identity": "/ext/qwen.gguf",
+    }
+    external_catalog_path(tmp_path).write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "models": ["not-a-dict", {"name": "missing-fields"}, good],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    restored = read_external_catalog(tmp_path)
+
+    assert [m.name for m in restored] == ["Qwen-7B"]
+
+
 # --- build_tiered_inventory (the integration) ------------------------------
 
 
@@ -327,6 +386,23 @@ def test_build_inventory_mounted_ignores_stale_cache(tmp_path) -> None:
     names = {m.name for m in inv.models}
     assert "live-model" in names
     assert "stale" not in names
+
+
+def test_build_inventory_mounted_without_state_dir_skips_catalog(tmp_path) -> None:
+    # Mounted but no state_dir: the live scan still merges, no catalog is written.
+    root = tmp_path / "ext"
+    _mount_external(root)
+    _write_gguf(root / "gguf", "external-only")
+    cfg = _external_cfg(root)
+    local = [_local("local-only", "/local/x", tier="local")]
+
+    inv = build_tiered_inventory(local, cfg, [_inferencer("llama.cpp", "gguf")])
+
+    assert inv.external_availability is TierAvailability.MOUNTED
+    assert inv.external_cached is False
+    names = {m.name: m.tiers for m in inv.models}
+    assert names["external-only"] == ("external",)
+    assert names["local-only"] == ("local",)
 
 
 def test_build_inventory_no_external_configured() -> None:
