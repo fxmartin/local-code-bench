@@ -11,7 +11,9 @@ from __future__ import annotations
 from local_code_bench.inferencers.inventory import (
     LocalModel,
     SharedModel,
+    StoredModel,
     group_models,
+    normalize_all,
     shared_models,
 )
 
@@ -160,6 +162,74 @@ def test_groups_preserve_first_seen_order() -> None:
 
     assert [g.identity for g in groups] == ["/z.gguf", "/a.gguf"]
     assert groups[0].inferencers == ("e1", "e3")
+
+
+def test_three_engines_share_one_model_sorted_and_deduped() -> None:
+    # More than two owners de-dupe and sort, and the group is still shared.
+    models = [
+        _model("vllm", "/models/shared.gguf", path="/x.gguf"),
+        _model("llama.cpp", "/models/shared.gguf", path="/y.gguf"),
+        _model("llama.cpp", "/models/shared.gguf", path="/z.gguf"),
+        _model("lmstudio", "/models/shared.gguf", path="/w.gguf"),
+    ]
+
+    groups = group_models(models)
+
+    assert len(groups) == 1
+    group = groups[0]
+    assert group.is_shared
+    assert group.inferencers == ("llama.cpp", "lmstudio", "vllm")
+    assert len(group.models) == 4
+
+
+def test_inferencers_sorted_regardless_of_input_order() -> None:
+    # A reverse-alphabetical scan order still yields sorted inferencers.
+    models = [
+        _model("zeta", "/models/m.gguf", path="/1.gguf"),
+        _model("alpha", "/models/m.gguf", path="/2.gguf"),
+    ]
+
+    groups = group_models(models)
+
+    assert groups[0].inferencers == ("alpha", "zeta")
+
+
+def test_group_models_preserves_input_order_within_group() -> None:
+    # Within a logical model, ``models`` keeps the order the records arrived in,
+    # independent of the sorted ``inferencers`` view.
+    first = _model("zeta", "/models/m.gguf", path="/first.gguf")
+    second = _model("alpha", "/models/m.gguf", path="/second.gguf")
+
+    group = group_models([first, second])[0]
+
+    assert group.models == (first, second)
+
+
+def test_normalized_ollama_blob_sha_share_is_detected() -> None:
+    # End-to-end: two engines whose normalized identity is the same Ollama blob
+    # sha resolve to one shared logical model after normalization.
+    stored = [
+        StoredModel(
+            inferencer="ollama",
+            store_format="ollama",
+            name="qwen:7b",
+            path="/ollama/manifests/qwen/7b",
+            size_bytes=100,
+        ),
+        StoredModel(
+            inferencer="ollama-mirror",
+            store_format="ollama",
+            name="qwen:7b",
+            path="/ollama/manifests/qwen/7b",
+            size_bytes=100,
+        ),
+    ]
+
+    shared = shared_models(normalize_all(stored))
+
+    assert len(shared) == 1
+    assert shared[0].inferencers == ("ollama", "ollama-mirror")
+    assert shared[0].store_format == "ollama"
 
 
 def test_empty_input_yields_no_groups() -> None:
