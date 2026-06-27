@@ -128,12 +128,20 @@ without error when the drive is unplugged.
 **Technical Notes**: Reuse the 12.3-001 copy/verify/guard primitives; demote is the mirror operation with the destination/source swapped and the delete-after-verify guaranteed to run only against a verified external copy. Share free-space and in-use checks.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 12.3-001
 **Risk Level**: Medium
+
+**Status**: ✅ Done — `tiering.demote_model` (with `plan_demotion` / `DemotePlan` /
+`DemoteResult` / `DemoteError`) is the mirror of promote: copy local → external
+staging → verify (size + content hash) → atomic publish, and only once a verified
+external copy exists is the local copy removed. A verified existing external copy is
+reused (no re-copy). Refuses up front (offline / in-use / missing source / divergent
+external copy / no space) and aborts cleanly on any failure, always preserving the
+local copy until a verified external copy exists.
 
 ### Feature 12.4: Auto-Tiering Policy
 
@@ -154,12 +162,26 @@ without error when the drive is unplugged.
 **Technical Notes**: Policy engine over the unified inventory + a last-used signal (benchmark run history / serve events; fall back to file mtime). Pure planner returning an eviction plan, with apply delegating to demote. Pin list in config or a small state file. Keep the planner deterministic and side-effect-free for testing; the apply step is the only one that touches disk.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 12.3-002
 **Risk Level**: High
+
+**Status**: ✅ Done — `inferencers/autotier.py` adds the policy engine. `plan_autotier`
+is a pure, deterministic planner: it collapses local models to logical artifacts
+(counting a shared download once), computes the shortfall as the stricter of a
+`max_local_gb` footprint cap and a `min_free_gb` floor, ranks non-pinned models
+least-recently-used first (ties broken by name) and selects evictions until the budget
+is met — returning an `AutoTierPlan` (evictions, bytes reclaimed, `satisfied`,
+warnings) that moves nothing, so the CLI/dashboard `--dry-run` is just "plan and
+print". Pinned models are never selected (shortfall surfaced as a warning); when the
+external tier is offline the plan is `paused` with no evictions. `apply_plan` is the
+only disk-touching step: it replays each eviction through the verified
+`tiering.demote_model` path (12.3-002) and records the move in a `LastUsedStore`
+(recorded benchmark/serve timestamps keyed by content identity, mtime fallback).
+Budget + pins are configured via an optional `auto_tier` block (`config.load_autotier`).
 
 ### Feature 12.5: Serve-From-External & Benchmark Integration
 
@@ -233,6 +255,10 @@ without error when the drive is unplugged.
 **Risk Level**: Medium
 
 ## Epic Progress
-**Completed**: 2 / 8 stories · 10 / 39 points
+**Completed**: 6 / 8 stories · 31 / 39 points
 - 12.1-001 — External repo config + mount/availability detection (Should, 5 pts)
 - 12.2-001 — Tier-aware inventory merging local + external stores (Should, 5 pts)
+- 12.3-001 — Promote a model from external to local (Should, 5 pts)
+- 12.3-002 — Demote / evict a model from local to external (Should, 3 pts)
+- 12.4-001 — Disk-budget + LRU auto-tiering with pinning and dry-run (Should, 8 pts)
+- 12.5-001 — Serve directly from external, auto-promote-before-benchmark (Should, 5 pts)

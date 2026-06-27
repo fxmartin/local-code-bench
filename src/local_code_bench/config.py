@@ -91,6 +91,23 @@ class ExternalRepoConfig:
 
 
 @dataclass(frozen=True)
+class AutoTierConfig:
+    """Auto-tiering policy: a local disk budget plus pinned models (Epic-12, 12.4-001).
+
+    The budget is expressed in GiB and may set ``max_local_gb`` (the most space the
+    local tier's models may occupy), ``min_free_gb`` (the least free disk space to
+    keep on the local volume), or both — at least one is required. ``pins`` lists
+    model names that must never be auto-evicted, even when that means the budget
+    cannot be fully met. The block is optional: a config without an ``auto_tier``
+    block leaves auto-tiering disabled.
+    """
+
+    max_local_gb: float | None = None
+    min_free_gb: float | None = None
+    pins: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class InferencerConfig:
     """A macOS inference engine the harness can detect and (for servers) manage."""
 
@@ -242,6 +259,71 @@ def _parse_external_subpaths(value: Any) -> dict[str, str]:
             raise ConfigError(f"external_repo.subpaths['{fmt}'] must be a non-empty relative path")
         subpaths[fmt] = sub.strip()
     return subpaths
+
+
+def load_autotier(path: str | Path) -> AutoTierConfig | None:
+    """Load the optional auto-tiering policy from an inferencers YAML.
+
+    Returns ``None`` when the file declares no ``auto_tier`` block, so a config
+    without auto-tiering stays valid. Raises :class:`ConfigError` for a
+    missing/invalid file or a malformed ``auto_tier`` block.
+    """
+
+    config_path = Path(path)
+    try:
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ConfigError(f"auto-tier config not found: {config_path}") from exc
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"invalid YAML in {config_path}: {exc}") from exc
+    if raw is not None and not isinstance(raw, dict):
+        raise ConfigError(f"{config_path} must contain a top-level mapping")
+    entry = raw.get("auto_tier") if isinstance(raw, dict) else None
+    if entry is None:
+        return None
+    return _parse_auto_tier(entry)
+
+
+def _parse_auto_tier(entry: Any) -> AutoTierConfig:
+    if not isinstance(entry, dict):
+        raise ConfigError("auto_tier must be a mapping")
+
+    max_local_gb = _optional_positive_float(entry, "max_local_gb")
+    min_free_gb = _optional_positive_float(entry, "min_free_gb")
+    if max_local_gb is None and min_free_gb is None:
+        raise ConfigError("auto_tier requires at least one of max_local_gb or min_free_gb")
+
+    return AutoTierConfig(
+        max_local_gb=max_local_gb,
+        min_free_gb=min_free_gb,
+        pins=_parse_pins(entry.get("pins")),
+    )
+
+
+def _optional_positive_float(entry: dict[str, Any], field: str) -> float | None:
+    """Parse an optional strictly-positive GiB number, or ``None`` when absent."""
+
+    value = entry.get(field)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        raise ConfigError(f"auto_tier.{field} must be a positive number of GiB")
+    return float(value)
+
+
+def _parse_pins(value: Any) -> tuple[str, ...]:
+    """Parse the optional list of pinned model names."""
+
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ConfigError("auto_tier.pins must be a list of model names")
+    pins: list[str] = []
+    for name in value:
+        if not isinstance(name, str) or not name.strip():
+            raise ConfigError("auto_tier.pins entries must be non-empty model names")
+        pins.append(name.strip())
+    return tuple(pins)
 
 
 def _parse_inferencer(entry: Any, index: int) -> InferencerConfig:

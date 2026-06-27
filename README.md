@@ -454,6 +454,20 @@ writes the marker and a per-format directory skeleton (mirroring the local store
 layout) so subsequent runs recognise the same repo. Omit the block for a single-tier,
 local-only setup.
 
+**Auto-tiering (Epic-12).** An optional `auto_tier` block in `configs/inferencers.yaml`
+keeps the local tier under a disk budget by evicting least-recently-used models out to
+the external SSD. Set `max_local_gb` (the most GiB the local-tier models may occupy),
+`min_free_gb` (the least free GiB to keep on the local volume), or both — when both are
+set the stricter requirement wins. The policy ranks models by last use (recorded
+benchmark/serve history, falling back to file mtime) and plans evictions oldest-first;
+each applied eviction reuses the verified demote path (copy → verify → only-then remove
+local, never an unsafe delete). `pins` lists model names that are **never** auto-evicted,
+even when that leaves the budget unmet — the shortfall is reported as a warning rather
+than evicting a pinned model. Planning is a safe dry-run by default: it reports exactly
+which models it would evict and the bytes reclaimed, moving nothing until an eviction is
+explicitly applied. When the external SSD is offline auto-tiering is paused and makes no
+changes. Omit the block to leave auto-tiering disabled.
+
 Starting an engine enforces the one-active invariant: any other running headless
 servers are listed and stopped only after you confirm, then the target starts. A
 running GUI app blocks the start with a warning to quit it manually unless `--force`

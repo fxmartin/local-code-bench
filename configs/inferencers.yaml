@@ -35,6 +35,23 @@
 #   volume_marker: .local-code-bench-external
 #   subpaths:
 #     hf-safetensors: hf-cache
+#
+# auto_tier   optional (Epic-12): keep the local tier under a disk budget by
+#             auto-evicting least-recently-used models to the external tier. Set
+#             `max_local_gb` (the most GiB the local-tier models may occupy),
+#             `min_free_gb` (the least free GiB to keep on the local volume), or
+#             both (the stricter requirement wins) — at least one is required.
+#             `pins` lists model names that are never auto-evicted, even when that
+#             leaves the budget unmet (surfaced as a warning). Planning defaults to
+#             a safe dry-run; nothing moves until an eviction is explicitly applied,
+#             and auto-tiering is paused whenever the external SSD is offline. Omit
+#             the block to leave auto-tiering disabled. Example:
+#
+# auto_tier:
+#   max_local_gb: 200
+#   min_free_gb: 50
+#   pins:
+#     - qwen2.5-coder
 inferencers:
   # --- Headless servers (full lifecycle) ---------------------------------
   - name: dflash
