@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.41.0 (2026-06-27)
+
+### Features
+
+- **local-model-inventory**: Model inventory panel in the (#11.5-001)
+  ([`b25d015`](https://github.com/fxmartin/local-code-bench/commit/b25d0153f9f666a94baaa27d903de0049ebd07c4))
+
+### Testing
+
+- **local-model-inventory**: Model inventory panel in the (#11.5-001)
+  ([`fee498c`](https://github.com/fxmartin/local-code-bench/commit/fee498c8a2c645cfb634a3edb21b4c06c58c8ebf))
+
+
 ## v0.40.0 (2026-06-27)
 
 ### Features
