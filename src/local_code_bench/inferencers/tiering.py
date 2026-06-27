@@ -39,21 +39,27 @@ from pathlib import Path
 
 from ..config import ExternalRepoConfig, InferencerConfig
 from . import manager
-from .external import check_availability
+from .external import check_availability, format_dir
 from .inventory import LocalModel, Tier, expand_store_path
 
 __all__ = [
+    "DemoteError",
+    "DemotePlan",
+    "DemoteResult",
     "PromoteError",
     "PromotePlan",
     "PromoteResult",
     "TierResolution",
+    "demote_model",
+    "plan_demotion",
     "plan_promotion",
     "promote_model",
     "resolve_benchmark_target",
     "serving_blockers",
 ]
 
-#: Suffix of the hidden staging path a promote copies into before publishing.
+#: Suffix of the hidden staging path a promote (or demote) copies into before
+#: publishing. Shared by both moves so a stale temp from either is cleaned alike.
 _STAGING_SUFFIX = ".promote-tmp"
 
 
@@ -367,6 +373,200 @@ def _first_named(models: Iterable[LocalModel], target: str) -> LocalModel | None
         if model.name == target:
             return model
     return None
+
+
+# --- Demote (local -> external), Story 12.3-002 ----------------------------
+#
+# The mirror of promote: source and destination swapped (local -> external) and,
+# crucially, the local copy *is* removed — but only ever after a verified external
+# copy provably exists, so an interrupted demote has no path to data loss. When a
+# matching copy already lives on external it is reused (no re-copy) and the local
+# bytes are reclaimed immediately. Refuses up front, moving nothing, when the
+# external tier is offline, a serving engine is running, external free space is
+# insufficient, or a *different* model already occupies the destination name.
+
+
+class DemoteError(RuntimeError):
+    """Raised when a demote cannot proceed or must abort.
+
+    The mirror of :class:`PromoteError`: a distinct type so a caller can surface an
+    expected, explained refusal — offline tier, in-use model, no space, name
+    collision, integrity mismatch — verbatim, distinct from an unexpected crash.
+    """
+
+
+@dataclass(frozen=True)
+class DemotePlan:
+    """The resolved source/destination of a demote, before any bytes move.
+
+    Pure to compute from the model and the external config, so a caller can show
+    *what would happen* (a dry run) without touching the disk.
+    """
+
+    name: str
+    store_format: str
+    source: Path
+    destination: Path
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class DemoteResult:
+    """Outcome of a completed demote.
+
+    ``reused_existing`` records whether a matching external copy already existed
+    and was reused (no re-copy) before the local bytes were reclaimed;
+    ``bytes_reclaimed`` is the local space freed.
+    """
+
+    plan: DemotePlan
+    destination: Path
+    bytes_reclaimed: int
+    verified: bool
+    reused_existing: bool
+
+
+def plan_demotion(
+    source: LocalModel,
+    external_cfg: ExternalRepoConfig,
+    *,
+    home: Path | None = None,
+) -> DemotePlan:
+    """Resolve where a local model would land in the external per-format store.
+
+    The destination mirrors the source's on-disk basename under the external
+    tier's per-format directory. Raises :class:`DemoteError` when the source is
+    not a local-tier record — the precondition that makes a demote meaningless.
+    """
+
+    if source.tier != "local":
+        raise DemoteError(
+            f"{source.name} is on the {source.tier} tier, not local — nothing to demote"
+        )
+
+    source_path = Path(source.path)
+    store_dir = format_dir(external_cfg, source.store_format, home=home)
+    destination = store_dir / source_path.name
+    return DemotePlan(
+        name=source.name,
+        store_format=source.store_format,
+        source=source_path,
+        destination=destination,
+        size_bytes=source.size_bytes,
+    )
+
+
+def demote_model(
+    source: LocalModel,
+    external_cfg: ExternalRepoConfig,
+    configs: Mapping[str, InferencerConfig],
+    state_dir: str | Path,
+    *,
+    home: Path | None = None,
+    free_bytes: Callable[[Path], int] = lambda path: shutil.disk_usage(path).free,
+    status_fn: Callable[[InferencerConfig, str | Path], manager.InferencerStatus] = manager.status,
+    copy_fn: Callable[[Path, Path], None] | None = None,
+) -> DemoteResult:
+    """Demote ``source`` from local disk out to the external tier.
+
+    Copies the local model into a staging path on external, verifies it (size +
+    content hash) against the source, publishes it atomically, and only then
+    removes the local copy — reclaiming the internal disk space. When a matching
+    external copy already exists it is reused (no re-copy) and the local bytes are
+    reclaimed immediately. Refuses up front — moving no bytes — when the external
+    tier is offline, the source is missing, a serving engine is running, a
+    *different* model already occupies the destination name, or external free
+    space is insufficient; aborts and cleans up the partial copy on any I/O error
+    or integrity mismatch, always leaving the local source intact.
+
+    The local copy is removed only after a verified external copy provably exists,
+    so an interrupted demote has no path to data loss.
+
+    Raises :class:`DemoteError` for every refusal and abort.
+    """
+
+    plan = plan_demotion(source, external_cfg, home=home)
+
+    if not check_availability(external_cfg, home=home).is_mounted:
+        raise DemoteError(
+            f"external tier is offline — plug in the SSD before demoting {plan.name}"
+        )
+
+    if not plan.source.exists():
+        raise DemoteError(f"local source for {plan.name} is missing: {plan.source}")
+
+    blockers = serving_blockers(source, configs, state_dir, status_fn=status_fn)
+    if blockers:
+        joined = ", ".join(sorted(blockers))
+        raise DemoteError(
+            f"{joined} is running and could be serving {plan.name} — "
+            "stop it before demoting so no bytes are moved under a live engine"
+        )
+
+    source_hash = _content_hash(plan.source)
+
+    # Reuse a redundant external copy when it already matches the source: skip the
+    # re-copy and reclaim the local bytes immediately. A same-named external copy
+    # that *differs* is refused rather than clobbered, so neither tier is harmed.
+    if plan.destination.exists():
+        if _path_size(plan.destination) == plan.size_bytes and (
+            _content_hash(plan.destination) == source_hash
+        ):
+            _remove_path(plan.source)
+            return DemoteResult(
+                plan=plan,
+                destination=plan.destination,
+                bytes_reclaimed=plan.size_bytes,
+                verified=True,
+                reused_existing=True,
+            )
+        raise DemoteError(
+            f"a different model already occupies {plan.destination} on external — "
+            f"it differs from local {plan.name}; refusing to clobber it (local kept)"
+        )
+
+    free = free_bytes(_existing_ancestor(plan.destination.parent))
+    if free < plan.size_bytes:
+        shortfall = plan.size_bytes - free
+        raise DemoteError(
+            f"insufficient external free space to demote {plan.name}: need "
+            f"{_human_bytes(plan.size_bytes)}, have {_human_bytes(free)} — "
+            f"free at least {_human_bytes(shortfall)} first (local copy left untouched)"
+        )
+
+    staging = plan.destination.with_name(plan.destination.name + _STAGING_SUFFIX)
+    copy = copy_fn or _copy_path
+    plan.destination.parent.mkdir(parents=True, exist_ok=True)
+    _remove_path(staging)
+
+    try:
+        copy(plan.source, staging)
+        copied = _path_size(staging)
+        if copied != plan.size_bytes or _content_hash(staging) != source_hash:
+            raise DemoteError(
+                f"integrity check failed demoting {plan.name}: the external copy does "
+                "not match the local source — aborting, local source left intact"
+            )
+        os.replace(staging, plan.destination)
+    except DemoteError:
+        _remove_path(staging)
+        raise
+    except OSError as exc:
+        _remove_path(staging)
+        raise DemoteError(
+            f"failed to demote {plan.name}: {exc} — partial copy removed, local source intact"
+        ) from exc
+
+    # Verified external copy now exists: safe to reclaim the local bytes.
+    _remove_path(plan.source)
+
+    return DemoteResult(
+        plan=plan,
+        destination=plan.destination,
+        bytes_reclaimed=plan.size_bytes,
+        verified=True,
+        reused_existing=False,
+    )
 
 
 # --- Filesystem helpers (pure given their inputs) --------------------------

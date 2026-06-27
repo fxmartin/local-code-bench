@@ -22,9 +22,14 @@ from local_code_bench.config import (
 from local_code_bench.inferencers.inventory import LocalModel
 from local_code_bench.inferencers.manager import InferencerStatus
 from local_code_bench.inferencers.tiering import (
+    DemoteError,
+    DemotePlan,
+    DemoteResult,
     PromoteError,
     PromotePlan,
     PromoteResult,
+    demote_model,
+    plan_demotion,
     plan_promotion,
     promote_model,
     serving_blockers,
@@ -68,6 +73,20 @@ def _external_model(path: Path, *, name: str = "qwen", store_format: StoreFormat
         provider=None,
         identity=str(path),
         tier="external",
+    )
+
+
+def _local_model(path: Path, *, name: str = "qwen", store_format: StoreFormat = "gguf") -> LocalModel:
+    return LocalModel(
+        inferencer="local-scan",
+        store_format=store_format,
+        name=name,
+        path=str(path),
+        size_bytes=_tree_size(path),
+        quant=None,
+        provider=None,
+        identity=str(path),
+        tier="local",
     )
 
 
@@ -482,3 +501,280 @@ def test_path_size_counts_file_and_tree(tmp_path: Path) -> None:
 )
 def test_human_bytes_scales_units(count: int, expected: str) -> None:
     assert tiering._human_bytes(count) == expected
+
+
+# ===========================================================================
+# Story 12.3-002 — demote / evict a model from local to external
+# ===========================================================================
+
+
+# --- plan_demotion ---------------------------------------------------------
+
+
+def test_demote_plan_resolves_destination_under_external_format_dir(tmp_path: Path) -> None:
+    source = _write_gguf(tmp_path / "local" / "gguf", "qwen")
+    ext_root = tmp_path / "ext"
+    cfg = _external_cfg(ext_root)
+
+    plan = plan_demotion(_local_model(source), cfg)
+
+    assert plan == DemotePlan(
+        name="qwen",
+        store_format="gguf",
+        source=source,
+        destination=ext_root / "gguf" / "qwen.gguf",
+        size_bytes=source.stat().st_size,
+    )
+
+
+def test_demote_plan_expands_home_in_external_root(tmp_path: Path) -> None:
+    source = _write_gguf(tmp_path / "local", "m")
+    cfg = ExternalRepoConfig(root="~/ext")
+
+    plan = plan_demotion(_local_model(source), cfg, home=tmp_path)
+
+    assert plan.destination == tmp_path / "ext" / "gguf" / "m.gguf"
+
+
+def test_demote_plan_rejects_non_local_source(tmp_path: Path) -> None:
+    source = _write_gguf(tmp_path / "local", "m")
+    with pytest.raises(DemoteError, match="not local"):
+        plan_demotion(_external_model(source), _external_cfg(tmp_path / "ext"))
+
+
+# --- demote_model: happy paths ---------------------------------------------
+
+
+def test_demote_file_copies_verifies_and_removes_local(tmp_path: Path) -> None:
+    ext_root = tmp_path / "ext"
+    _mount(ext_root)
+    source = _write_gguf(tmp_path / "local" / "gguf", "qwen")
+    original = source.read_bytes()
+    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+
+    result = demote_model(
+        _local_model(source), _external_cfg(ext_root), {"llama": cfg}, tmp_path,
+        free_bytes=_plenty, status_fn=_not_running,
+    )
+
+    dest = ext_root / "gguf" / "qwen.gguf"
+    assert isinstance(result, DemoteResult)
+    assert result.verified is True
+    assert result.reused_existing is False
+    assert result.destination == dest
+    assert result.bytes_reclaimed == len(original)
+    # External copy is byte-identical and the local source is gone (space reclaimed).
+    assert dest.read_bytes() == original
+    assert not source.exists()
+    # No staging artifact left behind.
+    assert not (ext_root / "gguf" / "qwen.gguf.promote-tmp").exists()
+
+
+def test_demote_directory_model_copies_tree_and_removes_local(tmp_path: Path) -> None:
+    ext_root = tmp_path / "ext"
+    _mount(ext_root)
+    source = _write_model_dir(tmp_path / "local" / "mlx", "Qwen3")
+    cfg = _inferencer("mlx-engine", tmp_path / "local" / "mlx", "mlx")
+
+    result = demote_model(
+        _local_model(source, name="Qwen3", store_format="mlx"),
+        _external_cfg(ext_root), {"mlx-engine": cfg}, tmp_path,
+        free_bytes=_plenty, status_fn=_not_running,
+    )
+
+    dest = ext_root / "mlx" / "Qwen3"
+    assert result.verified is True
+    assert (dest / "model.safetensors").exists()
+    assert (dest / "tokenizer" / "tokenizer.json").exists()
+    assert not source.exists()
+
+
+def test_demote_reuses_verified_existing_external_copy(tmp_path: Path) -> None:
+    ext_root = tmp_path / "ext"
+    _mount(ext_root)
+    payload = b"weights" * 1000
+    source = _write_gguf(tmp_path / "local" / "gguf", "qwen", payload=payload)
+    # An identical copy already lives on external (a present-in-both redundancy).
+    existing = _write_gguf(ext_root / "gguf", "qwen", payload=payload)
+    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+
+    # A copy_fn that explodes proves no re-copy happens on the reuse path.
+    def must_not_copy(src: Path, dst: Path) -> None:
+        raise AssertionError("demote re-copied despite a verified external copy")
+
+    result = demote_model(
+        _local_model(source), _external_cfg(ext_root), {"llama": cfg}, tmp_path,
+        free_bytes=_plenty, status_fn=_not_running, copy_fn=must_not_copy,
+    )
+
+    assert result.reused_existing is True
+    assert result.verified is True
+    assert result.bytes_reclaimed == len(payload)
+    assert existing.read_bytes() == payload  # external untouched
+    assert not source.exists()  # local reclaimed immediately
+
+
+def test_demote_uses_default_seams_for_idle_local_engine(tmp_path: Path) -> None:
+    # Exercise the real default free_bytes (shutil.disk_usage) and a real manager
+    # status lookup with no state file (engine reported down) — no injection.
+    ext_root = tmp_path / "ext"
+    _mount(ext_root)
+    source = _write_gguf(tmp_path / "local" / "gguf", "tiny", payload=b"x" * 64)
+    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+
+    result = demote_model(
+        _local_model(source), _external_cfg(ext_root), {"llama": cfg}, tmp_path / "state",
+    )
+
+    assert (ext_root / "gguf" / "tiny.gguf").exists()
+    assert not source.exists()
+    assert result.verified is True
+
+
+# --- demote_model: up-front refusals (local copy preserved) ----------------
+
+
+def test_demote_refuses_when_external_offline(tmp_path: Path) -> None:
+    ext_root = tmp_path / "ext"  # not mounted: no marker
+    ext_root.mkdir()
+    source = _write_gguf(tmp_path / "local" / "gguf", "qwen")
+    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+
+    with pytest.raises(DemoteError, match="offline"):
+        demote_model(
+            _local_model(source), _external_cfg(ext_root), {"llama": cfg}, tmp_path,
+            free_bytes=_plenty, status_fn=_not_running,
+        )
+    assert source.exists()  # local copy preserved
+
+
+def test_demote_refuses_when_source_missing(tmp_path: Path) -> None:
+    ext_root = tmp_path / "ext"
+    _mount(ext_root)
+    missing = tmp_path / "local" / "gguf" / "ghost.gguf"
+    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+    model = LocalModel(
+        inferencer="s", store_format="gguf", name="ghost", path=str(missing),
+        size_bytes=10, quant=None, provider=None, identity=str(missing), tier="local",
+    )
+
+    with pytest.raises(DemoteError, match="missing"):
+        demote_model(
+            model, _external_cfg(ext_root), {"llama": cfg}, tmp_path,
+            free_bytes=_plenty, status_fn=_not_running,
+        )
+
+
+def test_demote_refuses_when_serving_engine_running(tmp_path: Path) -> None:
+    ext_root = tmp_path / "ext"
+    _mount(ext_root)
+    source = _write_gguf(tmp_path / "local" / "gguf", "qwen")
+    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+
+    with pytest.raises(DemoteError, match="is running"):
+        demote_model(
+            _local_model(source), _external_cfg(ext_root), {"llama": cfg}, tmp_path,
+            free_bytes=_plenty, status_fn=_running,
+        )
+    assert source.exists()  # local copy preserved, nothing moved
+
+
+def test_demote_refuses_on_insufficient_external_free_space(tmp_path: Path) -> None:
+    ext_root = tmp_path / "ext"
+    _mount(ext_root)
+    source = _write_gguf(tmp_path / "local" / "gguf", "qwen", payload=b"w" * 10_000)
+    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+
+    with pytest.raises(DemoteError) as exc:
+        demote_model(
+            _local_model(source), _external_cfg(ext_root), {"llama": cfg}, tmp_path,
+            free_bytes=lambda _p: 4_000, status_fn=_not_running,
+        )
+
+    message = str(exc.value)
+    assert "insufficient external free space" in message
+    assert "free at least" in message  # suggests an amount to free
+    assert source.exists()  # local copy preserved
+    assert not (ext_root / "gguf" / "qwen.gguf").exists()  # external untouched
+
+
+def test_demote_refuses_when_external_copy_differs(tmp_path: Path) -> None:
+    ext_root = tmp_path / "ext"
+    _mount(ext_root)
+    source = _write_gguf(tmp_path / "local" / "gguf", "qwen", payload=b"real" * 1000)
+    # A same-named external copy that does NOT match the local source.
+    stale = _write_gguf(ext_root / "gguf", "qwen", payload=b"junk" * 1000)
+    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+
+    with pytest.raises(DemoteError, match="differs"):
+        demote_model(
+            _local_model(source), _external_cfg(ext_root), {"llama": cfg}, tmp_path,
+            free_bytes=_plenty, status_fn=_not_running,
+        )
+    assert source.exists()  # local copy preserved (no clobber, no delete)
+    assert stale.read_bytes() == b"junk" * 1000  # external left exactly as it was
+
+
+# --- demote_model: mid-copy aborts (local intact, no data loss) ------------
+
+
+def test_demote_aborts_on_integrity_mismatch_local_intact(tmp_path: Path) -> None:
+    ext_root = tmp_path / "ext"
+    _mount(ext_root)
+    source = _write_gguf(tmp_path / "local" / "gguf", "qwen", payload=b"real" * 1000)
+    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+
+    def corrupt_copy(src: Path, dst: Path) -> None:
+        # Same byte length as the source, but different content -> hash mismatch.
+        dst.write_bytes(b"junk" * 1000)
+
+    with pytest.raises(DemoteError, match="integrity check failed"):
+        demote_model(
+            _local_model(source), _external_cfg(ext_root), {"llama": cfg}, tmp_path,
+            free_bytes=_plenty, status_fn=_not_running, copy_fn=corrupt_copy,
+        )
+
+    assert not (ext_root / "gguf" / "qwen.gguf").exists()  # nothing published
+    assert not (ext_root / "gguf" / "qwen.gguf.promote-tmp").exists()  # staging cleaned up
+    assert source.read_bytes() == b"real" * 1000  # local source intact (no data loss)
+
+
+def test_demote_aborts_and_cleans_up_on_io_error_local_intact(tmp_path: Path) -> None:
+    ext_root = tmp_path / "ext"
+    _mount(ext_root)
+    source = _write_gguf(tmp_path / "local" / "gguf", "qwen")
+    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+
+    def failing_copy(src: Path, dst: Path) -> None:
+        dst.write_bytes(b"partial")  # leave a partial staging artifact...
+        raise OSError("disk exploded")  # ...then fail
+
+    with pytest.raises(DemoteError, match="partial copy removed"):
+        demote_model(
+            _local_model(source), _external_cfg(ext_root), {"llama": cfg}, tmp_path,
+            free_bytes=_plenty, status_fn=_not_running, copy_fn=failing_copy,
+        )
+
+    assert not (ext_root / "gguf" / "qwen.gguf").exists()
+    assert not (ext_root / "gguf" / "qwen.gguf.promote-tmp").exists()  # partial removed
+    assert source.exists()  # local source intact (no data loss)
+
+
+def test_demote_clears_stale_staging_before_copy(tmp_path: Path) -> None:
+    ext_root = tmp_path / "ext"
+    _mount(ext_root)
+    source = _write_gguf(tmp_path / "local" / "gguf", "qwen")
+    dest_dir = ext_root / "gguf"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    # A leftover staging file from a previously-killed demote.
+    (dest_dir / "qwen.gguf.promote-tmp").write_bytes(b"stale-garbage")
+    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+
+    result = demote_model(
+        _local_model(source), _external_cfg(ext_root), {"llama": cfg}, tmp_path,
+        free_bytes=_plenty, status_fn=_not_running,
+    )
+
+    assert result.verified is True
+    assert (dest_dir / "qwen.gguf").exists()
+    assert not source.exists()
