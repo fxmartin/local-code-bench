@@ -72,8 +72,14 @@ class _FakeOrchestrator:
         return self.result
 
 
-def _status(name: str, *, running: bool = False, healthy: bool = False,
-            pid: int | None = None, port: int = 8000) -> InferencerStatus:
+def _status(
+    name: str,
+    *,
+    running: bool = False,
+    healthy: bool = False,
+    pid: int | None = None,
+    port: int = 8000,
+) -> InferencerStatus:
     return InferencerStatus(
         name=name,
         installed=True,
@@ -169,7 +175,9 @@ def test_page_leaks_no_secrets_or_host_paths() -> None:
 
 def test_api_status_delegates_to_inferencer_action(monkeypatch) -> None:
     monkeypatch.setattr(
-        manager, "status_all", lambda configs, state_dir: {"dflash": _status("dflash", running=True)}
+        manager,
+        "status_all",
+        lambda configs, state_dir: {"dflash": _status("dflash", running=True)},
     )
 
     resp = ud.handle_request("GET", "/api/status", _ctx())
@@ -198,11 +206,11 @@ def test_api_start_passes_confirm_and_force_from_query(monkeypatch) -> None:
 def test_api_start_without_flags_defaults_false(monkeypatch) -> None:
     seen: dict = {}
     monkeypatch.setattr(
-        ud.inferencer_panel, "start_action",
-        lambda name, configs, state_dir, *, confirm, force=False: seen.update(
-            confirm=confirm, force=force
-        )
-        or (200, {}),
+        ud.inferencer_panel,
+        "start_action",
+        lambda name, configs, state_dir, *, confirm, force=False: (
+            seen.update(confirm=confirm, force=force) or (200, {})
+        ),
     )
 
     ud.handle_request("POST", "/api/start?name=dflash", _ctx())
@@ -213,7 +221,8 @@ def test_api_start_without_flags_defaults_false(monkeypatch) -> None:
 def test_api_stop_routes_to_stop_action(monkeypatch) -> None:
     seen: dict = {}
     monkeypatch.setattr(
-        ud.inferencer_panel, "stop_action",
+        ud.inferencer_panel,
+        "stop_action",
         lambda name, configs, state_dir: seen.update(name=name) or (200, {"stopped": name}),
     )
 
@@ -273,14 +282,15 @@ class _FakeProvider:
 
 
 def _chat_body(model: str = "qwen") -> bytes:
-    return json.dumps(
-        {"model": model, "messages": [{"role": "user", "content": "hi"}]}
-    ).encode("utf-8")
+    return json.dumps({"model": model, "messages": [{"role": "user", "content": "hi"}]}).encode(
+        "utf-8"
+    )
 
 
 def test_api_chat_streams_sse_through_provider(monkeypatch) -> None:
     provider = _FakeProvider(
-        _model(), events=[StreamEvent(content="Hi"), StreamEvent(prompt_tokens=3, completion_tokens=1)]
+        _model(),
+        events=[StreamEvent(content="Hi"), StreamEvent(prompt_tokens=3, completion_tokens=1)],
     )
     monkeypatch.setattr(ud.chat, "provider_for_model", lambda model: provider)
 
@@ -310,8 +320,11 @@ def test_api_chat_invalid_json_body_is_400() -> None:
 def test_api_chat_streams_over_http_and_cancels_cleanly(monkeypatch) -> None:
     provider = _FakeProvider(
         _model(),
-        events=[StreamEvent(content="Hel"), StreamEvent(content="lo"),
-                StreamEvent(prompt_tokens=3, completion_tokens=2)],
+        events=[
+            StreamEvent(content="Hel"),
+            StreamEvent(content="lo"),
+            StreamEvent(prompt_tokens=3, completion_tokens=2),
+        ],
     )
     monkeypatch.setattr(ud.chat, "provider_for_model", lambda model: provider)
 
@@ -321,7 +334,9 @@ def test_api_chat_streams_over_http_and_cancels_cleanly(monkeypatch) -> None:
     thread.start()
     try:
         request = urllib.request.Request(
-            f"http://{host}:{port}/api/chat", data=_chat_body(), method="POST",
+            f"http://{host}:{port}/api/chat",
+            data=_chat_body(),
+            method="POST",
             headers={"Content-Type": "application/json"},
         )
         with urllib.request.urlopen(request) as resp:
@@ -416,7 +431,9 @@ def test_make_server_binds_localhost_only() -> None:
 
 def test_one_server_answers_both_status_and_data_over_http(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
-        manager, "status_all", lambda configs, state_dir: {"dflash": _status("dflash", running=True)}
+        manager,
+        "status_all",
+        lambda configs, state_dir: {"dflash": _status("dflash", running=True)},
     )
     path = tmp_path / "run.jsonl"
     append_jsonl(path, _endpoint_record("m1", "HumanEval/0", passed=True))
@@ -597,9 +614,7 @@ def test_serve_dashboard_loads_configs_reports_progress_and_closes(monkeypatch) 
     messages: list[str] = []
 
     monkeypatch.setattr(ud, "load_inferencers", lambda path: seen.setdefault("path", path) or {})
-    monkeypatch.setattr(
-        ud, "load_models", lambda path: seen.setdefault("models_path", path) or {}
-    )
+    monkeypatch.setattr(ud, "load_models", lambda path: seen.setdefault("models_path", path) or {})
 
     def _make_server(ctx, *, host, port):
         seen["host"] = host
@@ -655,7 +670,9 @@ def test_serve_dashboard_degrades_when_models_config_is_missing(monkeypatch) -> 
         raise ConfigError("model config not found: configs/models.yaml")
 
     monkeypatch.setattr(ud, "load_models", _missing_models)
-    monkeypatch.setattr(ud, "make_server", lambda ctx, **k: seen.setdefault("models", ctx.models) or fake)
+    monkeypatch.setattr(
+        ud, "make_server", lambda ctx, **k: seen.setdefault("models", ctx.models) or fake
+    )
 
     ud.serve_dashboard("configs/inferencers.yaml", ".runtime", [], progress=messages.append)
 
@@ -691,8 +708,9 @@ def _ctx_with_orchestrator(orch, *, results_dir=None, result_paths=None) -> ud.D
 
 
 def _inject_run(orch, **kwargs) -> launch.RunState:
-    defaults = dict(id="r1", model="qwen", inferencer="dflash", suites=["humaneval"],
-                    result_file="run.jsonl")
+    defaults = dict(
+        id="r1", model="qwen", inferencer="dflash", suites=["humaneval"], result_file="run.jsonl"
+    )
     defaults.update(kwargs)
     state = launch.RunState(**defaults)
     orch._runs[state.id] = state
@@ -807,7 +825,9 @@ def test_resolve_result_paths_ignores_missing_results_dir(tmp_path: Path) -> Non
     # results_dir set but not an existing directory -> only explicit paths are used.
     explicit = tmp_path / "explicit.jsonl"
     ctx = ud.DashboardContext(
-        configs=_configs(), state_dir=".runtime", result_paths=[explicit],
+        configs=_configs(),
+        state_dir=".runtime",
+        result_paths=[explicit],
         results_dir=tmp_path / "nope",
     )
     assert ud._resolve_result_paths(ctx) == [explicit]
@@ -822,7 +842,9 @@ def test_resolve_result_paths_dedupes_explicit_and_globbed(tmp_path: Path) -> No
     append_jsonl(other, _endpoint_record("m2", "HumanEval/0", passed=True))
 
     ctx = ud.DashboardContext(
-        configs=_configs(), state_dir=".runtime", result_paths=[shared],
+        configs=_configs(),
+        state_dir=".runtime",
+        result_paths=[shared],
         results_dir=results_dir,
     )
     resolved = ud._resolve_result_paths(ctx)
@@ -882,9 +904,7 @@ def test_chat_section_is_thin_client_over_chat_endpoint() -> None:
 
 def test_post_api_run_routes_over_http(tmp_path: Path, monkeypatch) -> None:
     orch = _orchestrator(tmp_path)
-    monkeypatch.setattr(
-        ud.launch, "launch_action", lambda orchestrator, b: (202, {"run_id": "x"})
-    )
+    monkeypatch.setattr(ud.launch, "launch_action", lambda orchestrator, b: (202, {"run_id": "x"}))
     server = ud.make_server(_ctx_with_orchestrator(orch), port=0)
     host, port = server.server_address
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -892,7 +912,9 @@ def test_post_api_run_routes_over_http(tmp_path: Path, monkeypatch) -> None:
     try:
         request = urllib.request.Request(
             f"http://{host}:{port}/api/run",
-            data=json.dumps({"model": "qwen", "inferencer": "dflash", "suites": ["humaneval"]}).encode(),
+            data=json.dumps(
+                {"model": "qwen", "inferencer": "dflash", "suites": ["humaneval"]}
+            ).encode(),
             method="POST",
             headers={"Content-Type": "application/json"},
         )
@@ -961,8 +983,13 @@ def test_json_responses_flow_through_sanitizer(monkeypatch) -> None:
         "status_all",
         lambda configs, state_dir: {
             "dflash": InferencerStatus(
-                name="dflash", installed=True, lifecycle="server", running=True,
-                pid=1, port=8000, healthy=True,
+                name="dflash",
+                installed=True,
+                lifecycle="server",
+                running=True,
+                pid=1,
+                port=8000,
+                healthy=True,
                 detail="log at /Users/fxmartin/dev/.runtime/dflash.log",
             )
         },
@@ -977,7 +1004,9 @@ def test_run_status_redacts_host_path_in_failure_reason(tmp_path: Path) -> None:
     # an exception message that captured a real path must not reach the browser
     orch = _orchestrator(tmp_path)
     _inject_run(
-        orch, id="boom", status="failed",
+        orch,
+        id="boom",
+        status="failed",
         error="FileNotFoundError: '/Users/fxmartin/dev/configs/models.yaml'",
     )
 
@@ -992,7 +1021,9 @@ def test_no_unified_endpoint_leaks_a_known_secret(monkeypatch, tmp_path: Path) -
     # base_url never reach the browser (the catalog/status/data projections plus the
     # centralized sanitizer together hold the line).
     monkeypatch.setattr(
-        manager, "status_all", lambda configs, state_dir: {"dflash": _status("dflash", running=True)}
+        manager,
+        "status_all",
+        lambda configs, state_dir: {"dflash": _status("dflash", running=True)},
     )
     path = tmp_path / "run.jsonl"
     append_jsonl(path, _endpoint_record("m1", "HumanEval/0", passed=True))
@@ -1022,7 +1053,9 @@ def test_unified_run_refuses_gui_app_and_never_force_quits(tmp_path: Path, monke
     )
 
     ctx = ud.DashboardContext(
-        configs=configs, state_dir=".runtime", orchestrator=orch,
+        configs=configs,
+        state_dir=".runtime",
+        orchestrator=orch,
         results_dir=str(tmp_path / "results"),
     )
     body = json.dumps({"model": "qwen", "inferencer": "lmstudio", "suites": ["humaneval"]}).encode()
@@ -1101,21 +1134,27 @@ def test_inferencers_section_reflects_engine_a_run_brought_up(tmp_path: Path, mo
     monkeypatch.setattr(launch.manager, "start_exclusive", _fake_start_exclusive)
     monkeypatch.setattr(launch.tasks, "load_suite", _dummy_tasks)
     monkeypatch.setattr(
-        launch.runner, "run_endpoint_suite",
+        launch.runner,
+        "run_endpoint_suite",
         lambda **k: {"passed": 0, "failed": 0, "infra_failed": 0},
     )
     # the Inferencers panel reads the same manager.status_all the run started through
     monkeypatch.setattr(
-        manager, "status_all",
+        manager,
+        "status_all",
         lambda configs, state_dir: {n: _status(n, running=(n in started)) for n in configs},
     )
 
     orch = launch.RunOrchestrator(
-        models={"qwen": _model()}, inferencers=_configs(), state_dir=".runtime",
+        models={"qwen": _model()},
+        inferencers=_configs(),
+        state_dir=".runtime",
         results_dir=str(tmp_path / "results"),
     )
     ctx = ud.DashboardContext(
-        configs=_configs(), state_dir=".runtime", orchestrator=orch,
+        configs=_configs(),
+        state_dir=".runtime",
+        orchestrator=orch,
         results_dir=str(tmp_path / "results"),
     )
 
@@ -1250,8 +1289,11 @@ def test_api_inventory_lists_models_with_format_quant_and_size(monkeypatch) -> N
         "scan_inferencers",
         lambda configs, **k: [
             _stored(
-                "dflash", "hf-safetensors", "mlx-community/Qwen2.5-Coder-7B-4bit",
-                "/store/qwen", 4000,
+                "dflash",
+                "hf-safetensors",
+                "mlx-community/Qwen2.5-Coder-7B-4bit",
+                "/store/qwen",
+                4000,
             )
         ],
     )
@@ -1321,7 +1363,8 @@ def test_api_inventory_leaks_no_host_paths(monkeypatch) -> None:
 def test_api_inventory_scans_the_dashboard_configs(monkeypatch) -> None:
     seen: dict = {}
     monkeypatch.setattr(
-        ud.inventory, "scan_inferencers",
+        ud.inventory,
+        "scan_inferencers",
         lambda configs, **k: seen.update(configs=list(configs)) or [],
     )
 
@@ -1348,3 +1391,707 @@ def test_inventory_section_cross_links_to_launcher() -> None:
     # AC3: selecting a download pre-fills the Run launcher with a compatible inferencer
     assert "prefillRun" in body
     assert "showSection" in body
+
+
+# ---------------------------------------------------------------------------
+# tiered storage (story 12.6-002): tier badges + promote/demote + auto-tiering
+# a thin client over the Epic-12 tiering API (12.2 inventory / 12.3 moves /
+# 12.4 auto-tiering)
+# ---------------------------------------------------------------------------
+
+
+from local_code_bench.config import AutoTierConfig, ExternalRepoConfig  # noqa: E402
+from local_code_bench.inferencers import autotier as _autotier  # noqa: E402
+from local_code_bench.inferencers import tiering as _tiering  # noqa: E402
+from local_code_bench.inferencers.external import (  # noqa: E402
+    ExternalRepoStatus,
+    TierAvailability,
+)
+from local_code_bench.inferencers.inventory import LocalModel  # noqa: E402
+from local_code_bench.inferencers.tiered import TieredInventory, TieredModel  # noqa: E402
+
+
+def _store_cfg(name: str, port: int, fmt: str) -> InferencerConfig:
+    return InferencerConfig(
+        name=name,
+        lifecycle="server",
+        detect_kind="binary",
+        detect_target=name,
+        port=port,
+        health_url="http://127.0.0.1:{port}/v1/models",
+        start=(name, "serve"),
+        model_store=("~/store",),
+        store_format=fmt,
+    )
+
+
+def _tier_ctx(
+    *,
+    external: bool = True,
+    autotier: AutoTierConfig | None = None,
+) -> ud.DashboardContext:
+    return ud.DashboardContext(
+        configs={"dflash": _store_cfg("dflash", 8000, "gguf")},
+        state_dir=".runtime",
+        external_cfg=ExternalRepoConfig(root="~/ext", volume_marker=".marker")
+        if external
+        else None,
+        autotier_cfg=autotier,
+    )
+
+
+def _tiered_model(name: str, *, tiers: tuple[str, ...], size: int = 100) -> TieredModel:
+    return TieredModel(
+        store_format="gguf",
+        name=name,
+        size_bytes=size,
+        quant="Q4_K_M",
+        provider="bartowski",
+        identity="/Users/fxmartin/.cache/" + name + ".gguf",  # host path: never projected
+        inferencers=("dflash",),
+        tiers=tiers,
+    )
+
+
+def _mounted(monkeypatch, *, mounted: bool = True) -> None:
+    status = ExternalRepoStatus(
+        availability=TierAvailability.MOUNTED if mounted else TierAvailability.OFFLINE,
+        root=Path("/ext"),
+        marker=Path("/ext/.marker"),
+    )
+    monkeypatch.setattr(ud, "check_availability", lambda cfg, **k: status)
+
+
+def _ext_model(name: str, *, fmt: str = "gguf", size: int = 100) -> LocalModel:
+    return LocalModel(
+        inferencer="",
+        store_format=fmt,
+        name=name,
+        path="/ext/gguf/" + name + ".gguf",
+        size_bytes=size,
+        quant=None,
+        provider=None,
+        identity="/ext/gguf/" + name + ".gguf",
+        tier="external",
+    )
+
+
+# --- /api/tiers: tier-aware inventory --------------------------------------
+
+
+def test_api_tiers_lists_models_with_tier_and_availability(monkeypatch) -> None:
+    # AC1: each model shows its tier and the external tier's availability.
+    monkeypatch.setattr(ud.inventory, "scan_inferencers", lambda configs, **k: [])
+    monkeypatch.setattr(
+        ud.tiered,
+        "build_tiered_inventory",
+        lambda *a, **k: TieredInventory(
+            models=(
+                _tiered_model("local-only", tiers=("local",)),
+                _tiered_model("ext-only", tiers=("external",)),
+            ),
+            external_availability=TierAvailability.MOUNTED,
+            external_cached=False,
+        ),
+    )
+
+    resp = ud.handle_request("GET", "/api/tiers", _tier_ctx())
+
+    assert resp.status == 200
+    payload = json.loads(resp.body)
+    assert payload["external_availability"] == "mounted"
+    assert payload["external_cached"] is False
+    rows = {row["name"]: row for row in payload["models"]}
+    assert rows["local-only"]["tiers"] == ["local"]
+    assert rows["local-only"]["present_in_both"] is False
+    assert rows["ext-only"]["tiers"] == ["external"]
+    assert rows["local-only"]["quant"] == "Q4_K_M"
+    assert rows["local-only"]["format"] == "gguf"
+
+
+def test_api_tiers_flags_present_in_both_and_reclaimable(monkeypatch) -> None:
+    # AC1: a model on both tiers is flagged redundant and its bytes are reclaimable.
+    monkeypatch.setattr(ud.inventory, "scan_inferencers", lambda configs, **k: [])
+    monkeypatch.setattr(
+        ud.tiered,
+        "build_tiered_inventory",
+        lambda *a, **k: TieredInventory(
+            models=(
+                _tiered_model("both", tiers=("external", "local"), size=500),
+                _tiered_model("local-only", tiers=("local",), size=100),
+            ),
+            external_availability=TierAvailability.MOUNTED,
+            external_cached=False,
+        ),
+    )
+
+    payload = json.loads(ud.handle_request("GET", "/api/tiers", _tier_ctx()).body)
+
+    both = next(row for row in payload["models"] if row["name"] == "both")
+    assert both["present_in_both"] is True
+    assert payload["reclaimable_bytes"] == 500  # the redundant copy
+    assert payload["total_bytes"] == 600
+
+
+def test_api_tiers_offline_reports_offline_availability(monkeypatch) -> None:
+    # AC4: when the SSD is offline the availability says so (the client disables moves).
+    monkeypatch.setattr(ud.inventory, "scan_inferencers", lambda configs, **k: [])
+    monkeypatch.setattr(
+        ud.tiered,
+        "build_tiered_inventory",
+        lambda *a, **k: TieredInventory(
+            models=(_tiered_model("ext-only", tiers=("external",)),),
+            external_availability=TierAvailability.OFFLINE,
+            external_cached=True,
+        ),
+    )
+
+    payload = json.loads(ud.handle_request("GET", "/api/tiers", _tier_ctx()).body)
+
+    assert payload["external_availability"] == "offline"
+    assert payload["external_cached"] is True
+
+
+def test_api_tiers_leaks_no_host_paths(monkeypatch) -> None:
+    # AC4: the tier projection exposes only what identifies a model — never a path.
+    monkeypatch.setattr(ud.inventory, "scan_inferencers", lambda configs, **k: [])
+    monkeypatch.setattr(
+        ud.tiered,
+        "build_tiered_inventory",
+        lambda *a, **k: TieredInventory(
+            models=(_tiered_model("secret", tiers=("local",)),),
+            external_availability=TierAvailability.MOUNTED,
+            external_cached=False,
+        ),
+    )
+
+    body = ud.handle_request("GET", "/api/tiers", _tier_ctx()).body.decode()
+
+    assert "/Users/fxmartin" not in body
+    assert "/users/" not in body.lower()
+    assert "secret.gguf" not in body  # the identity/path is never projected
+
+
+def test_post_to_tiers_route_is_404() -> None:
+    assert ud.handle_request("POST", "/api/tiers", _tier_ctx()).status == 404
+
+
+# --- /api/promote and /api/demote: verified moves --------------------------
+
+
+def test_api_promote_runs_verified_move(monkeypatch) -> None:
+    # AC2: a promote runs the verified move server-side and reports the new tier.
+    _mounted(monkeypatch)
+    monkeypatch.setattr(ud.tiered, "scan_external_tier", lambda cfg, infs, **k: [_ext_model("m")])
+    captured: dict = {}
+
+    def fake_promote(source, inferencer, *a, **k):
+        captured["source"] = source.name
+        captured["inferencer"] = inferencer.name
+        return _tiering.PromoteResult(
+            plan=_tiering.PromotePlan(
+                name="m",
+                store_format="gguf",
+                source=Path("/ext/gguf/m.gguf"),
+                destination=Path("/Users/fxmartin/store/m.gguf"),
+                size_bytes=100,
+            ),
+            destination=Path("/Users/fxmartin/store/m.gguf"),
+            bytes_copied=100,
+            verified=True,
+        )
+
+    monkeypatch.setattr(ud.tiering, "promote_model", fake_promote)
+
+    resp = ud.handle_request("POST", "/api/promote?name=m&format=gguf", _tier_ctx())
+
+    assert resp.status == 200
+    body = json.loads(resp.body)
+    assert body["promoted"]["name"] == "m"
+    assert body["promoted"]["tier"] == "local"
+    assert body["promoted"]["bytes_copied"] == 100
+    assert captured == {"source": "m", "inferencer": "dflash"}
+    # AC4: no host path from the result leaks into the response.
+    assert "/Users/fxmartin" not in resp.body.decode()
+
+
+def test_api_promote_offline_is_refused_without_moving(monkeypatch) -> None:
+    # AC: an offline SSD refuses before any bytes move.
+    _mounted(monkeypatch, mounted=False)
+    moved = {"called": False}
+    monkeypatch.setattr(
+        ud.tiering,
+        "promote_model",
+        lambda *a, **k: moved.update(called=True),
+    )
+
+    resp = ud.handle_request("POST", "/api/promote?name=m&format=gguf", _tier_ctx())
+
+    assert resp.status == 409
+    assert "offline" in json.loads(resp.body)["error"]
+    assert moved["called"] is False
+
+
+def test_api_promote_refusal_maps_to_error(monkeypatch) -> None:
+    # AC: a tiering refusal (in-use / no space) surfaces verbatim as an error.
+    _mounted(monkeypatch)
+    monkeypatch.setattr(ud.tiered, "scan_external_tier", lambda cfg, infs, **k: [_ext_model("m")])
+
+    def boom(*a, **k):
+        raise _tiering.PromoteError("dflash is running and could be serving m")
+
+    monkeypatch.setattr(ud.tiering, "promote_model", boom)
+
+    resp = ud.handle_request("POST", "/api/promote?name=m&format=gguf", _tier_ctx())
+
+    assert resp.status == 409
+    assert "could be serving" in json.loads(resp.body)["error"]
+
+
+def test_api_promote_unknown_external_model_is_404(monkeypatch) -> None:
+    _mounted(monkeypatch)
+    monkeypatch.setattr(ud.tiered, "scan_external_tier", lambda cfg, infs, **k: [])
+
+    resp = ud.handle_request("POST", "/api/promote?name=ghost&format=gguf", _tier_ctx())
+
+    assert resp.status == 404
+
+
+def test_api_demote_runs_verified_move(monkeypatch) -> None:
+    # AC2: a demote runs the verified move server-side and reports the new tier.
+    _mounted(monkeypatch)
+    monkeypatch.setattr(
+        ud.inventory,
+        "scan_inferencers",
+        lambda configs, **k: [_stored("dflash", "gguf", "m", "/store/m.gguf", 100)],
+    )
+    captured: dict = {}
+
+    def fake_demote(source, *a, **k):
+        captured["source"] = source.name
+        return _tiering.DemoteResult(
+            plan=_tiering.DemotePlan(
+                name="m",
+                store_format="gguf",
+                source=Path("/store/m.gguf"),
+                destination=Path("/ext/gguf/m.gguf"),
+                size_bytes=100,
+            ),
+            destination=Path("/ext/gguf/m.gguf"),
+            bytes_reclaimed=100,
+            verified=True,
+            reused_existing=False,
+        )
+
+    monkeypatch.setattr(ud.tiering, "demote_model", fake_demote)
+
+    resp = ud.handle_request("POST", "/api/demote?name=m&format=gguf", _tier_ctx())
+
+    assert resp.status == 200
+    body = json.loads(resp.body)
+    assert body["demoted"]["name"] == "m"
+    assert body["demoted"]["tier"] == "external"
+    assert body["demoted"]["bytes_reclaimed"] == 100
+    assert body["demoted"]["reused_existing"] is False
+    assert captured == {"source": "m"}
+
+
+def test_api_demote_offline_is_refused_without_moving(monkeypatch) -> None:
+    _mounted(monkeypatch, mounted=False)
+    moved = {"called": False}
+    monkeypatch.setattr(
+        ud.tiering,
+        "demote_model",
+        lambda *a, **k: moved.update(called=True),
+    )
+
+    resp = ud.handle_request("POST", "/api/demote?name=m&format=gguf", _tier_ctx())
+
+    assert resp.status == 409
+    assert moved["called"] is False
+
+
+def test_api_demote_refusal_maps_to_error(monkeypatch) -> None:
+    _mounted(monkeypatch)
+    monkeypatch.setattr(
+        ud.inventory,
+        "scan_inferencers",
+        lambda configs, **k: [_stored("dflash", "gguf", "m", "/store/m.gguf", 100)],
+    )
+
+    def boom(*a, **k):
+        raise _tiering.DemoteError("insufficient external free space to demote m")
+
+    monkeypatch.setattr(ud.tiering, "demote_model", boom)
+
+    resp = ud.handle_request("POST", "/api/demote?name=m&format=gguf", _tier_ctx())
+
+    assert resp.status == 409
+    assert "insufficient external free space" in json.loads(resp.body)["error"]
+
+
+def test_api_promote_without_external_tier_configured_is_409() -> None:
+    resp = ud.handle_request("POST", "/api/promote?name=m&format=gguf", _tier_ctx(external=False))
+    assert resp.status == 409
+
+
+# --- /api/tier-plan and /api/tier-apply: auto-tiering ----------------------
+
+
+def _plan(**over) -> _autotier.AutoTierPlan:
+    base = dict(
+        evictions=(),
+        bytes_to_reclaim=0,
+        bytes_reclaimed=0,
+        local_total_bytes=0,
+        satisfied=True,
+        paused=False,
+        pinned=(),
+        warnings=(),
+    )
+    base.update(over)
+    return _autotier.AutoTierPlan(**base)
+
+
+def _eviction(name: str, size: int = 100) -> _autotier.Eviction:
+    return _autotier.Eviction(
+        name=name,
+        store_format="gguf",
+        identity="/Users/fxmartin/.cache/" + name + ".gguf",  # host path: never projected
+        size_bytes=size,
+        last_used=1.0,
+        model=_ext_model(name),
+    )
+
+
+def test_api_tier_plan_shows_dry_run_plan(monkeypatch) -> None:
+    # AC3: the plan lists evictions and the bytes it would reclaim.
+    monkeypatch.setattr(ud.inventory, "scan_inferencers", lambda configs, **k: [])
+    _mounted(monkeypatch)
+    monkeypatch.setattr(
+        ud.autotier,
+        "plan_autotier",
+        lambda *a, **k: _plan(
+            evictions=(_eviction("old", 300),),
+            bytes_to_reclaim=300,
+            bytes_reclaimed=300,
+            local_total_bytes=900,
+            pinned=("keepme",),
+        ),
+    )
+
+    resp = ud.handle_request(
+        "GET",
+        "/api/tier-plan",
+        _tier_ctx(autotier=AutoTierConfig(max_local_gb=1.0, pins=("keepme",))),
+    )
+
+    assert resp.status == 200
+    body = json.loads(resp.body)
+    assert body["configured"] is True
+    assert body["paused"] is False
+    assert body["bytes_reclaimed"] == 300
+    assert body["pinned"] == ["keepme"]
+    assert body["evictions"][0]["name"] == "old"
+    assert body["evictions"][0]["size_bytes"] == 300
+    # AC4: an eviction's identity/path never leaks.
+    assert "/Users/fxmartin" not in resp.body.decode()
+
+
+def test_api_tier_plan_not_configured_is_inert(monkeypatch) -> None:
+    resp = ud.handle_request("GET", "/api/tier-plan", _tier_ctx())
+
+    assert resp.status == 200
+    body = json.loads(resp.body)
+    assert body["configured"] is False
+    assert body["evictions"] == []
+
+
+def test_api_tier_plan_paused_when_offline(monkeypatch) -> None:
+    monkeypatch.setattr(ud.inventory, "scan_inferencers", lambda configs, **k: [])
+    _mounted(monkeypatch, mounted=False)
+    monkeypatch.setattr(
+        ud.autotier,
+        "plan_autotier",
+        lambda *a, **k: _plan(
+            paused=True, warnings=("auto-tiering paused: external repo offline",)
+        ),
+    )
+
+    body = json.loads(
+        ud.handle_request(
+            "GET", "/api/tier-plan", _tier_ctx(autotier=AutoTierConfig(max_local_gb=1.0))
+        ).body
+    )
+
+    assert body["paused"] is True
+    assert "paused" in body["warnings"][0]
+
+
+def test_api_tier_apply_evicts_through_demote(monkeypatch) -> None:
+    # AC3: apply runs the plan through the verified demote path and reports results.
+    monkeypatch.setattr(ud.inventory, "scan_inferencers", lambda configs, **k: [])
+    _mounted(monkeypatch)
+    monkeypatch.setattr(
+        ud.autotier,
+        "plan_autotier",
+        lambda *a, **k: _plan(evictions=(_eviction("old", 300),), bytes_reclaimed=300),
+    )
+
+    def fake_apply(plan, *a, **k):
+        return [
+            _tiering.DemoteResult(
+                plan=_tiering.DemotePlan(
+                    name="old",
+                    store_format="gguf",
+                    source=Path("/store/old.gguf"),
+                    destination=Path("/ext/gguf/old.gguf"),
+                    size_bytes=300,
+                ),
+                destination=Path("/ext/gguf/old.gguf"),
+                bytes_reclaimed=300,
+                verified=True,
+                reused_existing=False,
+            )
+        ]
+
+    monkeypatch.setattr(ud.autotier, "apply_plan", fake_apply)
+
+    resp = ud.handle_request(
+        "POST",
+        "/api/tier-apply",
+        _tier_ctx(autotier=AutoTierConfig(max_local_gb=1.0)),
+    )
+
+    assert resp.status == 200
+    body = json.loads(resp.body)
+    assert body["count"] == 1
+    assert body["applied"][0]["name"] == "old"
+    assert body["applied"][0]["bytes_reclaimed"] == 300
+
+
+def test_api_tier_apply_not_configured_is_409() -> None:
+    resp = ud.handle_request("POST", "/api/tier-apply", _tier_ctx())
+    assert resp.status == 409
+
+
+def test_api_tier_apply_paused_is_refused(monkeypatch) -> None:
+    monkeypatch.setattr(ud.inventory, "scan_inferencers", lambda configs, **k: [])
+    _mounted(monkeypatch, mounted=False)
+    monkeypatch.setattr(ud.autotier, "plan_autotier", lambda *a, **k: _plan(paused=True))
+    applied = {"called": False}
+    monkeypatch.setattr(ud.autotier, "apply_plan", lambda *a, **k: applied.update(called=True))
+
+    resp = ud.handle_request(
+        "POST",
+        "/api/tier-apply",
+        _tier_ctx(autotier=AutoTierConfig(max_local_gb=1.0)),
+    )
+
+    assert resp.status == 409
+    assert applied["called"] is False
+
+
+def test_get_to_promote_route_is_404() -> None:
+    assert ud.handle_request("GET", "/api/promote?name=m&format=gguf", _tier_ctx()).status == 404
+
+
+# --- UI: tier badges + move/tier controls in the inventory section ---------
+
+
+def test_inventory_section_has_tier_view_and_controls() -> None:
+    body = ud.render_page()
+    # AC1/AC2: tier table with promote/demote controls.
+    assert 'id="tier-models"' in body
+    assert "/api/tiers" in body
+    assert "data-promote" in body
+    assert "data-demote" in body
+    # AC3: an auto-tiering plan view with an explicit apply action.
+    assert 'id="tier-plan"' in body
+    assert 'id="tier-apply"' in body
+    assert "/api/tier-plan" in body
+    assert "/api/tier-apply" in body
+
+
+# --- coverage gaps: move-control edge cases + tier-config resilience -------
+
+
+def test_api_promote_no_compatible_inferencer_is_404(monkeypatch) -> None:
+    # The external model exists, but no local store can serve its format: 404.
+    _mounted(monkeypatch)
+    monkeypatch.setattr(
+        ud.tiered,
+        "scan_external_tier",
+        lambda cfg, infs, **k: [_ext_model("m", fmt="mlx")],
+    )
+
+    resp = ud.handle_request("POST", "/api/promote?name=m&format=mlx", _tier_ctx())
+
+    assert resp.status == 404
+    assert "no inferencer" in json.loads(resp.body)["error"]
+
+
+def test_api_demote_without_external_tier_configured_is_409() -> None:
+    # Nothing to demote to when no external tier is configured.
+    resp = ud.handle_request(
+        "POST", "/api/demote?name=m&format=gguf", _tier_ctx(external=False)
+    )
+
+    assert resp.status == 409
+    assert "nowhere to demote" in json.loads(resp.body)["error"]
+
+
+def test_api_demote_unknown_local_model_is_404(monkeypatch) -> None:
+    # A model absent from the local tier cannot be demoted: 404.
+    _mounted(monkeypatch)
+    monkeypatch.setattr(ud.inventory, "scan_inferencers", lambda configs, **k: [])
+
+    resp = ud.handle_request("POST", "/api/demote?name=ghost&format=gguf", _tier_ctx())
+
+    assert resp.status == 404
+    assert "not found on the local tier" in json.loads(resp.body)["error"]
+
+
+def test_find_external_without_external_tier_is_none() -> None:
+    # The lookup short-circuits to None when no external tier is configured.
+    assert ud._find_external(_tier_ctx(external=False), "m", "gguf") is None
+
+
+def _no_store_cfg(name: str = "app", port: int = 4321) -> InferencerConfig:
+    return InferencerConfig(
+        name=name,
+        lifecycle="server",
+        detect_kind="binary",
+        detect_target=name,
+        port=port,
+        health_url="http://127.0.0.1:{port}/v1/models",
+        start=(name, "serve"),
+        model_store=(),
+        store_format="gguf",
+    )
+
+
+def test_local_free_bytes_skips_inferencers_without_a_store() -> None:
+    # An inferencer with no local store contributes no volume: None when none do.
+    ctx = ud.DashboardContext(configs={"app": _no_store_cfg()}, state_dir=".runtime")
+
+    assert ud._local_free_bytes(ctx) is None
+
+
+def test_local_free_bytes_returns_none_when_volume_probe_fails(monkeypatch) -> None:
+    # A volume that cannot be stat'd is skipped; with no other store, None.
+    def boom(_path):
+        raise OSError("device not ready")
+
+    monkeypatch.setattr(ud.shutil, "disk_usage", boom)
+    ctx = ud.DashboardContext(configs={"dflash": _store_cfg("dflash", 8000, "gguf")}, state_dir=".x")
+
+    assert ud._local_free_bytes(ctx) is None
+
+
+def test_api_tier_apply_surfaces_demote_failure_as_409(monkeypatch) -> None:
+    # A failure mid-apply (in-use / no space) surfaces verbatim as a 409.
+    monkeypatch.setattr(ud.inventory, "scan_inferencers", lambda configs, **k: [])
+    _mounted(monkeypatch)
+    monkeypatch.setattr(
+        ud.autotier,
+        "plan_autotier",
+        lambda *a, **k: _plan(evictions=(_eviction("old", 300),), bytes_reclaimed=300),
+    )
+
+    def boom(*a, **k):
+        raise _tiering.DemoteError("old is in use and could be serving requests")
+
+    monkeypatch.setattr(ud.autotier, "apply_plan", boom)
+
+    resp = ud.handle_request(
+        "POST", "/api/tier-apply", _tier_ctx(autotier=AutoTierConfig(max_local_gb=1.0))
+    )
+
+    assert resp.status == 409
+    assert "could be serving" in json.loads(resp.body)["error"]
+
+
+class _CollectingWfile:
+    """A wfile that records every write, as a healthy client connection would."""
+
+    def __init__(self) -> None:
+        self.chunks: list[bytes] = []
+
+    def write(self, data: bytes) -> int:
+        self.chunks.append(data)
+        return len(data)
+
+    def flush(self) -> None:
+        pass
+
+
+def test_stream_writes_every_event_to_a_healthy_client() -> None:
+    # The happy path: all SSE events flow through to a client that never drops.
+    wfile = _CollectingWfile()
+    handler = _stub_handler_with_wfile(wfile)
+    response = ud.chat.ChatStreamResponse(200, ["data: a\n\n", "data: b\n\n"])
+
+    handler._stream(response)
+
+    assert b"".join(wfile.chunks) == b"data: a\n\ndata: b\n\n"
+
+
+def test_load_tier_configs_safe_disables_both_tiers_on_malformed_config(monkeypatch) -> None:
+    # A malformed external/auto-tier block degrades that feature to disabled and
+    # reports it through the progress callback rather than taking the page down.
+    monkeypatch.setattr(
+        ud, "load_external_repo", lambda p: (_ for _ in ()).throw(ud.ConfigError("bad external"))
+    )
+    monkeypatch.setattr(
+        ud, "load_autotier", lambda p: (_ for _ in ()).throw(ud.ConfigError("bad autotier"))
+    )
+    notices: list[str] = []
+
+    external_cfg, autotier_cfg = ud._load_tier_configs_safe("cfg.yaml", notices.append)
+
+    assert external_cfg is None
+    assert autotier_cfg is None
+    assert any("external tier disabled" in n for n in notices)
+    assert any("auto-tiering disabled" in n for n in notices)
+
+
+def test_load_tier_configs_safe_disables_silently_without_progress(monkeypatch) -> None:
+    # With no progress callback, malformed blocks still degrade to disabled quietly.
+    monkeypatch.setattr(
+        ud, "load_external_repo", lambda p: (_ for _ in ()).throw(ud.ConfigError("bad"))
+    )
+    monkeypatch.setattr(
+        ud, "load_autotier", lambda p: (_ for _ in ()).throw(ud.ConfigError("bad"))
+    )
+
+    assert ud._load_tier_configs_safe("cfg.yaml", None) == (None, None)
+
+
+def test_find_external_skips_non_matching_models(monkeypatch) -> None:
+    # The scan is filtered by name + format; earlier non-matches are skipped.
+    monkeypatch.setattr(
+        ud.tiered,
+        "scan_external_tier",
+        lambda cfg, infs, **k: [_ext_model("other"), _ext_model("m")],
+    )
+
+    found = ud._find_external(_tier_ctx(), "m", "gguf")
+
+    assert found is not None and found.name == "m"
+
+
+def test_find_local_skips_non_matching_models(monkeypatch) -> None:
+    # The local scan is filtered by name + format; earlier non-matches are skipped.
+    monkeypatch.setattr(
+        ud.inventory,
+        "scan_inferencers",
+        lambda configs, **k: [
+            _stored("dflash", "gguf", "other", "/store/other.gguf", 100),
+            _stored("dflash", "gguf", "m", "/store/m.gguf", 100),
+        ],
+    )
+
+    found = ud._find_local(_tier_ctx(), "m", "gguf")
+
+    assert found is not None and found.name == "m"

@@ -555,6 +555,22 @@ benchmark a local download visually. The endpoint projects only what identifies 
 model (name, format, quant, provider, size, and serving inferencers); on-disk paths
 are never sent, and like every section it binds localhost only.
 
+When an `external_repo` (and optionally `auto_tier`) block is configured, the
+**Inventory** section also renders a **Storage tiers** view backed by `GET /api/tiers`:
+one row per logical model with its tier badge (`local`, `external`, or
+`local + external (redundant)`), the external SSD's availability, and an across-tier
+**reclaimable** hint summing the redundant copies. Each row offers a one-click
+**Promote** (external → local) or **Demote** (local → external) that runs the verified
+move server-side via `POST /api/promote` / `POST /api/demote` (copy → verify → publish,
+never deleting a source before its destination is verified) and refreshes the model's
+tier on completion. An **Auto-tiering** sub-panel shows the dry-run eviction plan from
+`GET /api/tier-plan` (the LRU models it would evict to stay under the disk budget, the
+bytes reclaimed, and the pinned models it will never touch) with an explicit **Apply**
+action (`POST /api/tier-apply`) that runs each eviction through the same verified demote
+path. When the SSD is unplugged its models are marked offline and every move/apply action
+is disabled with an explanation; the tier endpoints project only model-identity fields —
+never an on-disk path — and bind localhost only.
+
 ## Verification Status
 
 Last automated verification: 2026-06-27.

@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -34,14 +36,21 @@ from . import chat
 from . import dashboard_server as results_panel
 from . import launch
 from .config import (
+    AutoTierConfig,
     ConfigError,
+    ExternalRepoConfig,
     InferencerConfig,
     ModelConfig,
+    load_autotier,
+    load_external_repo,
     load_inferencers,
     load_models,
 )
+from .inferencers import autotier
 from .inferencers import dashboard as inferencer_panel
 from .inferencers import inventory
+from .inferencers import tiered, tiering
+from .inferencers.external import check_availability
 from .suite_catalog import catalog_payload
 
 _TRUTHY = {"1", "true", "yes", "on"}
@@ -70,9 +79,7 @@ _HOST_PATH = re.compile(r"/(?:Users|home|root)/[^\s'\":,)]+")
 
 
 def _redact_paths(text: str) -> str:
-    return _HOST_PATH.sub(
-        lambda m: "<redacted>/" + m.group(0).rstrip("/").rsplit("/", 1)[-1], text
-    )
+    return _HOST_PATH.sub(lambda m: "<redacted>/" + m.group(0).rstrip("/").rsplit("/", 1)[-1], text)
 
 
 def sanitize_payload(value: object) -> object:
@@ -126,6 +133,13 @@ class DashboardContext:
     cache_dir: str | Path = ".cache/benchmarks"
     suites_path: str | Path = "configs/suites.yaml"
     results_dir: str | Path | None = None
+    # Epic-12 tiered storage (story 12.6-002): the optional external SSD tier and
+    # the auto-tiering policy drive the Inventory section's tier badges, the
+    # promote/demote controls, and the auto-tiering plan. Both are optional so a
+    # single-tier config (no ``external_repo`` / ``auto_tier`` block) still serves
+    # the dashboard — the tier view then shows only local models with no controls.
+    external_cfg: ExternalRepoConfig | None = None
+    autotier_cfg: AutoTierConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -212,6 +226,292 @@ def _shared_payload(group: inventory.SharedModel) -> dict:
     }
 
 
+# --- Tiered storage (story 12.6-002): tier view + promote/demote + auto-tier ---
+#
+# Every action below is a thin server-side seam over the Epic-12 tiering API
+# (12.2 inventory / 12.3 moves / 12.4 auto-tiering): no tiering business logic
+# lives here. Each projects onto identity + tier fields only — never an on-disk
+# path or content identity — so the localhost page can render and drive moves
+# without a host-sensitive path reaching the browser (AC4).
+
+
+def _scan_local(ctx: DashboardContext) -> list[inventory.LocalModel]:
+    """The live Epic-11 local scan, normalized as local-tier records."""
+
+    return inventory.normalize_all(inventory.scan_inferencers(ctx.configs.values()))
+
+
+def tier_inventory_action(ctx: DashboardContext) -> tuple[int, dict]:
+    """Return the unified two-tier inventory: each model's tier + availability.
+
+    A thin projection over the Epic-12 unified inventory (story 12.2-001): it merges
+    the live local scan with the external tier (live when mounted, from the cached
+    catalog when offline) into one row per logical model carrying its ``tiers`` and
+    serving engines. ``present_in_both`` flags a model held redundantly on both tiers
+    and ``reclaimable_bytes`` sums those redundant copies (the across-tier
+    reclaimable hint, AC1). Only identity fields reach the browser — name, format,
+    quant, provider, size, engines, tiers — never the on-disk path or content
+    identity (AC4).
+    """
+
+    tiered_inventory = tiered.build_tiered_inventory(
+        _scan_local(ctx),
+        ctx.external_cfg,
+        list(ctx.configs.values()),
+        state_dir=ctx.state_dir,
+    )
+    models = tiered_inventory.models
+    return 200, {
+        "external_availability": tiered_inventory.external_availability.value,
+        "external_cached": tiered_inventory.external_cached,
+        "reclaimable_bytes": sum(m.size_bytes for m in models if m.present_in_both),
+        "total_bytes": sum(m.size_bytes for m in models),
+        "models": [
+            {
+                "name": model.name,
+                "format": model.store_format,
+                "quant": model.quant,
+                "provider": model.provider,
+                "size_bytes": model.size_bytes,
+                "inferencers": list(model.inferencers),
+                "tiers": list(model.tiers),
+                "present_in_both": model.present_in_both,
+            }
+            for model in models
+        ],
+    }
+
+
+def _compatible_inferencer(ctx: DashboardContext, store_format: str) -> InferencerConfig | None:
+    """The first engine with a local store that can serve ``store_format``."""
+
+    for cfg in ctx.configs.values():
+        if cfg.store_format == store_format and cfg.model_store:
+            return cfg
+    return None
+
+
+def promote_action(ctx: DashboardContext, name: str, store_format: str) -> tuple[int, dict]:
+    """Promote an external-tier model into a compatible engine's local store.
+
+    A thin seam over :func:`tiering.promote_model` (story 12.3-001). Refuses up
+    front — moving no bytes — when no external tier is configured or the SSD is
+    offline; 404s when the named external model or a compatible local store is
+    absent. A :class:`tiering.PromoteError` (in-use / no space / integrity) is
+    surfaced verbatim as a 409. The response carries only the new tier and the
+    bytes copied — never the on-disk destination path (AC4).
+    """
+
+    if ctx.external_cfg is None:
+        return 409, {"error": "no external tier is configured — nothing to promote from"}
+    if not check_availability(ctx.external_cfg).is_mounted:
+        return 409, {"error": f"external repo offline — plug in the SSD before promoting {name}"}
+
+    source = _find_external(ctx, name, store_format)
+    if source is None:
+        return 404, {"error": f"{name}: not found on the external tier"}
+    target = _compatible_inferencer(ctx, store_format)
+    if target is None:
+        return 404, {
+            "error": f"no inferencer with a local store can serve {store_format} model {name}"
+        }
+
+    try:
+        result = tiering.promote_model(source, target, ctx.external_cfg, ctx.configs, ctx.state_dir)
+    except tiering.PromoteError as exc:
+        return 409, {"error": str(exc)}
+    return 200, {
+        "promoted": {
+            "name": name,
+            "tier": "local",
+            "bytes_copied": result.bytes_copied,
+            "verified": result.verified,
+        }
+    }
+
+
+def demote_action(ctx: DashboardContext, name: str, store_format: str) -> tuple[int, dict]:
+    """Demote a local-tier model out to the external tier, reclaiming local disk.
+
+    A thin seam over :func:`tiering.demote_model` (story 12.3-002). Refuses up
+    front when no external tier is configured or the SSD is offline; 404s when the
+    named local model is absent. A :class:`tiering.DemoteError` (in-use / no space
+    / name collision / integrity) is surfaced verbatim as a 409. The response
+    carries only the new tier and the bytes reclaimed — never an on-disk path (AC4).
+    """
+
+    if ctx.external_cfg is None:
+        return 409, {"error": "no external tier is configured — nowhere to demote to"}
+    if not check_availability(ctx.external_cfg).is_mounted:
+        return 409, {"error": f"external repo offline — plug in the SSD before demoting {name}"}
+
+    source = _find_local(ctx, name, store_format)
+    if source is None:
+        return 404, {"error": f"{name}: not found on the local tier"}
+
+    try:
+        result = tiering.demote_model(source, ctx.external_cfg, ctx.configs, ctx.state_dir)
+    except tiering.DemoteError as exc:
+        return 409, {"error": str(exc)}
+    return 200, {
+        "demoted": {
+            "name": name,
+            "tier": "external",
+            "bytes_reclaimed": result.bytes_reclaimed,
+            "verified": result.verified,
+            "reused_existing": result.reused_existing,
+        }
+    }
+
+
+def _find_external(
+    ctx: DashboardContext, name: str, store_format: str
+) -> inventory.LocalModel | None:
+    """The live external-tier record matching ``name`` + ``store_format``."""
+
+    if ctx.external_cfg is None:
+        return None
+    for model in tiered.scan_external_tier(ctx.external_cfg, list(ctx.configs.values())):
+        if model.name == name and model.store_format == store_format:
+            return model
+    return None
+
+
+def _find_local(ctx: DashboardContext, name: str, store_format: str) -> inventory.LocalModel | None:
+    """The live local-tier record matching ``name`` + ``store_format``."""
+
+    for model in _scan_local(ctx):
+        if model.name == name and model.store_format == store_format:
+            return model
+    return None
+
+
+def _local_free_bytes(ctx: DashboardContext) -> int | None:
+    """Free space on the first configured local store volume (for min-free budgets)."""
+
+    for cfg in ctx.configs.values():
+        if not cfg.model_store:
+            continue
+        probe = inventory.expand_store_path(cfg.model_store[0])
+        while not probe.exists() and probe.parent != probe:
+            probe = probe.parent
+        try:
+            return shutil.disk_usage(probe).free
+        except OSError:
+            continue
+    return None
+
+
+def _build_autotier_plan(
+    ctx: DashboardContext, cfg: AutoTierConfig
+) -> tuple[autotier.AutoTierPlan, autotier.LastUsedStore]:
+    """Build the dry-run eviction plan and the last-used store backing its LRU signal.
+
+    Pure planning over the live local scan: side-effect-free (the apply step is the
+    only one that touches disk). The plan is :attr:`AutoTierPlan.paused` when the
+    external tier is unconfigured or offline. ``cfg`` is passed explicitly (the
+    callers gate on a configured policy) so the budget/pins are always present.
+    """
+
+    available = ctx.external_cfg is not None and check_availability(ctx.external_cfg).is_mounted
+    store = autotier.LastUsedStore(ctx.state_dir)
+    plan = autotier.plan_autotier(
+        _scan_local(ctx),
+        autotier.budget_from_config(cfg),
+        pins=cfg.pins,
+        external_available=available,
+        free_bytes=_local_free_bytes(ctx),
+        last_used=store.last_used,
+    )
+    return plan, store
+
+
+def _plan_payload(plan: autotier.AutoTierPlan) -> dict:
+    """Project an eviction plan onto identity fields only — never a path (AC4)."""
+
+    return {
+        "paused": plan.paused,
+        "satisfied": plan.satisfied,
+        "bytes_to_reclaim": plan.bytes_to_reclaim,
+        "bytes_reclaimed": plan.bytes_reclaimed,
+        "local_total_bytes": plan.local_total_bytes,
+        "pinned": list(plan.pinned),
+        "warnings": list(plan.warnings),
+        "evictions": [
+            {"name": e.name, "format": e.store_format, "size_bytes": e.size_bytes}
+            for e in plan.evictions
+        ],
+    }
+
+
+def tier_plan_action(ctx: DashboardContext) -> tuple[int, dict]:
+    """Return the auto-tiering dry-run plan: what it would evict and the bytes freed.
+
+    A thin seam over :func:`autotier.plan_autotier` (story 12.4-001). When no
+    ``auto_tier`` policy is configured the plan is inert (``configured=False``,
+    nothing to evict). Pinned models are never selected; the plan is ``paused``
+    when the external tier is offline. Nothing is moved (AC3 — dry-run is the
+    default).
+    """
+
+    if ctx.autotier_cfg is None:
+        return 200, {
+            "configured": False,
+            "paused": False,
+            "satisfied": True,
+            "bytes_to_reclaim": 0,
+            "bytes_reclaimed": 0,
+            "local_total_bytes": 0,
+            "pinned": [],
+            "warnings": [],
+            "evictions": [],
+        }
+    plan, _ = _build_autotier_plan(ctx, ctx.autotier_cfg)
+    return 200, {"configured": True, **_plan_payload(plan)}
+
+
+def tier_apply_action(ctx: DashboardContext) -> tuple[int, dict]:
+    """Apply the auto-tiering plan, evicting each model through the verified demote path.
+
+    A thin seam over :func:`autotier.apply_plan` (story 12.4-001) — the only tier
+    action that touches disk. Refuses when no policy is configured or the plan is
+    paused (external tier offline); pins are respected because the planner never
+    selects them. The response carries only per-model names + bytes reclaimed,
+    never an on-disk path (AC4).
+    """
+
+    if ctx.autotier_cfg is None:
+        return 409, {"error": "auto-tiering is not configured — nothing to apply"}
+
+    plan, store = _build_autotier_plan(ctx, ctx.autotier_cfg)
+    if plan.paused or ctx.external_cfg is None:
+        return 409, {
+            "error": "auto-tiering is paused: the external repo is offline — no changes made"
+        }
+    try:
+        results = autotier.apply_plan(
+            plan,
+            ctx.external_cfg,
+            ctx.configs,
+            ctx.state_dir,
+            now=time.time(),
+            last_used_store=store,
+        )
+    except (autotier.AutoTierError, tiering.DemoteError) as exc:
+        return 409, {"error": str(exc)}
+    return 200, {
+        "count": len(results),
+        "applied": [
+            {
+                "name": result.plan.name,
+                "bytes_reclaimed": result.bytes_reclaimed,
+                "reused_existing": result.reused_existing,
+            }
+            for result in results
+        ],
+    }
+
+
 def _resolve_result_paths(ctx: DashboardContext) -> list[str | Path]:
     """Explicit ``--input`` files plus any ``*.jsonl`` under ``results_dir``.
 
@@ -267,6 +567,16 @@ def handle_request(
         return _json(*catalog_action(ctx))
     if method == "GET" and route == "/api/inventory":
         return _json(*inventory_action(ctx))
+    if method == "GET" and route == "/api/tiers":
+        return _json(*tier_inventory_action(ctx))
+    if method == "POST" and route == "/api/promote":
+        return _json(*promote_action(ctx, name, query.get("format", [""])[0]))
+    if method == "POST" and route == "/api/demote":
+        return _json(*demote_action(ctx, name, query.get("format", [""])[0]))
+    if method == "GET" and route == "/api/tier-plan":
+        return _json(*tier_plan_action(ctx))
+    if method == "POST" and route == "/api/tier-apply":
+        return _json(*tier_apply_action(ctx))
     if method == "POST" and route == "/api/run":
         if ctx.orchestrator is None:
             return _json(503, {"error": "launching is unavailable: no model registry loaded"})
@@ -405,6 +715,7 @@ def serve_dashboard(
 
     configs = load_inferencers(config_path)
     models = _load_models_safe(models_path, progress)
+    external_cfg, autotier_cfg = _load_tier_configs_safe(config_path, progress)
     orchestrator = launch.RunOrchestrator(
         models=models,
         inferencers=configs,
@@ -421,6 +732,8 @@ def serve_dashboard(
         cache_dir=cache_dir,
         suites_path=suites_path,
         results_dir=results_dir,
+        external_cfg=external_cfg,
+        autotier_cfg=autotier_cfg,
     )
     server = make_server(ctx, host=host, port=port)
     if progress is not None:
@@ -444,6 +757,32 @@ def _load_models_safe(
         if progress is not None:
             progress(f"chat disabled: {exc}")
         return {}
+
+
+def _load_tier_configs_safe(
+    config_path: str | Path, progress: Callable[[str], None] | None
+) -> tuple[ExternalRepoConfig | None, AutoTierConfig | None]:
+    """Load the optional external-tier + auto-tier configs from the inferencers YAML.
+
+    Both blocks are optional (a single-tier config declares neither). A malformed
+    block degrades that tier feature to disabled — the tier view then shows only
+    local models with no move/auto-tier controls — rather than taking the whole
+    dashboard down.
+    """
+
+    try:
+        external_cfg = load_external_repo(config_path)
+    except ConfigError as exc:
+        if progress is not None:
+            progress(f"external tier disabled: {exc}")
+        external_cfg = None
+    try:
+        autotier_cfg = load_autotier(config_path)
+    except ConfigError as exc:
+        if progress is not None:
+            progress(f"auto-tiering disabled: {exc}")
+        autotier_cfg = None
+    return external_cfg, autotier_cfg
 
 
 def render_page() -> str:
@@ -632,6 +971,42 @@ _PAGE = """<!DOCTYPE html>
     </thead>
     <tbody id="inv-shared"></tbody>
   </table>
+
+  <h2>Storage tiers</h2>
+  <p class="note">Where each model lives across the local disk and the external SSD.
+    <strong>Promote</strong> copies an external model onto fast local storage;
+    <strong>Demote</strong> evicts a local model out to the SSD to reclaim internal
+    disk. Every move is verified server-side (copy → check → publish) and never
+    deletes a source before its destination is verified. When the SSD is unplugged
+    its models show as offline and move actions are disabled.</p>
+  <p id="tier-status" class="note"></p>
+  <p id="tier-err" class="err"></p>
+  <table>
+    <thead>
+      <tr>
+        <th>Format</th><th>Model</th><th>Quant</th><th>Provider</th>
+        <th class="num">Size</th><th>Tier</th><th>Inferencers</th><th></th>
+      </tr>
+    </thead>
+    <tbody id="tier-models"></tbody>
+  </table>
+
+  <h3>Auto-tiering</h3>
+  <p class="note">Keep the local tier under its disk budget by evicting the
+    least-recently-used models to the SSD. This is a dry-run plan — pinned models
+    are never evicted; click Apply to run the eviction through the verified demote
+    path. Disabled while the SSD is offline or no budget is configured.</p>
+  <p id="tier-plan-status" class="note"></p>
+  <table>
+    <thead>
+      <tr><th>Model</th><th>Format</th><th class="num">Size</th></tr>
+    </thead>
+    <tbody id="tier-plan"></tbody>
+  </table>
+  <p class="run-actions">
+    <button class="act" id="tier-apply" disabled>Apply eviction plan</button>
+  </p>
+  <p id="tier-plan-msg"></p>
 </section>
 
 <section id="section-run" class="section" hidden>
@@ -1514,6 +1889,197 @@ _PAGE = """<!DOCTYPE html>
       err.textContent = "inventory unavailable: " + e;
     }
   }
+
+  refresh();
+})();
+
+// Storage-tier view (story 12.6-002): a thin client over /api/tiers (tier
+// badges), /api/promote + /api/demote (verified moves), and /api/tier-plan +
+// /api/tier-apply (auto-tiering). The server holds all move/eviction authority;
+// this only renders tiers and surfaces the server's verdict. Move actions are
+// disabled when the SSD is offline (AC4).
+(function () {
+  const modelsBody = document.getElementById("tier-models");
+  const planBody = document.getElementById("tier-plan");
+  const status = document.getElementById("tier-status");
+  const planStatus = document.getElementById("tier-plan-status");
+  const err = document.getElementById("tier-err");
+  const planMsg = document.getElementById("tier-plan-msg");
+  const applyBtn = document.getElementById("tier-apply");
+  let busy = false;
+
+  function humanSize(bytes) {
+    if (bytes === null || bytes === undefined) return "-";
+    let n = Number(bytes);
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let i = 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return (i === 0 ? n : n.toFixed(1)) + " " + units[i];
+  }
+  function cell(text, numeric) {
+    const td = document.createElement("td");
+    if (numeric) td.className = "num";
+    td.textContent = text;
+    return td;
+  }
+  function fillEmpty(tbody, cols, label) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = cols;
+    td.className = "empty";
+    td.textContent = label;
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  }
+
+  function tierBadge(model, offline) {
+    const onLocal = (model.tiers || []).includes("local");
+    const onExternal = (model.tiers || []).includes("external");
+    if (model.present_in_both) return "local + external (redundant)";
+    if (onExternal && !onLocal) return offline ? "external (offline)" : "external";
+    if (onLocal) return "local";
+    return (model.tiers || []).join(", ") || "-";
+  }
+
+  function actionCell(model, offline) {
+    const onLocal = (model.tiers || []).includes("local");
+    const onExternal = (model.tiers || []).includes("external");
+    const td = document.createElement("td");
+    const attrs = `data-name="${encodeURIComponent(model.name)}" data-format="${model.format}"`;
+    if (onExternal && !onLocal) {
+      td.innerHTML = offline
+        ? '<span class="empty">SSD offline</span>'
+        : `<button class="act" data-promote ${attrs}>Promote</button>`;
+    } else if (onLocal) {
+      td.innerHTML = offline
+        ? '<span class="empty">demote disabled — SSD offline</span>'
+        : `<button class="act" data-demote ${attrs}>Demote</button>`;
+    }
+    return td;
+  }
+
+  function renderModels(data) {
+    const offline = data.external_availability === "offline";
+    const models = data.models || [];
+    modelsBody.innerHTML = "";
+    if (!models.length) { fillEmpty(modelsBody, 8, "No models found."); }
+    const sorted = models.slice().sort((a, b) =>
+      (a.format || "").localeCompare(b.format || "") ||
+      (a.name || "").localeCompare(b.name || ""));
+    for (const m of sorted) {
+      const tr = document.createElement("tr");
+      tr.append(
+        cell(m.format), cell(m.name), cell(m.quant || "-"), cell(m.provider || "-"),
+        cell(humanSize(m.size_bytes), true), cell(tierBadge(m, offline)),
+        cell((m.inferencers || []).join(", ") || "-"),
+      );
+      tr.appendChild(actionCell(m, offline));
+      modelsBody.appendChild(tr);
+    }
+    const avail = offline ? "offline — plug in the SSD to enable moves" : "mounted";
+    const cached = data.external_cached ? " (showing last-known catalog)" : "";
+    status.textContent = "External SSD: " + avail + cached +
+      ". Reclaimable across tiers: " + humanSize(data.reclaimable_bytes) +
+      " of " + humanSize(data.total_bytes) + " total.";
+  }
+
+  function renderPlan(data) {
+    planBody.innerHTML = "";
+    const evictions = data.evictions || [];
+    if (!data.configured) {
+      planStatus.textContent = "No disk budget configured — add an auto_tier block to enable.";
+      fillEmpty(planBody, 3, "Auto-tiering is not configured.");
+      applyBtn.disabled = true;
+      return;
+    }
+    if (!evictions.length) {
+      fillEmpty(planBody, 3, data.paused
+        ? "Auto-tiering paused — the SSD is offline."
+        : "Nothing to evict — the local tier is within budget.");
+    }
+    for (const e of evictions) {
+      const tr = document.createElement("tr");
+      tr.append(cell(e.name), cell(e.format), cell(humanSize(e.size_bytes), true));
+      planBody.appendChild(tr);
+    }
+    const parts = [];
+    if (data.paused) parts.push("Paused: the SSD is offline.");
+    parts.push("Would reclaim " + humanSize(data.bytes_reclaimed) +
+      " (over budget by " + humanSize(data.bytes_to_reclaim) + ").");
+    if ((data.pinned || []).length) parts.push("Pinned (never evicted): " + data.pinned.join(", ") + ".");
+    for (const w of data.warnings || []) parts.push(w);
+    planStatus.textContent = parts.join(" ");
+    applyBtn.disabled = data.paused || !evictions.length;
+  }
+
+  async function post(url) {
+    const res = await fetch(url, { method: "POST" });
+    let body = {};
+    try { body = await res.json(); } catch (e) { body = {}; }
+    return { status: res.status, body };
+  }
+
+  async function refresh() {
+    try {
+      const res = await fetch("/api/tiers");
+      const data = await res.json();
+      err.textContent = "";
+      renderModels(data);
+    } catch (e) {
+      err.textContent = "tier inventory unavailable: " + e;
+    }
+    try {
+      const res = await fetch("/api/tier-plan");
+      renderPlan(await res.json());
+    } catch (e) {
+      planStatus.textContent = "auto-tiering plan unavailable: " + e;
+    }
+  }
+
+  async function move(verb, name, format) {
+    if (busy) return;
+    busy = true;
+    err.textContent = "";
+    planMsg.textContent = "";
+    status.textContent = verb === "promote" ? "Promoting…" : "Demoting…";
+    try {
+      const url = "/api/" + verb + "?name=" + encodeURIComponent(name) +
+        "&format=" + encodeURIComponent(format);
+      const { status: code, body } = await post(url);
+      if (code >= 400) err.textContent = body.error || (verb + " failed (" + code + ")");
+    } catch (e) {
+      err.textContent = verb + " failed: " + e;
+    } finally {
+      busy = false;
+      refresh();  // AC2: the panel refreshes the model's tier on completion
+    }
+  }
+
+  modelsBody.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("button");
+    if (!btn) return;
+    const name = decodeURIComponent(btn.getAttribute("data-name") || "");
+    const format = btn.getAttribute("data-format") || "";
+    if (btn.hasAttribute("data-promote")) move("promote", name, format);
+    if (btn.hasAttribute("data-demote")) move("demote", name, format);
+  });
+
+  applyBtn.addEventListener("click", async () => {
+    if (busy) return;
+    busy = true;
+    planMsg.textContent = "Applying eviction plan…";
+    try {
+      const { status: code, body } = await post("/api/tier-apply");
+      planMsg.textContent = code >= 400
+        ? (body.error || ("apply failed (" + code + ")"))
+        : ("Evicted " + (body.count || 0) + " model(s).");
+    } catch (e) {
+      planMsg.textContent = "apply failed: " + e;
+    } finally {
+      busy = false;
+      refresh();
+    }
+  });
 
   refresh();
 })();
