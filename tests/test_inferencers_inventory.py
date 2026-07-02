@@ -594,6 +594,8 @@ def test_default_config_carries_store_metadata() -> None:
     # MLX servers share the HuggingFace hub cache; ollama uses its blob store.
     assert inferencers["dflash"].model_store == ("~/.cache/huggingface/hub",)
     assert inferencers["dflash"].store_format == "hf-safetensors"
+    assert inferencers["omlx"].model_store == ("~/.omlx/models",)
+    assert inferencers["omlx"].store_format == "mlx"
     assert inferencers["ollama"].model_store == ("~/.ollama/models",)
     assert inferencers["ollama"].store_format == "ollama"
     assert inferencers["gpt4all"].store_format == "gguf"

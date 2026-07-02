@@ -319,9 +319,9 @@ identical across every model. A thin `run-bench.sh` wrapper forwards every flag:
   --mode thinking --quant IQ3_XXS --provider unsloth
 ```
 
-`--engine` resolves to the locked default `/v1` endpoint for any of the ten engines
+`--engine` resolves to the locked default `/v1` endpoint for any of the configured engines
 (`dflash`, `turboquant`, `mlx-lm`, `llama-cpp`, `ollama`, `mlc-llm`, `vllm-mlx`,
-`exo`, `lm-studio`, `gpt4all`); `--endpoint` wins when both are given. oMLX's
+`exo`, `omlx`, `lm-studio`, `gpt4all`); `--endpoint` wins when both are given. oMLX's
 Anthropic endpoint is reached by setting the model's `type: anthropic` in config.
 Each run records the quant string, quant provider (the Unsloth-vs-Bartowski lesson),
 engine, endpoint, mode, and the pinned seed/temperature (temperature defaults to 0

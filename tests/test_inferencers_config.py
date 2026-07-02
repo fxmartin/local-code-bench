@@ -366,8 +366,8 @@ inferencers:
 def test_default_inferencers_config_loads() -> None:
     inferencers = load_inferencers("configs/inferencers.yaml")
 
-    # 9 headless servers (mtplx added) + 2 detect-only GUI apps.
-    assert len(inferencers) == 11
+    # 10 headless servers (mtplx + omlx added) + 2 detect-only GUI apps.
+    assert len(inferencers) == 12
     assert inferencers["dflash"].port == 8000
     assert inferencers["turboquant"].port == 8002
     assert inferencers["vllm-mlx"].port == 8001  # off 8000 to avoid colliding with dflash
@@ -389,6 +389,20 @@ def test_default_inferencers_register_mtplx_native_mtp() -> None:
     assert mtplx.start == ("mtplx", "serve", "--port", "8003")
     assert resolve_health_url(mtplx) == "http://127.0.0.1:8003/v1/models"
     assert mtplx.url == "https://github.com/youssofal/mtplx"
+
+
+def test_default_inferencers_register_omlx_agent_cache_server() -> None:
+    inferencers = load_inferencers("configs/inferencers.yaml")
+
+    omlx = inferencers["omlx"]
+    assert omlx.lifecycle == "server"
+    assert omlx.detect_kind == "binary"
+    assert omlx.detect_target == "omlx"
+    # OMLX defaults to 8000 (owned by dflash); remapped to 8004 to avoid collision.
+    assert omlx.port == 8004
+    assert omlx.start == ("env", "OMLX_PORT=8004", "omlx", "serve")
+    assert resolve_health_url(omlx) == "http://127.0.0.1:8004/v1/models"
+    assert omlx.url == "https://github.com/jundot/omlx"
 
 
 def test_default_inferencers_all_carry_reference_url() -> None:
