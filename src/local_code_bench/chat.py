@@ -25,6 +25,7 @@ import json
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 
 from .config import ModelConfig
 from .metrics import StreamEvent
@@ -115,7 +116,9 @@ def chat_action(
     return ChatStreamResponse(200, sse_chat_events(events))
 
 
-def sse_chat_events(events: Iterable[StreamEvent]) -> Iterator[str]:
+def sse_chat_events(
+    events: Iterable[StreamEvent], *, clock: Callable[[], float] = perf_counter
+) -> Iterator[str]:
     """Serialize stream events as SSE ``data:`` chunks, token-by-token.
 
     Content deltas are emitted as ``{"delta": ...}``; the stream closes with a
@@ -123,21 +126,72 @@ def sse_chat_events(events: Iterable[StreamEvent]) -> Iterator[str]:
     becomes a sanitized ``{"error": ...}`` event rather than a dropped connection.
     """
 
+    started_at = clock()
+    first_token_at: float | None = None
+    finished_at = started_at
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     try:
         for event in events:
+            now = clock()
+            finished_at = now
             if event.content:
+                if first_token_at is None:
+                    first_token_at = now
                 yield _sse({"delta": event.content})
             if event.prompt_tokens is not None:
                 prompt_tokens = event.prompt_tokens
             if event.completion_tokens is not None:
                 completion_tokens = event.completion_tokens
+        finished_at = clock()
         yield _sse(
-            {"done": True, "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens}
+            {
+                "done": True,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "metrics": _openai_endpoint_metrics(
+                    started_at=started_at,
+                    first_token_at=first_token_at,
+                    finished_at=finished_at,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                ),
+            }
         )
     except ProviderError as exc:
         yield _sse({"error": _sanitize(str(exc))})
+
+
+def _openai_endpoint_metrics(
+    *,
+    started_at: float,
+    first_token_at: float | None,
+    finished_at: float,
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+) -> dict[str, float | int | None]:
+    total_duration = max(finished_at - started_at, 0.0)
+    prompt_duration = (
+        None if first_token_at is None else max(first_token_at - started_at, 0.0)
+    )
+    eval_duration = None if first_token_at is None else max(finished_at - first_token_at, 0.0)
+    return {
+        "total_duration_seconds": total_duration,
+        # OpenAI-compatible chat/completions does not expose model load timing.
+        "load_duration_seconds": None,
+        "prompt_eval_count": prompt_tokens,
+        "prompt_eval_duration_seconds": prompt_duration,
+        "prompt_eval_rate": _rate(prompt_tokens, prompt_duration),
+        "eval_count": completion_tokens,
+        "eval_duration_seconds": eval_duration,
+        "eval_rate": _rate(completion_tokens, eval_duration),
+    }
+
+
+def _rate(tokens: int | None, seconds: float | None) -> float | None:
+    if tokens is None or seconds is None or seconds <= 0:
+        return None
+    return tokens / seconds
 
 
 def _sse(payload: dict[str, object]) -> str:

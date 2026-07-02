@@ -873,10 +873,12 @@ def test_nav_includes_chat_section() -> None:
 
 def test_chat_section_has_picker_reusing_catalog_selectors() -> None:
     body = ud.render_page()
-    # AC1: pick a model and inferencer, populated from the same catalog the launcher uses
+    # AC1: pick a local model and inferencer, using a chat-specific catalog that
+    # filters out cloud/manual benchmark entries the chat endpoint cannot route.
     assert 'id="chat-model"' in body
     assert 'id="chat-inferencer"' in body
-    assert "/api/catalog" in body
+    assert "/api/chat/catalog" in body
+    assert 'id="chat-start"' in body
 
 
 def test_chat_section_has_message_pane_and_stop_control() -> None:
@@ -896,10 +898,29 @@ def test_chat_section_has_param_controls() -> None:
     assert 'id="chat-max-tokens"' in body
 
 
+def test_chat_section_renders_per_reply_metrics() -> None:
+    body = ud.render_page()
+
+    assert "chat-metrics" in body
+    assert "total duration" in body
+    assert "load duration" in body
+    assert "prompt eval rate" in body
+    assert "eval rate" in body
+
+
 def test_chat_section_is_thin_client_over_chat_endpoint() -> None:
     body = ud.render_page()
     # AC4: posts to the existing streaming endpoint; no new front-end stack
     assert "/api/chat" in body
+
+
+def test_rendered_dashboard_script_keeps_chat_newline_escapes() -> None:
+    body = ud.render_page()
+
+    assert 'buf.indexOf("\\n\\n")' in body
+    assert 'frame.split("\\n")' in body
+    assert ('buf.indexOf("' + "\n\n" + '")') not in body
+    assert ('frame.split("' + "\n" + '")') not in body
 
 
 def test_post_api_run_routes_over_http(tmp_path: Path, monkeypatch) -> None:
@@ -1375,6 +1396,117 @@ def test_api_inventory_scans_the_dashboard_configs(monkeypatch) -> None:
 
 def test_post_to_inventory_route_is_404() -> None:
     assert ud.handle_request("POST", "/api/inventory", _ctx()).status == 404
+
+
+def test_api_chat_catalog_uses_inventory_models_and_status(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ud.inventory,
+        "scan_inferencers",
+        lambda configs, **k: [
+            _stored("ollama", "ollama", "ornith:9b", "/ollama/ornith9", 9),
+            _stored("ollama", "ollama", "ornith:35b", "/ollama/ornith35", 35),
+            _stored("dflash", "hf-safetensors", "org/CodeModel", "/hf/code", 21),
+        ],
+    )
+    monkeypatch.setattr(
+        ud.inferencer_panel,
+        "status_action",
+        lambda configs, state_dir: (
+            200,
+            {
+                "inferencers": [
+                    {
+                        "name": "dflash",
+                        "installed": True,
+                        "lifecycle": "server",
+                        "running": False,
+                        "pid": None,
+                        "port": 8000,
+                        "healthy": False,
+                        "detail": "not running",
+                    },
+                    {
+                        "name": "ollama",
+                        "installed": True,
+                        "lifecycle": "server",
+                        "running": True,
+                        "pid": 123,
+                        "port": 11434,
+                        "healthy": True,
+                        "detail": "running and healthy",
+                    },
+                    {
+                        "name": "exo",
+                        "installed": True,
+                        "lifecycle": "server",
+                        "running": False,
+                        "pid": None,
+                        "port": 52415,
+                        "healthy": False,
+                        "detail": "not running",
+                    },
+                ]
+            },
+        ),
+    )
+    ctx = ud.DashboardContext(
+        configs={
+            "dflash": _server_cfg("dflash", 8000),
+            "ollama": _server_cfg("ollama", 11434),
+            "exo": _server_cfg("exo", 52415),
+        },
+        state_dir=".runtime",
+    )
+
+    payload = json.loads(ud.handle_request("GET", "/api/chat/catalog", ctx).body)
+
+    assert {m["name"] for m in payload["models"]} == {
+        "ornith:9b",
+        "ornith:35b",
+        "org/CodeModel",
+    }
+    ornith = next(m for m in payload["models"] if m["name"] == "ornith:9b")
+    assert ornith["inferencers"] == ["ollama"]
+    ollama = next(i for i in payload["inferencers"] if i["name"] == "ollama")
+    assert ollama["model_count"] == 2
+    assert ollama["running"] is True
+    exo = next(i for i in payload["inferencers"] if i["name"] == "exo")
+    assert exo["model_count"] == 0
+    assert exo["available"] is False
+
+
+def test_api_chat_inventory_model_resolves_through_selected_inferencer(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ud.inventory,
+        "scan_inferencers",
+        lambda configs, **k: [_stored("ollama", "ollama", "ornith:9b", "/ollama/ornith9", 9)],
+    )
+    captured: dict[str, object] = {}
+
+    class _Provider:
+        def stream_chat(self, request):
+            captured["request"] = request
+            return [StreamEvent(content="ok")]
+
+    def _provider_for_model(model):
+        captured["model"] = model
+        return _Provider()
+
+    monkeypatch.setattr(ud.chat, "provider_for_model", _provider_for_model)
+    ctx = ud.DashboardContext(
+        configs={"ollama": _server_cfg("ollama", 11434)},
+        state_dir=".runtime",
+    )
+
+    resp = ud.handle_request("POST", "/api/chat", ctx, _chat_body("ornith:9b"))
+
+    assert isinstance(resp, ud.chat.ChatStreamResponse)
+    model = captured["model"]
+    assert isinstance(model, ModelConfig)
+    assert model.name == "ornith:9b"
+    assert model.model_id == "ornith:9b"
+    assert model.base_url == "http://127.0.0.1:11434/v1"
+    assert model.inferencer == "ollama"
 
 
 def test_inventory_section_is_navigable_and_thin_client_over_scanner() -> None:

@@ -227,7 +227,35 @@ def test_chat_action_streams_token_by_token_with_usage() -> None:
     payloads = _collect(response)
     assert payloads[0] == {"delta": "Hel"}
     assert payloads[1] == {"delta": "lo"}
-    assert payloads[-1] == {"done": True, "prompt_tokens": 11, "completion_tokens": 2}
+    assert payloads[-1]["done"] is True
+    assert payloads[-1]["prompt_tokens"] == 11
+    assert payloads[-1]["completion_tokens"] == 2
+
+
+def test_sse_chat_events_reports_openai_endpoint_metrics() -> None:
+    ticks = iter([10.0, 10.25, 11.0, 11.25, 11.5])
+    events = [
+        StreamEvent(content="Hel"),
+        StreamEvent(content="lo"),
+        StreamEvent(prompt_tokens=11, completion_tokens=2),
+    ]
+
+    payloads = [
+        json.loads(chunk[len("data: ") : -2])
+        for chunk in chat.sse_chat_events(events, clock=lambda: next(ticks))
+    ]
+
+    metrics = payloads[-1]["metrics"]
+    assert metrics == {
+        "total_duration_seconds": 1.5,
+        "load_duration_seconds": None,
+        "prompt_eval_count": 11,
+        "prompt_eval_duration_seconds": 0.25,
+        "prompt_eval_rate": 44.0,
+        "eval_count": 2,
+        "eval_duration_seconds": 1.25,
+        "eval_rate": 1.6,
+    }
 
 
 def test_chat_action_forwards_assembled_request_to_provider() -> None:

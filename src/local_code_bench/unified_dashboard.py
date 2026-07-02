@@ -41,6 +41,7 @@ from .config import (
     ExternalRepoConfig,
     InferencerConfig,
     ModelConfig,
+    TokenPrices,
     load_autotier,
     load_external_repo,
     load_inferencers,
@@ -176,6 +177,111 @@ def catalog_action(ctx: DashboardContext) -> tuple[int, dict]:
     inferencers = [{"name": cfg.name, "lifecycle": cfg.lifecycle} for cfg in ctx.configs.values()]
     suites = catalog_payload(cache_dir=ctx.cache_dir, suites_path=ctx.suites_path)["suites"]
     return 200, {"models": models, "inferencers": inferencers, "suites": suites}
+
+
+def _inventory_chat_models(ctx: DashboardContext) -> list[inventory.LocalModel]:
+    return inventory.normalize_all(inventory.scan_inferencers(ctx.configs.values()))
+
+
+def chat_catalog_action(ctx: DashboardContext) -> tuple[int, dict]:
+    """Return live inventory models plus inferencer state for the Chat selectors.
+
+    The benchmark launcher needs cloud and manual endpoint entries, so
+    :func:`catalog_action` intentionally stays broad. Chat is different: it should only
+    offer models actually present in the local inventory, then let the user filter by
+    compatible inferencer and see whether that inferencer is already running.
+    """
+
+    inventory_models = _inventory_chat_models(ctx)
+    models_by_name: dict[str, list[inventory.LocalModel]] = {}
+    for model in inventory_models:
+        if model.inferencer in ctx.configs:
+            models_by_name.setdefault(model.name, []).append(model)
+
+    status_code, status_payload = inferencer_panel.status_action(ctx.configs, ctx.state_dir)
+    statuses = {
+        row["name"]: row for row in status_payload.get("inferencers", []) if isinstance(row, dict)
+    }
+    models = [
+        {
+            "name": name,
+            "inferencers": sorted({model.inferencer for model in rows}),
+            "formats": sorted({model.store_format for model in rows}),
+            "quant": next((model.quant for model in rows if model.quant), None),
+            "provider": next((model.provider for model in rows if model.provider), None),
+            "size_bytes": max(model.size_bytes for model in rows),
+        }
+        for name, rows in models_by_name.items()
+    ]
+    inferencers = []
+    for cfg in ctx.configs.values():
+        row = statuses.get(cfg.name, {})
+        model_count = sum(1 for model in inventory_models if model.inferencer == cfg.name)
+        inferencers.append(
+            {
+                "name": cfg.name,
+                "lifecycle": cfg.lifecycle,
+                "installed": bool(row.get("installed", False)),
+                "running": bool(row.get("running", False)),
+                "healthy": bool(row.get("healthy", False)),
+                "pid": row.get("pid"),
+                "port": row.get("port", cfg.port),
+                "detail": row.get("detail", ""),
+                "model_count": model_count,
+                "available": model_count > 0,
+            }
+        )
+    return status_code, {"models": models, "inferencers": inferencers}
+
+
+def _chat_model_from_inventory(
+    local_model: inventory.LocalModel, inferencer_cfg: InferencerConfig
+) -> ModelConfig:
+    return ModelConfig(
+        name=local_model.name,
+        type="openai",
+        base_url=f"http://127.0.0.1:{inferencer_cfg.port}/v1",
+        model_id=local_model.name,
+        pinned_revision="inventory",
+        concurrency=1,
+        max_tokens=chat.DEFAULT_MAX_TOKENS,
+        price_per_1k_tokens=TokenPrices(input=0.0, output=0.0),
+        inferencer=local_model.inferencer,
+        quant=local_model.quant,
+        provider=local_model.provider,
+    )
+
+
+def _chat_models_for_request(
+    ctx: DashboardContext, parsed: dict[str, object]
+) -> tuple[int, dict] | dict[str, ModelConfig]:
+    name = parsed.get("model")
+    if not isinstance(name, str):
+        return ctx.models
+
+    compatible = [
+        model
+        for model in _inventory_chat_models(ctx)
+        if model.name == name and model.inferencer in ctx.configs
+    ]
+    if not compatible:
+        return ctx.models
+
+    selected = parsed.get("inferencer")
+    if isinstance(selected, str) and selected:
+        matches = [model for model in compatible if model.inferencer == selected]
+        if not matches:
+            return 400, {"error": f"{name!r} is not available for inferencer {selected!r}"}
+        chosen = matches[0]
+    elif len({model.inferencer for model in compatible}) == 1:
+        chosen = compatible[0]
+        parsed["inferencer"] = chosen.inferencer
+    else:
+        names = ", ".join(sorted({model.inferencer for model in compatible}))
+        return 400, {"error": f"select an inferencer for {name!r}: {names}"}
+
+    return {name: _chat_model_from_inventory(chosen, ctx.configs[chosen.inferencer])}
+
 
 
 def inventory_action(ctx: DashboardContext) -> tuple[int, dict]:
@@ -565,6 +671,8 @@ def handle_request(
         return _json(*results_panel.data_action(_resolve_result_paths(ctx)))
     if method == "GET" and route == "/api/catalog":
         return _json(*catalog_action(ctx))
+    if method == "GET" and route == "/api/chat/catalog":
+        return _json(*chat_catalog_action(ctx))
     if method == "GET" and route == "/api/inventory":
         return _json(*inventory_action(ctx))
     if method == "GET" and route == "/api/tiers":
@@ -590,7 +698,12 @@ def handle_request(
             parsed = json.loads(body or b"{}")
         except json.JSONDecodeError:
             return _json(400, {"error": "invalid JSON body"})
-        result = chat.chat_action(parsed, ctx.models)
+        if not isinstance(parsed, dict):
+            return _json(400, {"error": "request body must be a JSON object"})
+        models = _chat_models_for_request(ctx, parsed)
+        if isinstance(models, tuple):
+            return _json(*models)
+        result = chat.chat_action(parsed, models)
         if isinstance(result, chat.ChatStreamResponse):
             return result
         return _json(*result)
@@ -864,6 +977,10 @@ _PAGE = """<!DOCTYPE html>
   .chat-msg.user { align-self: flex-end; background: #2e9e4422; }
   .chat-msg.assistant { align-self: flex-start; background: #8881; }
   .chat-msg .role { font-size: 0.75rem; color: #888; display: block; margin-bottom: 0.15rem; }
+  .chat-metrics { margin-top: 0.45rem; padding-top: 0.4rem; border-top: 1px solid #8883;
+    color: #666; font-family: ui-monospace, monospace; font-size: 0.78rem;
+    white-space: normal; display: grid; grid-template-columns: auto auto; column-gap: 1rem; row-gap: 0.15rem; }
+  .chat-metrics span:nth-child(odd) { color: #888; }
   .chat-compose { display: flex; gap: 0.5rem; margin-top: 0.8rem; max-width: 46rem; }
   #chat-input { font: inherit; flex: 1; padding: 0.4rem 0.5rem; resize: vertical; min-height: 2.4rem; }
   #chat-err { color: #c0392b; min-height: 1.2rem; }
@@ -1049,10 +1166,9 @@ _PAGE = """<!DOCTYPE html>
 
 <section id="section-chat" class="section" hidden>
   <h2>Chat with a Model</h2>
-  <p class="note">Smoke-test a model conversationally without writing a benchmark. Pick the
-    same model and inferencer the launcher offers, then send a message — the reply streams
-    token-by-token through the running engine. Chat never starts a server; bring one up in
-    the Inferencers or Run section first.</p>
+  <p class="note">Smoke-test a downloaded model conversationally without writing a benchmark.
+    The model and inferencer selectors use the Inventory scan, so each choice narrows to
+    compatible local options. If a compatible server is stopped, start it here before sending.</p>
   <p id="chat-load-err" class="err"></p>
   <div class="chat-grid">
     <div>
@@ -1072,6 +1188,9 @@ _PAGE = """<!DOCTYPE html>
       <input id="chat-max-tokens" type="number" min="1" step="1" value="1024">
     </div>
   </div>
+  <p class="run-actions">
+    <button class="act" id="chat-start" disabled>Start selected inferencer</button>
+  </p>
   <h3><label for="chat-system">System prompt (optional)</label></h3>
   <textarea id="chat-system" rows="2" placeholder="e.g. You are a terse coding assistant."></textarea>
   <div id="chat-messages"></div>
@@ -1159,17 +1278,18 @@ _PAGE = """<!DOCTYPE html>
     return { status: res.status, body };
   }
 
-  async function startEngine(name, confirm) {
+  async function startEngine(name, confirm, afterStart) {
     setError("");
     const url = "/api/start?name=" + encodeURIComponent(name) + (confirm ? "&confirm=1" : "");
     const { status, body } = await post(url);
-    if (status === 409 && body.needs_confirmation) { openModal(name, body); return; }
+    if (status === 409 && body.needs_confirmation) { openModal(name, body, afterStart); return; }
     if (status >= 400) setError(body.message || body.error || ("start failed (" + status + ")"));
     refresh();
+    if (status < 400 && afterStart) afterStart();
   }
 
-  function openModal(name, body) {
-    pending = name;
+  function openModal(name, body, afterStart) {
+    pending = { name, afterStart };
     document.getElementById("modal-msg").textContent = body.message || "Confirm exclusive start.";
     const list = document.getElementById("modal-list");
     list.innerHTML = "";
@@ -1184,10 +1304,14 @@ _PAGE = """<!DOCTYPE html>
   function closeModal() { modal.classList.remove("show"); pending = null; }
 
   document.getElementById("modal-confirm").onclick = () => {
-    const name = pending; closeModal();
-    if (name) startEngine(name, true);
+    const item = pending; closeModal();
+    if (item) startEngine(item.name, true, item.afterStart);
   };
   document.getElementById("modal-cancel").onclick = closeModal;
+
+  window.startInferencer = function (name, afterStart) {
+    return startEngine(name, false, afterStart);
+  };
 
   rows.addEventListener("click", (ev) => {
     const start = ev.target.getAttribute("data-start");
@@ -1664,7 +1788,7 @@ _PAGE = """<!DOCTYPE html>
   setInterval(refresh, 2000);
 })();
 
-// Chat section: a thin client over /api/catalog (selectors) and /api/chat (SSE stream).
+// Chat section: a thin client over /api/chat/catalog (local selectors) and /api/chat (SSE stream).
 // Multi-turn state lives here and is posted whole each turn — there is no server DB.
 // Streaming is read incrementally from the fetch body and cancelled via AbortController.
 (function () {
@@ -1677,10 +1801,13 @@ _PAGE = """<!DOCTYPE html>
   const input = document.getElementById("chat-input");
   const sendBtn = document.getElementById("chat-send");
   const stopBtn = document.getElementById("chat-stop");
+  const startBtn = document.getElementById("chat-start");
   const loadErr = document.getElementById("chat-load-err");
   const err = document.getElementById("chat-err");
   const history = [];  // {role, content} turns, posted whole each send
   let controller = null;
+  let MODELS = [];
+  let INFERENCERS = [];
 
   function option(value, label) {
     const opt = document.createElement("option");
@@ -1689,18 +1816,80 @@ _PAGE = """<!DOCTYPE html>
     return opt;
   }
 
+  function selectedModel() {
+    return MODELS.find((m) => m.name === modelSel.value) || null;
+  }
+
+  function selectedInferencer() {
+    return INFERENCERS.find((it) => it.name === infSel.value) || null;
+  }
+
+  function filteredModels() {
+    const inf = infSel.value;
+    return inf ? MODELS.filter((m) => (m.inferencers || []).includes(inf)) : MODELS;
+  }
+
+  function filteredInferencers() {
+    const model = selectedModel();
+    if (!model) return INFERENCERS;
+    const allowed = new Set(model.inferencers || []);
+    return INFERENCERS.filter((it) => allowed.has(it.name));
+  }
+
+  function inferencerLabel(it) {
+    if (!it.available) return it.name + " (no models)";
+    const state = it.running ? "running" : "stopped";
+    const count = it.model_count || 0;
+    return it.name + " (" + state + ", " + count + " model" + (count === 1 ? "" : "s") + ")";
+  }
+
+  function renderModels() {
+    const current = modelSel.value;
+    const models = filteredModels();
+    modelSel.innerHTML = "";
+    modelSel.appendChild(option("", models.length ? "Select a model…" : "No models for this inferencer"));
+    for (const m of models) modelSel.appendChild(option(m.name, m.name));
+    if (models.some((m) => m.name === current)) modelSel.value = current;
+  }
+
+  function renderInferencers() {
+    const current = infSel.value;
+    const infs = filteredInferencers();
+    infSel.innerHTML = "";
+    infSel.appendChild(option("", infs.length ? "Select an inferencer…" : "No compatible inferencers"));
+    for (const it of infs) {
+      const opt = option(it.name, inferencerLabel(it));
+      opt.disabled = !it.available;
+      infSel.appendChild(opt);
+    }
+    if (infs.some((it) => it.name === current && it.available)) infSel.value = current;
+  }
+
+  function updateStartButton() {
+    const it = selectedInferencer();
+    if (!it || !it.available) {
+      startBtn.disabled = true;
+      startBtn.textContent = "Start selected inferencer";
+      return;
+    }
+    if (it.running) {
+      startBtn.disabled = true;
+      startBtn.textContent = it.name + " is running";
+      return;
+    }
+    startBtn.disabled = false;
+    startBtn.textContent = "Start " + it.name;
+  }
+
   async function load() {
     try {
-      const res = await fetch("/api/catalog");
+      const res = await fetch("/api/chat/catalog");
       const data = await res.json();
-      const models = data.models || [];
-      modelSel.innerHTML = "";
-      modelSel.appendChild(option("", models.length ? "Select a model…" : "No models configured"));
-      for (const m of models) modelSel.appendChild(option(m.name, m.name));
-      infSel.innerHTML = "";
-      const infs = data.inferencers || [];
-      infSel.appendChild(option("", infs.length ? "Select an inferencer…" : "No inferencers configured"));
-      for (const it of infs) infSel.appendChild(option(it.name, it.name));
+      MODELS = data.models || [];
+      INFERENCERS = data.inferencers || [];
+      renderModels();
+      renderInferencers();
+      updateStartButton();
     } catch (e) {
       loadErr.textContent = "catalog unavailable: " + e;
     }
@@ -1719,6 +1908,49 @@ _PAGE = """<!DOCTYPE html>
     return text;
   }
 
+  function duration(seconds) {
+    if (seconds === null || seconds === undefined) return "unavailable";
+    const value = Number(seconds);
+    if (!Number.isFinite(value)) return "unavailable";
+    if (value < 1) return (value * 1000).toFixed(1) + "ms";
+    const minutes = Math.floor(value / 60);
+    const rest = value - minutes * 60;
+    return minutes ? minutes + "m" + rest.toFixed(3) + "s" : value.toFixed(3) + "s";
+  }
+
+  function count(value) {
+    return value === null || value === undefined ? "unavailable" : String(value) + " token(s)";
+  }
+
+  function rate(value) {
+    return value === null || value === undefined ? "unavailable" : Number(value).toFixed(2) + " tokens/s";
+  }
+
+  function renderMetrics(textEl, metrics) {
+    if (!metrics) return;
+    const rows = [
+      ["total duration", duration(metrics.total_duration_seconds)],
+      ["load duration", duration(metrics.load_duration_seconds)],
+      ["prompt eval count", count(metrics.prompt_eval_count)],
+      ["prompt eval duration", duration(metrics.prompt_eval_duration_seconds)],
+      ["prompt eval rate", rate(metrics.prompt_eval_rate)],
+      ["eval count", count(metrics.eval_count)],
+      ["eval duration", duration(metrics.eval_duration_seconds)],
+      ["eval rate", rate(metrics.eval_rate)],
+    ];
+    const box = document.createElement("div");
+    box.className = "chat-metrics";
+    for (const row of rows) {
+      const label = document.createElement("span");
+      label.textContent = row[0] + ":";
+      const value = document.createElement("span");
+      value.textContent = row[1];
+      box.append(label, value);
+    }
+    textEl.parentElement.appendChild(box);
+    pane.scrollTop = pane.scrollHeight;
+  }
+
   function streaming(on) {
     sendBtn.disabled = on;
     stopBtn.disabled = !on;
@@ -1734,6 +1966,7 @@ _PAGE = """<!DOCTYPE html>
     const content = input.value.trim();
     if (!content) return;
     if (!modelSel.value) { err.textContent = "Select a model first."; return; }
+    if (!infSel.value) { err.textContent = "Select an inferencer first."; return; }
     history.push({ role: "user", content });
     bubble("user").textContent = content;
     input.value = "";
@@ -1773,15 +2006,16 @@ _PAGE = """<!DOCTYPE html>
         if (done) break;
         buf += decoder.decode(value, { stream: true });
         let nl;
-        while ((nl = buf.indexOf("\n\n")) !== -1) {
+        while ((nl = buf.indexOf("\\n\\n")) !== -1) {
           const frame = buf.slice(0, nl);
           buf = buf.slice(nl + 2);
-          const line = frame.split("\n").find((l) => l.startsWith("data:"));
+          const line = frame.split("\\n").find((l) => l.startsWith("data:"));
           if (!line) continue;
           let ev = {};
           try { ev = JSON.parse(line.slice(5).trim()); } catch (e) { continue; }
           if (ev.delta) { reply += ev.delta; out.textContent = reply; pane.scrollTop = pane.scrollHeight; }
           if (ev.error) { err.textContent = ev.error; }
+          if (ev.done && ev.metrics) { renderMetrics(out, ev.metrics); }
         }
       }
       if (reply) history.push({ role: "assistant", content: reply });
@@ -1803,6 +2037,21 @@ _PAGE = """<!DOCTYPE html>
 
   sendBtn.addEventListener("click", send);
   stopBtn.addEventListener("click", stop);
+  startBtn.addEventListener("click", () => {
+    const it = selectedInferencer();
+    if (!it || !window.startInferencer) return;
+    startBtn.disabled = true;
+    window.startInferencer(it.name, load);
+  });
+  infSel.addEventListener("change", () => {
+    renderModels();
+    updateStartButton();
+  });
+  modelSel.addEventListener("change", () => {
+    renderInferencers();
+    renderModels();
+    updateStartButton();
+  });
   input.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); send(); }
   });
