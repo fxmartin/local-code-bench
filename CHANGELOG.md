@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.50.1 (2026-07-02)
+
+### Bug Fixes
+
+- **dashboard**: Add chat inventory filtering and metrics
+  ([`a553290`](https://github.com/fxmartin/local-code-bench/commit/a55329013f49d5b53df33df1aa992424508ffff2))
+
+
 ## v0.50.0 (2026-07-02)
 
 ### Features
