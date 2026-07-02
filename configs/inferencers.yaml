@@ -159,6 +159,21 @@ inferencers:
     # Pre-built MTP models from the Youssofal HF catalog, cached in the hub.
     model_store: ~/.cache/huggingface/hub
     format: hf-safetensors
+  - name: omlx
+    lifecycle: server
+    # MLX-native server focused on coding-agent workloads: SSD-backed KV cache,
+    # continuous batching, OpenAI/Anthropic-compatible APIs, and a macOS app/CLI.
+    # OMLX defaults to 8000 (owned by dflash) — remapped to 8004 here to avoid
+    # collisions across the benchmark roster.
+    detect:
+      binary: omlx
+    port: 8004
+    health_url: http://127.0.0.1:{port}/v1/models
+    start: ["env", "OMLX_PORT=8004", "omlx", "serve"]
+    url: https://github.com/jundot/omlx
+    # Default zero-config model root for app/Homebrew installs.
+    model_store: ~/.omlx/models
+    format: mlx
   # --- Detect-only GUI apps ----------------------------------------------
   - name: lm-studio
     lifecycle: app

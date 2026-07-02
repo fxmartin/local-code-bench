@@ -47,7 +47,7 @@ huggingface-cli login
 
 Detection runs in the **same environment the harness runs from** (its `uv` venv):
 
-- **Binary** engines (`dflash`, `turboquant-serve`, `llama-server`, `ollama`, `exo`) must
+- **Binary** engines (`dflash`, `turboquant-serve`, `llama-server`, `ollama`, `exo`, `omlx`) must
   be on `PATH`. For Python-packaged CLIs, prefer `uv tool install <pkg>` or `pipx install
   <pkg>` so the command is globally on `PATH` (not trapped in a one-off venv).
 - **Module** engines (`mlx_lm`, `mlc_llm`, `vllm`) must be importable by the harness's
@@ -71,6 +71,7 @@ Detection runs in the **same environment the harness runs from** (its `uv` venv)
 | `vllm-mlx` | binary `vllm-mlx` | 8001 | `uv tool install vllm-mlx` | server | [waybarrios/vllm-mlx](https://github.com/waybarrios/vllm-mlx) |
 | `exo` | binary `exo` | 52415 | clone + `uv run exo` (see §8) | server | [exo-explore/exo](https://github.com/exo-explore/exo) |
 | `mtplx` | binary `mtplx` | 8003 | `uv tool install mtplx` (see §9) | server | [youssofal/mtplx](https://github.com/youssofal/mtplx) |
+| `omlx` | binary `omlx` | 8004 | `brew install omlx` (see §10) | server | [jundot/omlx](https://github.com/jundot/omlx) |
 | `lm-studio` | app `LM Studio.app` | 1234 | download app, enable server | app (detect-only) | [lmstudio.ai](https://lmstudio.ai) |
 | `gpt4all` | app `GPT4All.app` | 4891 | download app, enable API | app (detect-only) | [nomic.ai/gpt4all](https://www.nomic.ai/gpt4all) |
 
@@ -287,7 +288,43 @@ uv run bench inferencer start mtplx       # harness-managed start (stops other e
 
 ---
 
-## 10. LM Studio (`LM Studio.app`) — port 1234 — detect-only
+## 10. OMLX (`omlx`) — port 8004
+
+**What it is**: MLX-native local inference server built for coding-agent workloads. It
+combines continuous batching with a hot-RAM / cold-SSD KV cache, can serve several MLX
+models behind OpenAI-compatible and Anthropic-compatible APIs, and ships both a native
+macOS menu bar app and CLI. This roster treats it as the cache/prefix-reuse candidate for
+long local-agent sessions rather than as a strict replacement for DFlash or MTPLX.
+
+```bash
+# Homebrew install (recommended CLI path)
+brew tap jundot/omlx https://github.com/jundot/omlx
+brew install omlx
+
+# Alternative: download the signed DMG and let it install ~/.omlx/bin/omlx
+# from https://omlx.ai/
+
+# Start (matches configs/inferencers.yaml: ["env", "OMLX_PORT=8004", "omlx", "serve"])
+# Port remapped to 8004: OMLX defaults to 8000, which dflash already owns.
+OMLX_PORT=8004 omlx serve
+```
+
+> **Fairness note.** OMLX's SSD KV cache is the point of the engine, but it also means
+> cold-cache and warm-cache benchmark runs are different experiments. Record whether the
+> cache was warm and clear `~/.omlx/cache` manually if you need cold-run comparisons.
+
+**Verify**:
+```bash
+curl -s http://127.0.0.1:8004/v1/models
+uv run bench inferencer start omlx       # harness-managed start (stops other engines first)
+```
+**M3 Max / 48 GB**: use the memory guard in the OMLX admin UI/settings for larger models;
+the default model root is `~/.omlx/models`. Source: <https://github.com/jundot/omlx> ·
+<https://omlx.ai/>
+
+---
+
+## 11. LM Studio (`LM Studio.app`) — port 1234 — detect-only
 
 **What it is**: polished GUI with llama.cpp **and** MLX backends. The harness only detects
 it and reports status/health — **start and stop it from its own UI** (the harness refuses
@@ -304,7 +341,7 @@ to manage GUI apps headlessly).
 
 ---
 
-## 11. GPT4All (`GPT4All.app`) — port 4891 — detect-only
+## 12. GPT4All (`GPT4All.app`) — port 4891 — detect-only
 
 **What it is**: consumer chat app (llama.cpp backend). Detect-only, like LM Studio.
 

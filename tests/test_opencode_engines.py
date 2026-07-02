@@ -8,12 +8,13 @@ from local_code_bench.opencode.engines import ENGINE_ENDPOINTS, endpoint_for_eng
 
 def test_endpoint_for_known_engine_returns_v1_url() -> None:
     assert endpoint_for_engine("dflash") == "http://127.0.0.1:8000/v1"
+    assert endpoint_for_engine("omlx") == "http://127.0.0.1:8004/v1"
     assert endpoint_for_engine("ollama") == "http://127.0.0.1:11434/v1"
     assert endpoint_for_engine("lm-studio") == "http://127.0.0.1:1234/v1"
 
 
-def test_endpoint_map_covers_the_ten_locked_engines() -> None:
-    # The 10 engines whose default ports were locked with FX for --engine.
+def test_endpoint_map_covers_the_eleven_locked_engines() -> None:
+    # The 11 engines whose default ports were locked with FX for --engine.
     assert set(ENGINE_ENDPOINTS) == {
         "dflash",
         "turboquant",
@@ -23,6 +24,7 @@ def test_endpoint_map_covers_the_ten_locked_engines() -> None:
         "mlc-llm",
         "vllm-mlx",
         "exo",
+        "omlx",
         "lm-studio",
         "gpt4all",
     }

@@ -1,6 +1,6 @@
 """Default `/v1` endpoints for the local inference engines (`--engine`).
 
-Maps the ten Epic-08 engines whose default ports were locked with FX to their
+Maps the local inferencer engines whose default ports were locked with FX to their
 OpenAI-compatible base URL, so `run-bench.sh --engine ollama` resolves to the
 right loopback endpoint without spelling out a full `--endpoint` URL. Ports are
 kept in lock-step with `configs/inferencers.yaml` (asserted in the tests).
@@ -20,6 +20,7 @@ ENGINE_ENDPOINTS: dict[str, str] = {
     "mlc-llm": "http://127.0.0.1:8082/v1",
     "vllm-mlx": "http://127.0.0.1:8001/v1",
     "exo": "http://127.0.0.1:52415/v1",
+    "omlx": "http://127.0.0.1:8004/v1",
     "lm-studio": "http://127.0.0.1:1234/v1",
     "gpt4all": "http://127.0.0.1:4891/v1",
 }
