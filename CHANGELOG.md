@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.48.0 (2026-07-02)
+
+### Features
+
+- **additional-agent-harnesses**: Claude code agent (#14.2-001)
+  ([`91c3b49`](https://github.com/fxmartin/local-code-bench/commit/91c3b4970facd3a667bec23150ea061fd7dd26cb))
+
+### Testing
+
+- **additional-agent-harnesses**: Claude code agent (#14.2-001)
+  ([`9dc41e0`](https://github.com/fxmartin/local-code-bench/commit/9dc41e0710abb8db7ddbaf14d439d2e1e2aad3f1))
+
+
 ## v0.47.0 (2026-07-02)
 
 ### Features
