@@ -1,4 +1,4 @@
-"""Codex agent-mode benchmarking."""
+"""Agent-mode benchmarking through pluggable harness adapters."""
 
 from __future__ import annotations
 
@@ -7,9 +7,11 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
+from typing import Protocol
 
 from local_code_bench.config import AgentConfig
 from local_code_bench.results import append_jsonl, read_jsonl
@@ -24,6 +26,113 @@ class AgentWorkspace:
     solution: Path
     tests: Path
     final_message: Path
+
+
+@dataclass(frozen=True)
+class AgentInstallation:
+    name: str
+    type: str
+    command: str
+    installed: bool
+    path: str | None
+    url: str | None
+
+
+class AgentAdapter(Protocol):
+    kind: str
+
+    def build_command(self, agent: AgentConfig, workspace: AgentWorkspace) -> list[str]:
+        """Build the non-interactive command used to run one materialized task."""
+
+    def parse_result(
+        self,
+        agent: AgentConfig,
+        workspace: AgentWorkspace,
+        completed: subprocess.CompletedProcess[str],
+    ) -> dict[str, object]:
+        """Parse harness-specific output, final text, exit, usage, and cost fields."""
+
+    def detect(self, agent: AgentConfig) -> AgentInstallation:
+        """Report whether the configured harness command is installed, without installing it."""
+
+
+_ADAPTERS: dict[str, AgentAdapter] = {}
+
+
+def supported_harness_kinds() -> tuple[str, ...]:
+    return tuple(sorted(_ADAPTERS))
+
+
+def adapter_for(kind: str) -> AgentAdapter:
+    try:
+        return _ADAPTERS[kind]
+    except KeyError as exc:
+        supported = ", ".join(supported_harness_kinds()) or "(none)"
+        raise ValueError(f"unknown agent harness type '{kind}'. Supported types: {supported}") from exc
+
+
+@contextmanager
+def register_agent_adapter(adapter: AgentAdapter):
+    previous = _ADAPTERS.get(adapter.kind)
+    _ADAPTERS[adapter.kind] = adapter
+    try:
+        yield
+    finally:
+        if previous is None:
+            _ADAPTERS.pop(adapter.kind, None)
+        else:
+            _ADAPTERS[adapter.kind] = previous
+
+
+class CodexAdapter:
+    kind = "codex"
+
+    def build_command(self, agent: AgentConfig, workspace: AgentWorkspace) -> list[str]:
+        command = [
+            agent.command,
+            "exec",
+            "--sandbox",
+            agent.sandbox,
+            "--cd",
+            str(workspace.root),
+            "--skip-git-repo-check",
+            "--output-last-message",
+            str(workspace.final_message),
+        ]
+        if agent.model:
+            command.extend(["--model", agent.model])
+        if agent.profile:
+            command.extend(["--profile", agent.profile])
+        command.append(workspace.instructions.read_text(encoding="utf-8"))
+        return command
+
+    def parse_result(
+        self,
+        agent: AgentConfig,
+        workspace: AgentWorkspace,
+        completed: subprocess.CompletedProcess[str],
+    ) -> dict[str, object]:
+        fields = {
+            "final_message": _read_optional(workspace.final_message),
+            **_agent_cost_fields(completed.stderr),
+        }
+        if completed.returncode != 0:
+            fields["failure_reason"] = f"codex exit {completed.returncode}"
+        return fields
+
+    def detect(self, agent: AgentConfig) -> AgentInstallation:
+        path = shutil.which(agent.command)
+        return AgentInstallation(
+            name=agent.name,
+            type=agent.type,
+            command=agent.command,
+            installed=path is not None,
+            path=path,
+            url=agent.url,
+        )
+
+
+_ADAPTERS[CodexAdapter.kind] = CodexAdapter()
 
 
 def completed_agent_pairs(result_path: Path) -> set[tuple[str, str]]:
@@ -60,26 +169,14 @@ def materialize_task_workspace(
 
 
 def build_codex_command(agent: AgentConfig, workspace: AgentWorkspace) -> list[str]:
-    command = [
-        agent.command,
-        "exec",
-        "--sandbox",
-        agent.sandbox,
-        "--cd",
-        str(workspace.root),
-        "--skip-git-repo-check",
-        "--output-last-message",
-        str(workspace.final_message),
-    ]
-    if agent.model:
-        command.extend(["--model", agent.model])
-    if agent.profile:
-        command.extend(["--profile", agent.profile])
-    command.append(workspace.instructions.read_text(encoding="utf-8"))
-    return command
+    return adapter_for("codex").build_command(agent, workspace)
 
 
-def run_codex_task(
+def detect_agent_installation(agent: AgentConfig) -> AgentInstallation:
+    return adapter_for(agent.type).detect(agent)
+
+
+def run_agent_task(
     *,
     agent: AgentConfig,
     task: BenchmarkTask,
@@ -89,7 +186,8 @@ def run_codex_task(
 ) -> dict[str, object]:
     workspace = materialize_task_workspace(task)
     started = perf_counter()
-    command = build_codex_command(agent, workspace)
+    adapter = adapter_for(agent.type)
+    command = adapter.build_command(agent, workspace)
     try:
         completed = subprocess.run(
             command,
@@ -100,6 +198,7 @@ def run_codex_task(
             check=False,
         )
         wall_time = perf_counter() - started
+        parsed = adapter.parse_result(agent, workspace, completed)
         if completed.returncode == 0 and workspace.solution.exists():
             solution = workspace.solution.read_text(encoding="utf-8")
             score = score_completion(task, solution)
@@ -107,7 +206,7 @@ def run_codex_task(
             reason = score.reason
         else:
             passed = False
-            reason = f"codex exit {completed.returncode}"
+            reason = str(parsed.pop("failure_reason", f"{agent.type} exit {completed.returncode}"))
         record = {
             "run_mode": "agent",
             "agent": agent.name,
@@ -120,9 +219,8 @@ def run_codex_task(
             "exit_code": completed.returncode,
             "stdout": completed.stdout,
             "stderr": completed.stderr,
-            "final_message": _read_optional(workspace.final_message),
             "command": command,
-            **_agent_cost_fields(completed.stderr),
+            **parsed,
         }
     except subprocess.TimeoutExpired as exc:
         record = {
@@ -131,7 +229,7 @@ def run_codex_task(
             "task_id": task.task_id,
             "suite": task.suite,
             "passed": False,
-            "failure_reason": "codex timeout",
+            "failure_reason": f"{agent.type} timeout",
             "wall_time_seconds": agent.timeout_seconds,
             "sandbox_mode": agent.sandbox,
             "exit_code": None,
@@ -146,7 +244,7 @@ def run_codex_task(
             "task_id": task.task_id,
             "suite": task.suite,
             "passed": False,
-            "failure_reason": f"codex executable not found: {agent.command}",
+            "failure_reason": f"{agent.type} executable not found: {agent.command}",
             "wall_time_seconds": 0.0,
             "sandbox_mode": agent.sandbox,
             "exit_code": None,
@@ -162,6 +260,23 @@ def run_codex_task(
         status = "passed" if record.get("passed") is True else "failed"
         progress(f"{agent.name} {task.task_id}: {status}")
     return record
+
+
+def run_codex_task(
+    *,
+    agent: AgentConfig,
+    task: BenchmarkTask,
+    result_path: Path,
+    retain_workspace: bool = False,
+    progress: Callable[[str], None] | None = None,
+) -> dict[str, object]:
+    return run_agent_task(
+        agent=agent,
+        task=task,
+        result_path=result_path,
+        retain_workspace=retain_workspace,
+        progress=progress,
+    )
 
 
 def _read_optional(path: Path) -> str:

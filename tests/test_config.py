@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from local_code_bench.config import (
+    AgentConfig,
     ConfigError,
     load_agents,
     load_inferencers,
@@ -303,6 +304,42 @@ agents:
     assert agents["codex"].timeout_seconds == 30.0
     assert agents["codex"].model == "gpt-5"
     assert agents["codex"].profile == "default"
+    assert agents["codex"].url is None
+
+
+def test_load_agents_accepts_registered_harness_type_and_url(tmp_path) -> None:
+    from local_code_bench.agents import register_agent_adapter
+
+    class DummyAdapter:
+        kind = "dummy"
+
+        def build_command(self, agent: AgentConfig, workspace) -> list[str]:
+            return [agent.command]
+
+        def parse_result(self, agent: AgentConfig, workspace, completed) -> dict[str, object]:
+            return {"cost_status": "unavailable"}
+
+        def detect(self, agent: AgentConfig):
+            raise NotImplementedError
+
+    config_path = tmp_path / "agents.yaml"
+    config_path.write_text(
+        """
+agents:
+  - name: custom
+    type: dummy
+    command: dummy-agent
+    sandbox: workspace-write
+    url: https://example.test/dummy
+""",
+        encoding="utf-8",
+    )
+
+    with register_agent_adapter(DummyAdapter()):
+        agents = load_agents(config_path)
+
+    assert agents["custom"].type == "dummy"
+    assert agents["custom"].url == "https://example.test/dummy"
 
 
 def test_load_agents_reports_invalid_timeout(tmp_path) -> None:
@@ -492,7 +529,7 @@ agents:
         encoding="utf-8",
     )
 
-    with pytest.raises(ConfigError, match="must be 'codex'"):
+    with pytest.raises(ConfigError, match="supported types: codex"):
         load_agents(config_path)
 
 

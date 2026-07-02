@@ -40,7 +40,7 @@ class ModelConfig:
     thinking_extra_body: dict[str, Any] | None = None
 
 
-AgentType = Literal["codex"]
+AgentType = str
 
 
 @dataclass(frozen=True)
@@ -52,6 +52,7 @@ class AgentConfig:
     timeout_seconds: float
     model: str | None = None
     profile: str | None = None
+    url: str | None = None
 
 
 Lifecycle = Literal["server", "app"]
@@ -465,19 +466,24 @@ def _parse_agent(entry: Any, index: int) -> AgentConfig:
     if not isinstance(entry, dict):
         raise ConfigError(f"agents[{index}] must be a mapping")
     agent_type = _required_str(entry, "type", index, root="agents")
-    if agent_type != "codex":
-        raise ConfigError(f"agents[{index}].type must be 'codex'")
+    from local_code_bench.agents import supported_harness_kinds
+
+    supported = supported_harness_kinds()
+    if agent_type not in supported:
+        allowed = ", ".join(supported) or "(none)"
+        raise ConfigError(f"agents[{index}].type '{agent_type}' is not registered; supported types: {allowed}")
     timeout = entry.get("timeout_seconds", 600)
     if not isinstance(timeout, int | float) or timeout <= 0:
         raise ConfigError(f"agents[{index}].timeout_seconds must be a positive number")
     return AgentConfig(
         name=_required_str(entry, "name", index, root="agents"),
-        type="codex",
+        type=agent_type,
         command=_required_str(entry, "command", index, root="agents"),
         sandbox=_required_str(entry, "sandbox", index, root="agents"),
         timeout_seconds=float(timeout),
         model=_optional_str(entry, "model", index, root="agents"),
         profile=_optional_str(entry, "profile", index, root="agents"),
+        url=_optional_str(entry, "url", index, root="agents"),
     )
 
 

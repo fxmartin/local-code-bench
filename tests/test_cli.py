@@ -113,10 +113,10 @@ def test_agent_mode_resume_skips_completed_task(tmp_path, monkeypatch, capsys) -
     monkeypatch.setattr("local_code_bench.cli.load_agents", lambda _path: {"codex": agent})
     monkeypatch.setattr("local_code_bench.cli.load_suite", lambda _suite, cache_dir: [task])
 
-    def fail_run_codex_task(**_kwargs):
+    def fail_run_agent_task(**_kwargs):
         raise AssertionError("resume should skip completed agent task")
 
-    monkeypatch.setattr("local_code_bench.cli.run_codex_task", fail_run_codex_task)
+    monkeypatch.setattr("local_code_bench.cli.run_agent_task", fail_run_agent_task)
 
     exit_code = main(
         [

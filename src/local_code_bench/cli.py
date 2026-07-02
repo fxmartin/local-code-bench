@@ -10,7 +10,7 @@ import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from local_code_bench.agents import completed_agent_pairs, run_codex_task
+from local_code_bench.agents import completed_agent_pairs, run_agent_task
 from local_code_bench.config import (
     ConfigError,
     InferencerConfig,
@@ -484,7 +484,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if (args.agent, task.task_id) in done:
                     print(f"[{index}/{len(tasks)}] {args.agent} {task.task_id}: skipped", flush=True)
                     continue
-                run_codex_task(
+                run_agent_task(
                     agent=agents[args.agent],
                     task=task,
                     result_path=result_path,

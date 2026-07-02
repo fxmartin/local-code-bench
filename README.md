@@ -257,9 +257,15 @@ and able to serve. Tune the load wait with `WARMUP_TIMEOUT` (default 300s).
 
 ## Agent Mode
 
-Codex agent targets live in `configs/agents.yaml`. A bounded run materializes each
-task into an isolated workspace, invokes `codex exec` with an explicit sandbox,
-then scores the resulting `solution.py` with the same tests as endpoint runs:
+Coding-agent targets live in `configs/agents.yaml`. Each entry names a registered
+harness `type`, the CLI `command`, an explicit `sandbox`, and optional reference
+metadata such as `model`, `profile`, and `url`. The harness validates `type`
+against the adapter registry, rejects unknown kinds with the supported list, and
+only detects installed CLIs read-only from `command`; it never installs an agent.
+
+Codex is the first registered adapter. A bounded run materializes each task into
+an isolated workspace, invokes `codex exec` with the configured sandbox, then
+scores the resulting `solution.py` with the same tests as endpoint runs:
 
 ```bash
 uv run bench --mode agent --agent codex --suite humaneval --limit 3
