@@ -55,6 +55,10 @@ class AgentConfig:
     url: str | None = None
     anthropic_base_url: str | None = None
     anthropic_api_key_env: str | None = None
+    base_url: str | None = None
+    api_key_env: str | None = None
+    system_prompt: str | None = None
+    append_system_prompt: str | None = None
 
 
 Lifecycle = Literal["server", "app"]
@@ -442,6 +446,9 @@ def _parse_model(entry: Any, index: int) -> ModelConfig:
     if not isinstance(prices, dict):
         raise ConfigError(f"models[{index}].price_per_1k_tokens must be a mapping")
 
+    concurrency = _optional_positive_int(entry, "concurrency", index, default=1)
+    if concurrency is None:
+        raise ConfigError(f"models[{index}].concurrency must be a positive integer")
     return ModelConfig(
         name=name,
         type=model_type,  # type: ignore[arg-type]
@@ -453,7 +460,7 @@ def _parse_model(entry: Any, index: int) -> ModelConfig:
             output=_required_number(prices, "output", index, "price_per_1k_tokens"),
         ),
         api_key_env=_optional_str(entry, "api_key_env", index),
-        concurrency=_optional_positive_int(entry, "concurrency", index, default=1),
+        concurrency=concurrency,
         max_tokens=_optional_positive_int(entry, "max_tokens", index, default=None),
         extra_body=_optional_mapping(entry, "extra_body", index),
         inferencer=_optional_str(entry, "inferencer", index),
@@ -488,6 +495,10 @@ def _parse_agent(entry: Any, index: int) -> AgentConfig:
         url=_optional_str(entry, "url", index, root="agents"),
         anthropic_base_url=_optional_str(entry, "anthropic_base_url", index, root="agents"),
         anthropic_api_key_env=_optional_str(entry, "anthropic_api_key_env", index, root="agents"),
+        base_url=_optional_url(entry, "base_url", index, root="agents"),
+        api_key_env=_optional_str(entry, "api_key_env", index, root="agents"),
+        system_prompt=_optional_str(entry, "system_prompt", index, root="agents"),
+        append_system_prompt=_optional_str(entry, "append_system_prompt", index, root="agents"),
     )
 
 
@@ -517,6 +528,19 @@ def _optional_str(
     if not isinstance(value, str) or not value.strip():
         raise ConfigError(f"{root}[{index}].{field} must be a non-empty string when set")
     return value
+
+
+def _optional_url(
+    entry: dict[str, Any],
+    field: str,
+    index: int,
+    *,
+    root: str = "models",
+) -> str | None:
+    value = _optional_str(entry, field, index, root=root)
+    if value is None:
+        return None
+    return value.rstrip("/")
 
 
 def _optional_positive_int(

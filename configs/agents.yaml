@@ -20,3 +20,11 @@ agents:
     url: https://code.claude.com/docs
     anthropic_base_url: http://127.0.0.1:4000
     anthropic_api_key_env: ANTHROPIC_API_KEY
+  - name: qwen-code
+    type: qwen-code
+    command: qwen
+    sandbox: workspace-write
+    timeout_seconds: 600
+    model: mlx-community/Qwen3.6-27B-4bit
+    base_url: http://localhost:8000/v1
+    url: https://github.com/QwenLM/qwen-code

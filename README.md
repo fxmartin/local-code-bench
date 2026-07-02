@@ -263,10 +263,10 @@ metadata such as `model`, `profile`, and `url`. The harness validates `type`
 against the adapter registry, rejects unknown kinds with the supported list, and
 only detects installed CLIs read-only from `command`; it never installs an agent.
 
-Codex and Claude Code are registered adapters. A bounded run materializes each
-task into an isolated workspace, invokes the selected CLI with the configured
-sandbox/permission flags, then scores the resulting `solution.py` with the same
-tests as endpoint runs:
+Codex, Claude Code, and Qwen Code are registered adapters. A bounded run
+materializes each task into an isolated workspace, invokes the selected CLI with
+the configured sandbox/permission flags, then scores the resulting `solution.py`
+with the same tests as endpoint runs:
 
 ```bash
 uv run bench --mode agent --agent codex --suite humaneval --limit 3
@@ -282,6 +282,21 @@ must go through an Anthropic-compatible gateway exposed with
 `ANTHROPIC_BASE_URL` and an API key read from `anthropic_api_key_env`. Gateway
 runs are flagged in the record and report `cost_status=unavailable` when usage
 or cost is absent.
+
+Qwen Code uses the OpenAI-compatible path and can point at the same local
+inferencer endpoint as endpoint-mode models. The bundled `qwen-code` agent
+targets `http://localhost:8000/v1`; override or add entries in
+`configs/agents.yaml` with `base_url`, `model`, and optional `api_key_env` when
+the endpoint requires a key:
+
+```bash
+export QWEN_LOCAL_API_KEY=local-secret   # only if your local server requires one
+uv run bench --mode agent --agent qwen-code --suite humaneval --limit 3
+```
+
+For Qwen runs the harness sets `OPENAI_BASE_URL`, `OPENAI_MODEL`, and, when
+`api_key_env` is configured and present, `OPENAI_API_KEY` only in the subprocess
+environment. Secrets are not written into JSONL results.
 
 ## OpenCode Benchmark
 

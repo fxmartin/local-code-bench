@@ -63,6 +63,14 @@ def test_default_models_config_loads() -> None:
     assert models["anthropic-claude-baseline"].pinned_revision == "claude-sonnet-4-6"
 
 
+def test_default_agents_config_loads_qwen_code() -> None:
+    agents = load_agents("configs/agents.yaml")
+
+    assert agents["qwen-code"].type == "qwen-code"
+    assert agents["qwen-code"].base_url == "http://localhost:8000/v1"
+    assert agents["qwen-code"].url == "https://github.com/QwenLM/qwen-code"
+
+
 def test_load_models_parses_concurrency_and_max_tokens(tmp_path) -> None:
     config_path = tmp_path / "models.yaml"
     config_path.write_text(
@@ -304,7 +312,39 @@ agents:
     assert agents["codex"].timeout_seconds == 30.0
     assert agents["codex"].model == "gpt-5"
     assert agents["codex"].profile == "default"
+    assert agents["codex"].base_url is None
+    assert agents["codex"].api_key_env is None
     assert agents["codex"].url is None
+
+
+def test_load_agents_accepts_qwen_code_endpoint_and_system_prompt_fields(tmp_path) -> None:
+    config_path = tmp_path / "agents.yaml"
+    config_path.write_text(
+        """
+agents:
+  - name: qwen-local
+    type: qwen-code
+    command: qwen
+    sandbox: workspace-write
+    model: local-qwen
+    base_url: http://127.0.0.1:8000/v1/
+    api_key_env: QWEN_LOCAL_API_KEY
+    system_prompt: Custom system prompt.
+    append_system_prompt: Extra benchmark instructions.
+    url: https://github.com/QwenLM/qwen-code
+""",
+        encoding="utf-8",
+    )
+
+    agents = load_agents(config_path)
+
+    assert agents["qwen-local"].type == "qwen-code"
+    assert agents["qwen-local"].model == "local-qwen"
+    assert agents["qwen-local"].base_url == "http://127.0.0.1:8000/v1"
+    assert agents["qwen-local"].api_key_env == "QWEN_LOCAL_API_KEY"
+    assert agents["qwen-local"].system_prompt == "Custom system prompt."
+    assert agents["qwen-local"].append_system_prompt == "Extra benchmark instructions."
+    assert agents["qwen-local"].url == "https://github.com/QwenLM/qwen-code"
 
 
 def test_load_agents_accepts_registered_harness_type_and_url(tmp_path) -> None:

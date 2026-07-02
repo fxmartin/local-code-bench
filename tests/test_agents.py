@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 
@@ -73,7 +74,7 @@ def test_codex_adapter_command_matches_legacy_builder(tmp_path) -> None:
 
 
 def test_adapter_for_unknown_type_lists_registered_harnesses() -> None:
-    with pytest.raises(ValueError, match="unknown agent harness type 'missing'.*codex"):
+    with pytest.raises(ValueError, match="unknown agent harness type 'missing'.*codex.*qwen-code"):
         adapter_for("missing")
 
 
@@ -458,6 +459,112 @@ def test_run_agent_task_uses_registered_codex_adapter(tmp_path) -> None:
     assert record["cost_status"] == "unavailable"
 
 
+def test_qwen_code_adapter_builds_headless_json_command(tmp_path) -> None:
+    task = BenchmarkTask("suite/1", "humaneval", "prompt", "assert True", "solution", "v")
+    workspace = materialize_task_workspace(task, parent=tmp_path)
+    agent = AgentConfig(
+        "qwen-local",
+        "qwen-code",
+        "qwen",
+        "workspace-write",
+        10,
+        model="mlx-community/Qwen3.6-27B-4bit",
+        system_prompt="Custom system prompt.",
+        append_system_prompt="Extra benchmark instructions.",
+    )
+
+    command = adapter_for("qwen-code").build_command(agent, workspace)
+
+    assert command[:5] == ["qwen", "--prompt", workspace.instructions.read_text(encoding="utf-8"), "--output-format", "json"]
+    assert command[5:] == [
+        "--model",
+        "mlx-community/Qwen3.6-27B-4bit",
+        "--approval-mode",
+        "auto-edit",
+        "--sandbox",
+        "--system-prompt",
+        "Custom system prompt.",
+        "--append-system-prompt",
+        "Extra benchmark instructions.",
+    ]
+
+
+def test_run_qwen_code_task_with_fake_executable_scores_solution_and_usage(
+    tmp_path, monkeypatch
+) -> None:
+    fake = tmp_path / "qwen"
+    fake.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "import os\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "args = sys.argv[1:]\n"
+        "if '--prompt' not in args or '--output-format' not in args:\n"
+        "    sys.exit(41)\n"
+        "if os.environ.get('OPENAI_BASE_URL') != 'http://127.0.0.1:8000/v1':\n"
+        "    sys.exit(42)\n"
+        "if os.environ.get('OPENAI_API_KEY') != 'local-secret':\n"
+        "    sys.exit(43)\n"
+        "if os.environ.get('OPENAI_MODEL') != 'local-qwen':\n"
+        "    sys.exit(44)\n"
+        "Path('solution.py').write_text('def add(a, b):\\n    return a + b\\n')\n"
+        "print(json.dumps([\n"
+        "    {'type': 'system', 'session_id': 's1'},\n"
+        "    {'type': 'result', 'session_id': 's1', 'result': 'done', 'usage': {\n"
+        "        'input_tokens': 3, 'output_tokens': 4, 'total_tokens': 7\n"
+        "    }},\n"
+        "]))\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    monkeypatch.setenv("QWEN_LOCAL_API_KEY", "local-secret")
+    task = BenchmarkTask("suite/1", "humaneval", "prompt", "assert add(1, 2) == 3", "add", "v")
+    agent = AgentConfig(
+        "qwen-local",
+        "qwen-code",
+        str(fake),
+        "workspace-write",
+        10,
+        model="local-qwen",
+        base_url="http://127.0.0.1:8000/v1",
+        api_key_env="QWEN_LOCAL_API_KEY",
+    )
+    result_path = tmp_path / "agent.jsonl"
+
+    record = run_agent_task(agent=agent, task=task, result_path=result_path)
+
+    assert record["passed"] is True
+    assert record["final_message"] == "done"
+    assert record["session_id"] == "s1"
+    assert record["usage"] == {"input_tokens": 3, "output_tokens": 4, "total_tokens": 7}
+    assert record["tokens"] == {"total": 7, "estimated": False}
+    assert record["cost_status"] == "tokens_available"
+    assert "local-secret" not in json.dumps(read_jsonl(result_path))
+
+
+def test_qwen_code_adapter_records_nonzero_exit_as_infra_failure(tmp_path) -> None:
+    fake = tmp_path / "qwen"
+    fake.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "sys.stderr.write('provider unavailable')\n"
+        "sys.exit(12)\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    task = BenchmarkTask("suite/1", "humaneval", "prompt", "assert True", "solution", "v")
+    agent = AgentConfig("qwen", "qwen-code", str(fake), "workspace-write", 10)
+    result_path = tmp_path / "agent.jsonl"
+
+    record = run_agent_task(agent=agent, task=task, result_path=result_path)
+
+    assert record["passed"] is False
+    assert record["failure_reason"] == "qwen-code exit 12"
+    assert record["exit_code"] == 12
+    assert record["cost_status"] == "unavailable"
+
+
 def test_run_agent_task_uses_adapter_failure_reason_and_can_retain_workspace(tmp_path) -> None:
     task = BenchmarkTask("suite/1", "humaneval", "prompt", "assert add(1, 2) == 3", "add", "v")
     agent = AgentConfig("custom", "custom", sys.executable, "workspace-write", 10)
@@ -579,6 +686,23 @@ def test_detect_agent_installation_reports_missing_command_and_url(tmp_path) -> 
     assert detection.installed is False
     assert detection.path is None
     assert detection.url == "https://github.com/openai/codex"
+
+
+def test_qwen_code_detection_reports_missing_command_and_url(tmp_path) -> None:
+    agent = AgentConfig(
+        "qwen-code",
+        "qwen-code",
+        str(tmp_path / "missing-qwen"),
+        "workspace-write",
+        10,
+        url="https://github.com/QwenLM/qwen-code",
+    )
+
+    detection = detect_agent_installation(agent)
+
+    assert detection.installed is False
+    assert detection.path is None
+    assert detection.url == "https://github.com/QwenLM/qwen-code"
 
 
 def test_extract_codex_total_tokens_returns_none_without_usage() -> None:

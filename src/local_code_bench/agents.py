@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
-from typing import Protocol
+from typing import Protocol, cast
 
 from local_code_bench.config import AgentConfig
 from local_code_bench.results import append_jsonl, read_jsonl
@@ -45,6 +45,7 @@ class AgentAdapter(Protocol):
 
     def build_command(self, agent: AgentConfig, workspace: AgentWorkspace) -> list[str]:
         """Build the non-interactive command used to run one materialized task."""
+        ...
 
     def parse_result(
         self,
@@ -53,9 +54,11 @@ class AgentAdapter(Protocol):
         completed: subprocess.CompletedProcess[str],
     ) -> dict[str, object]:
         """Parse harness-specific output, final text, exit, usage, and cost fields."""
+        ...
 
     def detect(self, agent: AgentConfig) -> AgentInstallation:
         """Report whether the configured harness command is installed, without installing it."""
+        ...
 
 
 _ADAPTERS: dict[str, AgentAdapter] = {}
@@ -159,6 +162,14 @@ class ClaudeCodeAdapter:
             "--bare",
         ]
 
+    def build_environment(self, agent: AgentConfig) -> dict[str, str] | None:
+        updates: dict[str, str] = {}
+        if agent.anthropic_base_url:
+            updates["ANTHROPIC_BASE_URL"] = agent.anthropic_base_url
+        if agent.anthropic_api_key_env and agent.anthropic_api_key_env in os.environ:
+            updates["ANTHROPIC_API_KEY"] = os.environ[agent.anthropic_api_key_env]
+        return updates or None
+
     def parse_result(
         self,
         agent: AgentConfig,
@@ -202,6 +213,66 @@ class ClaudeCodeAdapter:
 
 
 _ADAPTERS[ClaudeCodeAdapter.kind] = ClaudeCodeAdapter()
+
+
+class QwenCodeAdapter:
+    kind = "qwen-code"
+
+    def build_command(self, agent: AgentConfig, workspace: AgentWorkspace) -> list[str]:
+        command = [
+            agent.command,
+            "--prompt",
+            workspace.instructions.read_text(encoding="utf-8"),
+            "--output-format",
+            "json",
+        ]
+        if agent.model:
+            command.extend(["--model", agent.model])
+        command.extend(["--approval-mode", "auto-edit"])
+        if agent.sandbox and agent.sandbox.lower() not in {"none", "off", "disabled"}:
+            command.append("--sandbox")
+        if agent.system_prompt:
+            command.extend(["--system-prompt", agent.system_prompt])
+        if agent.append_system_prompt:
+            command.extend(["--append-system-prompt", agent.append_system_prompt])
+        return command
+
+    def build_environment(self, agent: AgentConfig) -> dict[str, str] | None:
+        env: dict[str, str] = {}
+        if agent.base_url:
+            env["OPENAI_BASE_URL"] = agent.base_url
+        if agent.model:
+            env["OPENAI_MODEL"] = agent.model
+        if agent.api_key_env and agent.api_key_env in os.environ:
+            env["OPENAI_API_KEY"] = os.environ[agent.api_key_env]
+        return env or None
+
+    def parse_result(
+        self,
+        agent: AgentConfig,
+        workspace: AgentWorkspace,
+        completed: subprocess.CompletedProcess[str],
+    ) -> dict[str, object]:
+        fields: dict[str, object] = {"cost_status": "unavailable"}
+        if completed.stdout.strip():
+            fields.update(_parse_qwen_json_output(completed.stdout))
+        if completed.returncode != 0:
+            fields["failure_reason"] = f"qwen-code exit {completed.returncode}"
+        return fields
+
+    def detect(self, agent: AgentConfig) -> AgentInstallation:
+        path = shutil.which(agent.command)
+        return AgentInstallation(
+            name=agent.name,
+            type=agent.type,
+            command=agent.command,
+            installed=path is not None,
+            path=path,
+            url=agent.url,
+        )
+
+
+_ADAPTERS[QwenCodeAdapter.kind] = QwenCodeAdapter()
 
 
 def completed_agent_pairs(result_path: Path) -> set[tuple[str, str]]:
@@ -265,7 +336,7 @@ def run_agent_task(
             text=True,
             timeout=agent.timeout_seconds,
             check=False,
-            env=_agent_environment(agent),
+            env=_agent_subprocess_env(adapter, agent),
         )
         wall_time = perf_counter() - started
         parsed = adapter.parse_result(agent, workspace, completed)
@@ -303,9 +374,9 @@ def run_agent_task(
             "wall_time_seconds": agent.timeout_seconds,
             "sandbox_mode": agent.sandbox,
             "exit_code": None,
-            "stdout": exc.stdout or "",
-            "stderr": exc.stderr or "",
-            **_agent_cost_fields(exc.stderr or ""),
+            "stdout": _process_text(exc.stdout),
+            "stderr": _process_text(exc.stderr),
+            **_agent_cost_fields(_process_text(exc.stderr)),
         }
     except FileNotFoundError as exc:
         record = {
@@ -368,6 +439,70 @@ def _agent_cost_fields(stderr: str) -> dict[str, object]:
     }
 
 
+def _agent_subprocess_env(adapter: AgentAdapter, agent: AgentConfig) -> dict[str, str] | None:
+    build_environment = getattr(adapter, "build_environment", None)
+    if not callable(build_environment):
+        return None
+    overrides = cast(dict[str, str] | None, build_environment(agent))
+    if not overrides:
+        return None
+    return {**os.environ, **overrides}
+
+
+def _process_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def _parse_qwen_json_output(stdout: str) -> dict[str, object]:
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        return {"final_message": stdout.strip()}
+
+    events = payload if isinstance(payload, list) else [payload]
+    fields: dict[str, object] = {}
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if isinstance(event.get("session_id"), str):
+            fields["session_id"] = event["session_id"]
+        result = event.get("result")
+        if isinstance(result, str):
+            fields["final_message"] = result
+        usage = event.get("usage")
+        if isinstance(usage, dict):
+            fields["usage"] = usage
+            total_tokens = _usage_total_tokens(usage)
+            if total_tokens is not None:
+                fields["tokens"] = {"total": total_tokens, "estimated": False}
+                fields["cost_status"] = "tokens_available"
+    if "cost_status" not in fields:
+        fields["cost_status"] = "unavailable"
+    return fields
+
+
+def _usage_total_tokens(usage: dict[object, object]) -> int | None:
+    for key in ("total_tokens", "totalTokens", "total"):
+        value = usage.get(key)
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            return int(value)
+    token_keys = (
+        "input_tokens",
+        "output_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+        "prompt_tokens",
+        "completion_tokens",
+    )
+    values = [usage.get(key) for key in token_keys]
+    numeric = [int(value) for value in values if isinstance(value, int | float)]
+    return sum(numeric) if numeric else None
+
+
 def extract_codex_total_tokens(stderr: str) -> int | None:
     match = re.search(r"tokens used\s*:?\s*\n?\s*([\d,]+)", stderr, flags=re.IGNORECASE)
     if not match:
@@ -402,14 +537,3 @@ def _claude_gateway_fields(agent: AgentConfig) -> dict[str, object] | None:
     if agent.anthropic_api_key_env:
         gateway["api_key_env"] = agent.anthropic_api_key_env
     return gateway
-
-
-def _agent_environment(agent: AgentConfig) -> dict[str, str] | None:
-    updates: dict[str, str] = {}
-    if agent.anthropic_base_url:
-        updates["ANTHROPIC_BASE_URL"] = agent.anthropic_base_url
-    if agent.anthropic_api_key_env and agent.anthropic_api_key_env in os.environ:
-        updates["ANTHROPIC_API_KEY"] = os.environ[agent.anthropic_api_key_env]
-    if not updates:
-        return None
-    return {**os.environ, **updates}
