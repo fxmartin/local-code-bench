@@ -239,6 +239,47 @@ the IDs stable so historical canary runs stay comparable. The set is HumanEval
 only for now; extending it to a cross-suite anchor is a matter of adding curated
 MBPP IDs alongside.
 
+## Mini-App Tasks: The Rung Above Function-Level Suites
+
+HumanEval-shaped tasks measure the model one function at a time and barely
+exercise anything app-shaped: argument handling, exit codes, exact output
+contracts, spec-reading discipline. The `jsondiff-cli` suite is the first rung
+above them: one small-but-sharp CLI app — a deterministic JSON diff tool —
+specified precisely enough to have a single observable correct behaviour, and
+scored black-box in the existing sandbox. The acceptance tests drive the
+program's `main(argv)` entry point in-process (the sandbox forbids
+subprocesses) and assert only stdout and exit codes, never internals.
+
+The spec deliberately pins edges that discriminate between models: JSON type
+strictness (`true` is not `1`, but `1` equals `1.0` — the Python bool-is-int
+trap), no descent into added/removed subtrees, an exact deterministic output
+order, and a three-way exit-code contract. The hidden acceptance suite is
+split into four behavioural slices — `core`, `format-order`, `type-edges`,
+`exit-codes` — shipped as four records that share one prompt, so a run yields
+graded partial credit (which facet broke) instead of a single all-or-nothing
+bit, while riding the unchanged pass@1 machinery. Offline validation mirrors
+the EvalPlus approach: the reference solution must pass every slice in the
+real sandbox, and known-buggy variants (bool/int confusion, unsorted keys,
+wrong error exit code) must each fail exactly their targeted slice.
+
+The suite is registered in `configs/suites.yaml` and generated
+deterministically by `scripts/build_jsondiff_suite.py`; a drift test keeps the
+checked-in dataset in sync. Custom suites registered there are loadable by
+name everywhere a built-in suite is — the endpoint runner, agent mode, and
+rescore all accept the id:
+
+```bash
+uv run bench --suite jsondiff-cli --model openrouter-glm-4.6 --max-tokens 2048
+```
+
+Raise `--max-tokens` (2048 is a sensible floor): a full program is longer than
+a HumanEval completion and the 1024 suite default truncates mid-source. Being
+home-grown and unpublished before this repository, the suite also doubles as a
+contamination tripwire — a model that aces the public suites but stumbles here
+is pattern-matching, not reading the spec. Like the canary IDs, the spec and
+tests are frozen once benchmarked: change them only by cutting a new versioned
+suite id, or historical runs stop being comparable.
+
 ## Tiering: Spend Generation Where It Is Cheap
 
 Putting it together, the harness runs each evaluation where its cost is lowest:

@@ -42,6 +42,20 @@ def test_run_in_sandbox_blocks_subprocess() -> None:
     assert "PermissionError" in result.reason
 
 
+def test_run_in_sandbox_tolerates_main_guard() -> None:
+    # Program-shaped candidates (mini-app suites) often ship a __main__ guard;
+    # the sandbox namespace defines __name__ so the guard is skipped, not fatal.
+    result = run_in_sandbox(
+        "def add(a, b):\n"
+        "    return a + b\n"
+        "if __name__ == '__main__':\n"
+        "    raise SystemExit(99)\n",
+        "assert add(1, 2) == 3",
+    )
+
+    assert result.passed is True
+
+
 def test_score_completion_extracts_python_fence() -> None:
     task = BenchmarkTask(
         task_id="x",

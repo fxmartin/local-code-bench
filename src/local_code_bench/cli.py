@@ -100,10 +100,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--suite",
-        choices=["humaneval", "mbpp", "canary", "humaneval-plus", "mbpp-plus"],
         help=(
-            "benchmark suite to run (canary = curated HumanEval anchor subset; "
-            "humaneval-plus/mbpp-plus = EvalPlus differential suites)"
+            "benchmark suite to run: humaneval, mbpp, canary (curated HumanEval "
+            "anchor subset), humaneval-plus/mbpp-plus (EvalPlus differential "
+            "suites), or a custom suite id registered in configs/suites.yaml"
         ),
     )
     parser.add_argument("--limit", type=int, help="limit benchmark tasks")

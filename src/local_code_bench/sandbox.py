@@ -106,7 +106,9 @@ def _runner_source(root: Path, code: str, test_code: str) -> str:
         socket.socket = blocked_socket
         subprocess.Popen = blocked_popen
 
-        namespace = {{}}
+        # Program-shaped candidates guard their CLI entry with __main__; give the
+        # namespace a name so the guard is skipped instead of raising NameError.
+        namespace = {{"__name__": "__bench__"}}
         exec({code!r}, namespace)
         exec({test_code!r}, namespace)
         """

@@ -1,8 +1,10 @@
-# Custom benchmark suites for the dashboard launcher (Story 09.5-001).
+# Custom benchmark suites (Story 09.5-001).
 #
 # The built-in suites (humaneval, mbpp, canary, humaneval-plus, mbpp-plus) are
 # always available and need no entry here. Use this file to register *additional*
-# suites that point at a loadable dataset, without changing any code.
+# suites that point at a loadable dataset, without changing any code. Registered
+# suites appear in the dashboard launcher and are runnable by id everywhere a
+# built-in suite is (`bench --suite <id>`).
 #
 #   id      selector id. Must be unique and must not collide with a built-in name.
 #   label   optional human label shown in the launcher (defaults to the id).
@@ -11,14 +13,20 @@
 #           `{"data": [...]}` object).
 #   format  optional override (`jsonl` | `json`); inferred from the extension.
 #
+# Dataset records take: task_id (optional, defaults to <suite>/<index>), prompt
+# (required), test_code (required; exec'd in the sandbox after the extracted
+# completion), entry_point (optional, default "solution"), version (optional).
+#
 # A suite whose source is missing or unreadable is listed *disabled with a reason*
 # rather than offered and failing at launch.
-#
-# This file ships fully commented, so by default only the built-in suites are
-# offered. Uncomment and adapt an entry to register your own:
-#
-# suites:
-#   - id: my-suite
-#     label: My Suite
-#     source: datasets/my-suite.jsonl
-#     format: jsonl
+
+suites:
+  # Mini-app rung above the function-level suites: one deterministic JSON-diff
+  # CLI spec, scored black-box by four hidden behavioural slices (core,
+  # format-order, type-edges, exit-codes) that share a single prompt. Generated
+  # by scripts/build_jsondiff_suite.py — regenerate rather than hand-editing,
+  # and version the suite id if the spec ever changes. Run with a raised cap
+  # (e.g. --max-tokens 2048): a full program outgrows the 1024 default.
+  - id: jsondiff-cli
+    label: JSON-diff CLI (mini-app)
+    source: datasets/jsondiff-cli.jsonl
