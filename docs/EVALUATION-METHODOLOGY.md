@@ -239,6 +239,91 @@ the IDs stable so historical canary runs stay comparable. The set is HumanEval
 only for now; extending it to a cross-suite anchor is a matter of adding curated
 MBPP IDs alongside.
 
+## The Home-Grown Ladder: Mini-Apps And Debugging Above Function-Level Suites
+
+HumanEval-shaped tasks measure the model one function at a time and barely
+exercise anything app-shaped: argument handling, exit codes, exact output
+contracts, spec-reading discipline. The home-grown ladder fills the rungs
+above them — and, being unpublished before this repository, doubles as a
+contamination tripwire: a model that aces the public suites but stumbles here
+is pattern-matching, not reading the spec.
+
+The ladder:
+
+- **`logclass-cli` (rung 1, easy mini-app).** A Python port of the OpenCode
+  Task A log classifier, so the whole ladder runs through one pipeline with
+  comparable pass@1 rows and no Go toolchain. The severity semantics are
+  test-enforced to match the Go original's single source of truth
+  (`opencode.fixtures.classify_line`), and where `prompts/task-a.md` left
+  output formats loose (the Go scorer matches by regex), this spec pins them
+  exactly. The Go Task A stays untouched in the `bench opencode` flow — it
+  keeps the cross-language axis and its scorecard history. Slices: `counts`,
+  `json-filter`, `edge-rules`, `exit-codes`; the discriminating edges are the
+  case-sensitive substring rules (lowercase `error` is `unknown`, `WARNING`
+  is `warn`, `FATALITY` is `error`) and first-match precedence.
+- **`jsondiff-cli` (rung 2, medium mini-app).** A deterministic JSON diff
+  tool. The spec pins edges that discriminate between models: JSON type
+  strictness (`true` is not `1`, but `1` equals `1.0` — the Python bool-is-int
+  trap), no descent into added/removed subtrees, an exact deterministic output
+  order, and a three-way exit-code contract. Slices: `core`, `format-order`,
+  `type-edges`, `exit-codes`.
+- **`calc-cli` (rung 3, hard mini-app).** An arithmetic expression evaluator
+  that needs a real tokenizer and recursive-descent parser: right-associative
+  `^`, unary minus binding between `^` and `*`/`/` (`-2^2` is -4, `(-2)^2` is
+  4), IEEE-double semantics with an exact formatting rule, and an
+  all-or-nothing file-mode output contract that forces buffering. The grammar
+  is deliberately not Python — `^` is exponentiation and `**` is a syntax
+  error — so an `eval()` shortcut fails (validated explicitly with an
+  eval-cheat variant). Slices: `arithmetic`, `power-unary`, `format-file`,
+  `errors`.
+- **`bugfix-py` (rung 4, debugging axis).** Five records, each a small buggy
+  module plus a true bug report; the model returns the complete fixed module.
+  The skill measured is fault localization and a behaviour-preserving fix, not
+  greenfield generation — every test asserts the fixed behaviour *and*
+  regression behaviour the fix must not break. The bugs are classic Python
+  failure modes: mutable default argument, shallow-copy pollution of module
+  defaults, off-by-one dropping the last window, double-applied sort reversal
+  flipping the tie-break, and generator exhaustion.
+
+All three are scored black-box in the existing sandbox: acceptance tests drive
+the program's entry point in-process (the sandbox forbids subprocesses) and
+assert only observable behaviour — stdout, exit codes, return values — never
+internals. The mini-app suites split their hidden acceptance tests into
+behavioural slices shipped as multiple records sharing one prompt, so a run
+yields graded partial credit (which facet broke) instead of a single
+all-or-nothing bit, while riding the unchanged pass@1 machinery; `bugfix-py`
+gets its granularity from one record per bug.
+
+Offline validation mirrors the EvalPlus approach and runs in CI: each
+reference solution must pass every slice in the real sandbox, and known-buggy
+variants must fail exactly their targeted slice. `bugfix-py` is additionally
+self-proving — the shipped buggy source must fail its own tests (so the bug
+report is real) and the reference fix must pass. Each suite is generated
+deterministically by its `scripts/build_*_suite.py` script, with a drift test
+keeping the checked-in dataset in sync.
+
+The suites are registered in `configs/suites.yaml`, and custom suites
+registered there are loadable by name everywhere a built-in suite is — the
+endpoint runner, agent mode, and rescore all accept the id:
+
+```bash
+uv run bench --suite logclass-cli --model openrouter-glm-4.6 --max-tokens 2048
+uv run bench --suite jsondiff-cli --model openrouter-glm-4.6 --max-tokens 2048
+uv run bench --suite calc-cli --model openrouter-glm-4.6 --max-tokens 3072
+uv run bench --suite bugfix-py --model openrouter-glm-4.6 --max-tokens 2048
+uv run bench --mode agent --agent codex --suite bugfix-py
+```
+
+Raise `--max-tokens` for the mini-apps (2048 is a sensible floor, 3072 for the
+parser-sized `calc-cli`): a full program is longer than a HumanEval completion
+and the 1024 suite default truncates mid-source. One agent-mode caveat: the
+workspace materializer writes the acceptance tests into `test_solution.py`
+alongside the instructions, so *agents can read the tests* while endpoint
+models never see them — a TDD-style advantage to keep in mind when comparing
+agent scores against endpoint scores on the same suite. Like the canary IDs,
+each suite's spec and tests are frozen once benchmarked: change them only by
+cutting a new versioned suite id, or historical runs stop being comparable.
+
 ## Tiering: Spend Generation Where It Is Cheap
 
 Putting it together, the harness runs each evaluation where its cost is lowest:

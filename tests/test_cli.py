@@ -40,9 +40,35 @@ def test_parser_accepts_canary_suite() -> None:
     assert args.suite == "canary"
 
 
-def test_parser_rejects_unknown_suite() -> None:
-    with pytest.raises(SystemExit):
-        build_parser().parse_args(["--suite", "nope"])
+def test_parser_accepts_custom_suite_id() -> None:
+    # Custom suites from configs/suites.yaml are validated at load time, not by
+    # argparse, so any id parses; load_suite rejects unknown names.
+    args = build_parser().parse_args(["--suite", "jsondiff-cli"])
+
+    assert args.suite == "jsondiff-cli"
+
+
+def test_main_rejects_unknown_suite_at_load_time(capsys, tmp_path) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text(
+        "models:\n"
+        "  - name: local-example\n"
+        "    type: openai\n"
+        "    base_url: http://localhost:8000/v1\n"
+        "    model_id: local-coding-model\n"
+        "    pinned_revision: manual\n"
+        "    price_per_1k_tokens:\n"
+        "      input: 0.0\n"
+        "      output: 0.0\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        ["--suite", "nope", "--config", str(config), "--cache-dir", str(tmp_path)]
+    )
+
+    assert exit_code == 2
+    assert "unknown suite 'nope'" in capsys.readouterr().err
 
 
 def test_parser_accepts_evalplus_suites_and_timeout() -> None:
