@@ -2,6 +2,20 @@
 
 <!-- version list -->
 
+## v0.52.0 (2026-07-14)
+
+### Features
+
+- **suites**: Add calc-cli parser mini-app and bugfix-py debugging suites
+  ([`59c3cc6`](https://github.com/fxmartin/local-code-bench/commit/59c3cc6d9fd57d1b79b7b00563dad5bf05127cd8))
+
+- **suites**: Add jsondiff-cli mini-app suite and make custom suites runnable
+  ([`32cbd90`](https://github.com/fxmartin/local-code-bench/commit/32cbd90131197bfd87fcc78757727fceacdbede1))
+
+- **suites**: Add logclass-cli, a Python port of Task A as ladder rung 1
+  ([`472e34f`](https://github.com/fxmartin/local-code-bench/commit/472e34f49e2d4606739d8c69eb46d5db5106bf4e))
+
+
 ## v0.51.0 (2026-07-14)
 
 ### Features
