@@ -258,12 +258,12 @@ def test_run_opencode_sends_resolved_endpoint_and_max_tokens(tmp_path: Path, mon
 
     run_opencode(
         model=_model(),
-        overrides=OpenCodeOverrides(engine="lm-studio"),
+        overrides=OpenCodeOverrides(engine="mlx-lm"),
         mode="default",
         prompts_dir=tmp_path / "prompts",
         results_dir=tmp_path / "results",
         max_tokens=256,
     )
 
-    assert captured["base_url"] == "http://127.0.0.1:1234/v1"
+    assert captured["base_url"] == "http://127.0.0.1:8080/v1"
     assert all(req.max_tokens == 256 for req in fake.requests)

@@ -6,10 +6,10 @@ response plus timing/token metrics into a JSONL run file. Every run logs the
 provenance variables the article surfaced — quant string, quant provider
 (Unsloth-vs-Bartowski), engine, endpoint, mode, and seed/temperature.
 
-Reuses `provider_for_model` (OpenAI- or Anthropic-compatible streaming, so oMLX's
-Anthropic endpoint works by setting the model's `type`), `capture_stream_metrics`,
-and `ChatRequest`. CLI overrides are applied with `dataclasses.replace` so the
-shared `ModelConfig` and existing flows are untouched.
+Reuses `provider_for_model` (OpenAI- or Anthropic-compatible streaming, selected
+by the model's `type`), `capture_stream_metrics`, and `ChatRequest`. CLI
+overrides are applied with `dataclasses.replace` so the shared `ModelConfig`
+and existing flows are untouched.
 """
 
 from __future__ import annotations

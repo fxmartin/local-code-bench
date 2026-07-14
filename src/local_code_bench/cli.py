@@ -354,7 +354,7 @@ def build_parser() -> argparse.ArgumentParser:
     opencode.add_argument("--endpoint", help="override the model base URL (OpenAI-compatible /v1)")
     opencode.add_argument(
         "--engine",
-        help="select a known engine's default /v1 endpoint (dflash, ollama, lm-studio, ...)",
+        help="select a known engine's default /v1 endpoint (mlx-lm, ollama)",
     )
     opencode.add_argument("--quant", help="override the logged quant string (e.g. IQ3_XXS)")
     opencode.add_argument(

@@ -40,7 +40,9 @@ from local_code_bench.inferencers import tiering
 # --- Helpers ---------------------------------------------------------------
 
 
-def _inferencer(name: str, store: Path, store_format: StoreFormat = "gguf") -> InferencerConfig:
+def _inferencer(
+    name: str, store: Path, store_format: StoreFormat = "hf-safetensors"
+) -> InferencerConfig:
     return InferencerConfig(
         name=name,
         lifecycle="server",
@@ -62,7 +64,7 @@ def _mount(root: Path) -> None:
     (root / DEFAULT_VOLUME_MARKER).write_text("marker", encoding="utf-8")
 
 
-def _external_model(path: Path, *, name: str = "qwen", store_format: StoreFormat = "gguf") -> LocalModel:
+def _external_model(path: Path, *, name: str = "qwen", store_format: StoreFormat = "hf-safetensors") -> LocalModel:
     return LocalModel(
         inferencer="external-scan",
         store_format=store_format,
@@ -76,7 +78,7 @@ def _external_model(path: Path, *, name: str = "qwen", store_format: StoreFormat
     )
 
 
-def _local_model(path: Path, *, name: str = "qwen", store_format: StoreFormat = "gguf") -> LocalModel:
+def _local_model(path: Path, *, name: str = "qwen", store_format: StoreFormat = "hf-safetensors") -> LocalModel:
     return LocalModel(
         inferencer="local-scan",
         store_format=store_format,
@@ -96,9 +98,9 @@ def _tree_size(path: Path) -> int:
     return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
 
 
-def _write_gguf(base: Path, stem: str, payload: bytes = b"weights" * 1000) -> Path:
+def _write_safetensors(base: Path, stem: str, payload: bytes = b"weights" * 1000) -> Path:
     base.mkdir(parents=True, exist_ok=True)
-    path = base / f"{stem}.gguf"
+    path = base / f"{stem}.safetensors"
     path.write_bytes(payload)
     return path
 
@@ -131,34 +133,34 @@ def _plenty(_path: Path) -> int:
 
 
 def test_plan_resolves_destination_under_engine_store(tmp_path: Path) -> None:
-    source = _write_gguf(tmp_path / "ext" / "gguf", "qwen")
-    local = tmp_path / "local" / "gguf"
+    source = _write_safetensors(tmp_path / "ext" / "hf-safetensors", "qwen")
+    local = tmp_path / "local" / "hf-safetensors"
     cfg = _inferencer("llama", local)
 
     plan = plan_promotion(_external_model(source), cfg)
 
     assert plan == PromotePlan(
         name="qwen",
-        store_format="gguf",
+        store_format="hf-safetensors",
         source=source,
-        destination=local / "qwen.gguf",
+        destination=local / "qwen.safetensors",
         size_bytes=source.stat().st_size,
     )
 
 
 def test_plan_expands_home_in_store_path(tmp_path: Path) -> None:
-    source = _write_gguf(tmp_path / "ext", "m")
-    cfg = _inferencer("llama", Path("~/store/gguf"))
+    source = _write_safetensors(tmp_path / "ext", "m")
+    cfg = _inferencer("llama", Path("~/store/hf-safetensors"))
 
     plan = plan_promotion(_external_model(source), cfg, home=tmp_path)
 
-    assert plan.destination == tmp_path / "store" / "gguf" / "m.gguf"
+    assert plan.destination == tmp_path / "store" / "hf-safetensors" / "m.safetensors"
 
 
 def test_plan_rejects_non_external_source(tmp_path: Path) -> None:
-    source = _write_gguf(tmp_path / "ext", "m")
+    source = _write_safetensors(tmp_path / "ext", "m")
     local_record = LocalModel(
-        inferencer="x", store_format="gguf", name="m", path=str(source),
+        inferencer="x", store_format="hf-safetensors", name="m", path=str(source),
         size_bytes=1, quant=None, provider=None, identity="i", tier="local",
     )
     with pytest.raises(PromoteError, match="not external"):
@@ -166,7 +168,7 @@ def test_plan_rejects_non_external_source(tmp_path: Path) -> None:
 
 
 def test_plan_rejects_engine_without_store(tmp_path: Path) -> None:
-    source = _write_gguf(tmp_path / "ext", "m")
+    source = _write_safetensors(tmp_path / "ext", "m")
     cfg = InferencerConfig(
         name="appy", lifecycle="app", detect_kind="app", detect_target="A",
         port=1, health_url="http://127.0.0.1:{port}/",
@@ -179,24 +181,24 @@ def test_plan_rejects_engine_without_store(tmp_path: Path) -> None:
 
 
 def test_serving_blockers_flags_running_same_format(tmp_path: Path) -> None:
-    source = _write_gguf(tmp_path / "ext", "m")
+    source = _write_safetensors(tmp_path / "ext", "m")
     configs = {
-        "llama": _inferencer("llama", tmp_path / "l", "gguf"),
-        "mlx": _inferencer("mlx", tmp_path / "m", "mlx"),
+        "llama": _inferencer("llama", tmp_path / "l", "hf-safetensors"),
+        "ollama": _inferencer("ollama", tmp_path / "m", "ollama"),
     }
-    status = {"llama": _running, "mlx": _running}
+    status = {"llama": _running, "ollama": _running}
 
     blockers = serving_blockers(
         _external_model(source), configs, tmp_path,
         status_fn=lambda cfg, sd: status[cfg.name](cfg, sd),
     )
 
-    assert blockers == ["llama"]  # mlx is a different format, never a blocker
+    assert blockers == ["llama"]  # ollama is a different format, never a blocker
 
 
 def test_serving_blockers_empty_when_idle(tmp_path: Path) -> None:
-    source = _write_gguf(tmp_path / "ext", "m")
-    configs = {"llama": _inferencer("llama", tmp_path / "l", "gguf")}
+    source = _write_safetensors(tmp_path / "ext", "m")
+    configs = {"llama": _inferencer("llama", tmp_path / "l", "hf-safetensors")}
 
     assert serving_blockers(_external_model(source), configs, tmp_path, status_fn=_not_running) == []
 
@@ -207,8 +209,8 @@ def test_serving_blockers_empty_when_idle(tmp_path: Path) -> None:
 def test_promote_file_copies_verifies_and_publishes(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_gguf(ext_root / "gguf", "qwen")
-    local = tmp_path / "local" / "gguf"
+    source = _write_safetensors(ext_root / "hf-safetensors", "qwen")
+    local = tmp_path / "local" / "hf-safetensors"
     cfg = _inferencer("llama", local)
 
     result = promote_model(
@@ -216,7 +218,7 @@ def test_promote_file_copies_verifies_and_publishes(tmp_path: Path) -> None:
         free_bytes=_plenty, status_fn=_not_running,
     )
 
-    dest = local / "qwen.gguf"
+    dest = local / "qwen.safetensors"
     assert isinstance(result, PromoteResult)
     assert result.verified is True
     assert result.destination == dest
@@ -225,19 +227,19 @@ def test_promote_file_copies_verifies_and_publishes(tmp_path: Path) -> None:
     assert dest.read_bytes() == source.read_bytes()
     assert source.exists()
     # No staging artifact left behind.
-    assert not (local / "qwen.gguf.promote-tmp").exists()
+    assert not (local / "qwen.safetensors.promote-tmp").exists()
 
 
 def test_promote_directory_model_copies_tree(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_model_dir(ext_root / "mlx", "Qwen3")
-    local = tmp_path / "local" / "mlx"
-    cfg = _inferencer("mlx-engine", local, "mlx")
+    source = _write_model_dir(ext_root / "hf-safetensors", "Qwen3")
+    local = tmp_path / "local" / "hf-safetensors"
+    cfg = _inferencer("mlx-lm", local, "hf-safetensors")
 
     result = promote_model(
-        _external_model(source, name="Qwen3", store_format="mlx"),
-        cfg, _external_cfg(ext_root), {"mlx-engine": cfg}, tmp_path,
+        _external_model(source, name="Qwen3", store_format="hf-safetensors"),
+        cfg, _external_cfg(ext_root), {"mlx-lm": cfg}, tmp_path,
         free_bytes=_plenty, status_fn=_not_running,
     )
 
@@ -253,8 +255,8 @@ def test_promote_uses_default_seams_for_idle_local_engine(tmp_path: Path) -> Non
     # status lookup with no state file (engine reported down) — no injection.
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_gguf(ext_root / "gguf", "tiny", payload=b"x" * 64)
-    local = tmp_path / "local" / "gguf"
+    source = _write_safetensors(ext_root / "hf-safetensors", "tiny", payload=b"x" * 64)
+    local = tmp_path / "local" / "hf-safetensors"
     cfg = _inferencer("llama", local)
 
     result = promote_model(
@@ -262,7 +264,7 @@ def test_promote_uses_default_seams_for_idle_local_engine(tmp_path: Path) -> Non
         tmp_path / "state",
     )
 
-    assert (local / "tiny.gguf").exists()
+    assert (local / "tiny.safetensors").exists()
     assert result.verified is True
 
 
@@ -272,8 +274,8 @@ def test_promote_uses_default_seams_for_idle_local_engine(tmp_path: Path) -> Non
 def test_promote_refuses_when_external_offline(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"  # not mounted: no marker
     ext_root.mkdir()
-    source = _write_gguf(ext_root / "gguf", "qwen")
-    local = tmp_path / "local" / "gguf"
+    source = _write_safetensors(ext_root / "hf-safetensors", "qwen")
+    local = tmp_path / "local" / "hf-safetensors"
     cfg = _inferencer("llama", local)
 
     with pytest.raises(PromoteError, match="offline"):
@@ -287,10 +289,10 @@ def test_promote_refuses_when_external_offline(tmp_path: Path) -> None:
 def test_promote_refuses_when_source_missing(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    missing = ext_root / "gguf" / "ghost.gguf"
+    missing = ext_root / "hf-safetensors" / "ghost.safetensors"
     cfg = _inferencer("llama", tmp_path / "local")
     model = LocalModel(
-        inferencer="s", store_format="gguf", name="ghost", path=str(missing),
+        inferencer="s", store_format="hf-safetensors", name="ghost", path=str(missing),
         size_bytes=10, quant=None, provider=None, identity=str(missing), tier="external",
     )
 
@@ -304,8 +306,8 @@ def test_promote_refuses_when_source_missing(tmp_path: Path) -> None:
 def test_promote_refuses_when_serving_engine_running(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_gguf(ext_root / "gguf", "qwen")
-    local = tmp_path / "local" / "gguf"
+    source = _write_safetensors(ext_root / "hf-safetensors", "qwen")
+    local = tmp_path / "local" / "hf-safetensors"
     cfg = _inferencer("llama", local)
 
     with pytest.raises(PromoteError, match="is running"):
@@ -319,9 +321,9 @@ def test_promote_refuses_when_serving_engine_running(tmp_path: Path) -> None:
 def test_promote_refuses_when_already_present_locally(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_gguf(ext_root / "gguf", "qwen")
-    local = tmp_path / "local" / "gguf"
-    existing = _write_gguf(local, "qwen", payload=b"old-bytes")
+    source = _write_safetensors(ext_root / "hf-safetensors", "qwen")
+    local = tmp_path / "local" / "hf-safetensors"
+    existing = _write_safetensors(local, "qwen", payload=b"old-bytes")
     cfg = _inferencer("llama", local)
 
     with pytest.raises(PromoteError, match="already present"):
@@ -336,8 +338,8 @@ def test_promote_refuses_when_already_present_locally(tmp_path: Path) -> None:
 def test_promote_refuses_on_insufficient_free_space(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_gguf(ext_root / "gguf", "qwen", payload=b"w" * 10_000)
-    local = tmp_path / "local" / "gguf"
+    source = _write_safetensors(ext_root / "hf-safetensors", "qwen", payload=b"w" * 10_000)
+    local = tmp_path / "local" / "hf-safetensors"
     cfg = _inferencer("llama", local)
 
     with pytest.raises(PromoteError) as exc:
@@ -359,8 +361,8 @@ def test_promote_refuses_on_insufficient_free_space(tmp_path: Path) -> None:
 def test_promote_aborts_on_integrity_mismatch(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_gguf(ext_root / "gguf", "qwen", payload=b"real" * 1000)
-    local = tmp_path / "local" / "gguf"
+    source = _write_safetensors(ext_root / "hf-safetensors", "qwen", payload=b"real" * 1000)
+    local = tmp_path / "local" / "hf-safetensors"
     cfg = _inferencer("llama", local)
 
     def corrupt_copy(src: Path, dst: Path) -> None:
@@ -373,16 +375,16 @@ def test_promote_aborts_on_integrity_mismatch(tmp_path: Path) -> None:
             free_bytes=_plenty, status_fn=_not_running, copy_fn=corrupt_copy,
         )
 
-    assert not (local / "qwen.gguf").exists()  # nothing published
-    assert not (local / "qwen.gguf.promote-tmp").exists()  # staging cleaned up
+    assert not (local / "qwen.safetensors").exists()  # nothing published
+    assert not (local / "qwen.safetensors.promote-tmp").exists()  # staging cleaned up
     assert source.read_bytes() == b"real" * 1000  # source intact
 
 
 def test_promote_aborts_on_truncated_copy(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_gguf(ext_root / "gguf", "qwen", payload=b"real" * 1000)
-    local = tmp_path / "local" / "gguf"
+    source = _write_safetensors(ext_root / "hf-safetensors", "qwen", payload=b"real" * 1000)
+    local = tmp_path / "local" / "hf-safetensors"
     cfg = _inferencer("llama", local)
 
     def short_copy(src: Path, dst: Path) -> None:
@@ -393,14 +395,14 @@ def test_promote_aborts_on_truncated_copy(tmp_path: Path) -> None:
             _external_model(source), cfg, _external_cfg(ext_root), {"llama": cfg}, tmp_path,
             free_bytes=_plenty, status_fn=_not_running, copy_fn=short_copy,
         )
-    assert not (local / "qwen.gguf.promote-tmp").exists()
+    assert not (local / "qwen.safetensors.promote-tmp").exists()
 
 
 def test_promote_aborts_and_cleans_up_on_io_error(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_gguf(ext_root / "gguf", "qwen")
-    local = tmp_path / "local" / "gguf"
+    source = _write_safetensors(ext_root / "hf-safetensors", "qwen")
+    local = tmp_path / "local" / "hf-safetensors"
     cfg = _inferencer("llama", local)
 
     def failing_copy(src: Path, dst: Path) -> None:
@@ -413,19 +415,19 @@ def test_promote_aborts_and_cleans_up_on_io_error(tmp_path: Path) -> None:
             free_bytes=_plenty, status_fn=_not_running, copy_fn=failing_copy,
         )
 
-    assert not (local / "qwen.gguf").exists()
-    assert not (local / "qwen.gguf.promote-tmp").exists()  # partial removed
+    assert not (local / "qwen.safetensors").exists()
+    assert not (local / "qwen.safetensors.promote-tmp").exists()  # partial removed
     assert source.exists()
 
 
 def test_promote_clears_stale_staging_before_copy(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_gguf(ext_root / "gguf", "qwen")
-    local = tmp_path / "local" / "gguf"
+    source = _write_safetensors(ext_root / "hf-safetensors", "qwen")
+    local = tmp_path / "local" / "hf-safetensors"
     local.mkdir(parents=True)
     # A leftover staging file from a previously-killed promote.
-    (local / "qwen.gguf.promote-tmp").write_bytes(b"stale-garbage")
+    (local / "qwen.safetensors.promote-tmp").write_bytes(b"stale-garbage")
     cfg = _inferencer("llama", local)
 
     result = promote_model(
@@ -434,7 +436,7 @@ def test_promote_clears_stale_staging_before_copy(tmp_path: Path) -> None:
     )
 
     assert result.verified is True
-    assert (local / "qwen.gguf").read_bytes() == source.read_bytes()
+    assert (local / "qwen.safetensors").read_bytes() == source.read_bytes()
 
 
 # --- internal helpers ------------------------------------------------------
@@ -540,7 +542,7 @@ def test_human_bytes_falls_back_when_no_units(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_demote_plan_resolves_destination_under_external_format_dir(tmp_path: Path) -> None:
-    source = _write_gguf(tmp_path / "local" / "gguf", "qwen")
+    source = _write_safetensors(tmp_path / "local" / "hf-safetensors", "qwen")
     ext_root = tmp_path / "ext"
     cfg = _external_cfg(ext_root)
 
@@ -548,24 +550,24 @@ def test_demote_plan_resolves_destination_under_external_format_dir(tmp_path: Pa
 
     assert plan == DemotePlan(
         name="qwen",
-        store_format="gguf",
+        store_format="hf-safetensors",
         source=source,
-        destination=ext_root / "gguf" / "qwen.gguf",
+        destination=ext_root / "hf-safetensors" / "qwen.safetensors",
         size_bytes=source.stat().st_size,
     )
 
 
 def test_demote_plan_expands_home_in_external_root(tmp_path: Path) -> None:
-    source = _write_gguf(tmp_path / "local", "m")
+    source = _write_safetensors(tmp_path / "local", "m")
     cfg = ExternalRepoConfig(root="~/ext")
 
     plan = plan_demotion(_local_model(source), cfg, home=tmp_path)
 
-    assert plan.destination == tmp_path / "ext" / "gguf" / "m.gguf"
+    assert plan.destination == tmp_path / "ext" / "hf-safetensors" / "m.safetensors"
 
 
 def test_demote_plan_rejects_non_local_source(tmp_path: Path) -> None:
-    source = _write_gguf(tmp_path / "local", "m")
+    source = _write_safetensors(tmp_path / "local", "m")
     with pytest.raises(DemoteError, match="not local"):
         plan_demotion(_external_model(source), _external_cfg(tmp_path / "ext"))
 
@@ -576,16 +578,16 @@ def test_demote_plan_rejects_non_local_source(tmp_path: Path) -> None:
 def test_demote_file_copies_verifies_and_removes_local(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_gguf(tmp_path / "local" / "gguf", "qwen")
+    source = _write_safetensors(tmp_path / "local" / "hf-safetensors", "qwen")
     original = source.read_bytes()
-    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+    cfg = _inferencer("llama", tmp_path / "local" / "hf-safetensors")
 
     result = demote_model(
         _local_model(source), _external_cfg(ext_root), {"llama": cfg}, tmp_path,
         free_bytes=_plenty, status_fn=_not_running,
     )
 
-    dest = ext_root / "gguf" / "qwen.gguf"
+    dest = ext_root / "hf-safetensors" / "qwen.safetensors"
     assert isinstance(result, DemoteResult)
     assert result.verified is True
     assert result.reused_existing is False
@@ -595,22 +597,22 @@ def test_demote_file_copies_verifies_and_removes_local(tmp_path: Path) -> None:
     assert dest.read_bytes() == original
     assert not source.exists()
     # No staging artifact left behind.
-    assert not (ext_root / "gguf" / "qwen.gguf.promote-tmp").exists()
+    assert not (ext_root / "hf-safetensors" / "qwen.safetensors.promote-tmp").exists()
 
 
 def test_demote_directory_model_copies_tree_and_removes_local(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_model_dir(tmp_path / "local" / "mlx", "Qwen3")
-    cfg = _inferencer("mlx-engine", tmp_path / "local" / "mlx", "mlx")
+    source = _write_model_dir(tmp_path / "local" / "hf-safetensors", "Qwen3")
+    cfg = _inferencer("mlx-lm", tmp_path / "local" / "hf-safetensors", "hf-safetensors")
 
     result = demote_model(
-        _local_model(source, name="Qwen3", store_format="mlx"),
-        _external_cfg(ext_root), {"mlx-engine": cfg}, tmp_path,
+        _local_model(source, name="Qwen3", store_format="hf-safetensors"),
+        _external_cfg(ext_root), {"mlx-lm": cfg}, tmp_path,
         free_bytes=_plenty, status_fn=_not_running,
     )
 
-    dest = ext_root / "mlx" / "Qwen3"
+    dest = ext_root / "hf-safetensors" / "Qwen3"
     assert result.verified is True
     assert (dest / "model.safetensors").exists()
     assert (dest / "tokenizer" / "tokenizer.json").exists()
@@ -621,10 +623,10 @@ def test_demote_reuses_verified_existing_external_copy(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"
     _mount(ext_root)
     payload = b"weights" * 1000
-    source = _write_gguf(tmp_path / "local" / "gguf", "qwen", payload=payload)
+    source = _write_safetensors(tmp_path / "local" / "hf-safetensors", "qwen", payload=payload)
     # An identical copy already lives on external (a present-in-both redundancy).
-    existing = _write_gguf(ext_root / "gguf", "qwen", payload=payload)
-    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+    existing = _write_safetensors(ext_root / "hf-safetensors", "qwen", payload=payload)
+    cfg = _inferencer("llama", tmp_path / "local" / "hf-safetensors")
 
     # A copy_fn that explodes proves no re-copy happens on the reuse path.
     def must_not_copy(src: Path, dst: Path) -> None:
@@ -648,16 +650,16 @@ def test_demote_reuses_verified_existing_external_directory_copy(tmp_path: Path)
     # external is reused with no re-copy, and the local tree is reclaimed.
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_model_dir(tmp_path / "local" / "mlx", "Qwen3")
-    existing = _write_model_dir(ext_root / "mlx", "Qwen3")  # byte-identical tree
-    cfg = _inferencer("mlx-engine", tmp_path / "local" / "mlx", "mlx")
+    source = _write_model_dir(tmp_path / "local" / "hf-safetensors", "Qwen3")
+    existing = _write_model_dir(ext_root / "hf-safetensors", "Qwen3")  # byte-identical tree
+    cfg = _inferencer("mlx-lm", tmp_path / "local" / "hf-safetensors", "hf-safetensors")
 
     def must_not_copy(src: Path, dst: Path) -> None:
         raise AssertionError("demote re-copied despite a verified external tree")
 
     result = demote_model(
-        _local_model(source, name="Qwen3", store_format="mlx"),
-        _external_cfg(ext_root), {"mlx-engine": cfg}, tmp_path,
+        _local_model(source, name="Qwen3", store_format="hf-safetensors"),
+        _external_cfg(ext_root), {"mlx-lm": cfg}, tmp_path,
         free_bytes=_plenty, status_fn=_not_running, copy_fn=must_not_copy,
     )
 
@@ -674,15 +676,15 @@ def test_demote_refuses_when_external_directory_copy_differs(tmp_path: Path) -> 
     # are both left exactly as they were.
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_model_dir(tmp_path / "local" / "mlx", "Qwen3")
-    stale = _write_model_dir(ext_root / "mlx", "Qwen3")
+    source = _write_model_dir(tmp_path / "local" / "hf-safetensors", "Qwen3")
+    stale = _write_model_dir(ext_root / "hf-safetensors", "Qwen3")
     (stale / "model.safetensors").write_bytes(b"different-tensor" * 500)  # diverge
-    cfg = _inferencer("mlx-engine", tmp_path / "local" / "mlx", "mlx")
+    cfg = _inferencer("mlx-lm", tmp_path / "local" / "hf-safetensors", "hf-safetensors")
 
     with pytest.raises(DemoteError, match="differs"):
         demote_model(
-            _local_model(source, name="Qwen3", store_format="mlx"),
-            _external_cfg(ext_root), {"mlx-engine": cfg}, tmp_path,
+            _local_model(source, name="Qwen3", store_format="hf-safetensors"),
+            _external_cfg(ext_root), {"mlx-lm": cfg}, tmp_path,
             free_bytes=_plenty, status_fn=_not_running,
         )
 
@@ -695,14 +697,14 @@ def test_demote_uses_default_seams_for_idle_local_engine(tmp_path: Path) -> None
     # status lookup with no state file (engine reported down) — no injection.
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_gguf(tmp_path / "local" / "gguf", "tiny", payload=b"x" * 64)
-    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+    source = _write_safetensors(tmp_path / "local" / "hf-safetensors", "tiny", payload=b"x" * 64)
+    cfg = _inferencer("llama", tmp_path / "local" / "hf-safetensors")
 
     result = demote_model(
         _local_model(source), _external_cfg(ext_root), {"llama": cfg}, tmp_path / "state",
     )
 
-    assert (ext_root / "gguf" / "tiny.gguf").exists()
+    assert (ext_root / "hf-safetensors" / "tiny.safetensors").exists()
     assert not source.exists()
     assert result.verified is True
 
@@ -713,8 +715,8 @@ def test_demote_uses_default_seams_for_idle_local_engine(tmp_path: Path) -> None
 def test_demote_refuses_when_external_offline(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"  # not mounted: no marker
     ext_root.mkdir()
-    source = _write_gguf(tmp_path / "local" / "gguf", "qwen")
-    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+    source = _write_safetensors(tmp_path / "local" / "hf-safetensors", "qwen")
+    cfg = _inferencer("llama", tmp_path / "local" / "hf-safetensors")
 
     with pytest.raises(DemoteError, match="offline"):
         demote_model(
@@ -727,10 +729,10 @@ def test_demote_refuses_when_external_offline(tmp_path: Path) -> None:
 def test_demote_refuses_when_source_missing(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    missing = tmp_path / "local" / "gguf" / "ghost.gguf"
-    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+    missing = tmp_path / "local" / "hf-safetensors" / "ghost.safetensors"
+    cfg = _inferencer("llama", tmp_path / "local" / "hf-safetensors")
     model = LocalModel(
-        inferencer="s", store_format="gguf", name="ghost", path=str(missing),
+        inferencer="s", store_format="hf-safetensors", name="ghost", path=str(missing),
         size_bytes=10, quant=None, provider=None, identity=str(missing), tier="local",
     )
 
@@ -744,8 +746,8 @@ def test_demote_refuses_when_source_missing(tmp_path: Path) -> None:
 def test_demote_refuses_when_serving_engine_running(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_gguf(tmp_path / "local" / "gguf", "qwen")
-    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+    source = _write_safetensors(tmp_path / "local" / "hf-safetensors", "qwen")
+    cfg = _inferencer("llama", tmp_path / "local" / "hf-safetensors")
 
     with pytest.raises(DemoteError, match="is running"):
         demote_model(
@@ -758,8 +760,8 @@ def test_demote_refuses_when_serving_engine_running(tmp_path: Path) -> None:
 def test_demote_refuses_on_insufficient_external_free_space(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_gguf(tmp_path / "local" / "gguf", "qwen", payload=b"w" * 10_000)
-    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+    source = _write_safetensors(tmp_path / "local" / "hf-safetensors", "qwen", payload=b"w" * 10_000)
+    cfg = _inferencer("llama", tmp_path / "local" / "hf-safetensors")
 
     with pytest.raises(DemoteError) as exc:
         demote_model(
@@ -771,16 +773,16 @@ def test_demote_refuses_on_insufficient_external_free_space(tmp_path: Path) -> N
     assert "insufficient external free space" in message
     assert "free at least" in message  # suggests an amount to free
     assert source.exists()  # local copy preserved
-    assert not (ext_root / "gguf" / "qwen.gguf").exists()  # external untouched
+    assert not (ext_root / "hf-safetensors" / "qwen.safetensors").exists()  # external untouched
 
 
 def test_demote_refuses_when_external_copy_differs(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_gguf(tmp_path / "local" / "gguf", "qwen", payload=b"real" * 1000)
+    source = _write_safetensors(tmp_path / "local" / "hf-safetensors", "qwen", payload=b"real" * 1000)
     # A same-named external copy that does NOT match the local source.
-    stale = _write_gguf(ext_root / "gguf", "qwen", payload=b"junk" * 1000)
-    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+    stale = _write_safetensors(ext_root / "hf-safetensors", "qwen", payload=b"junk" * 1000)
+    cfg = _inferencer("llama", tmp_path / "local" / "hf-safetensors")
 
     with pytest.raises(DemoteError, match="differs"):
         demote_model(
@@ -797,8 +799,8 @@ def test_demote_refuses_when_external_copy_differs(tmp_path: Path) -> None:
 def test_demote_aborts_on_integrity_mismatch_local_intact(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_gguf(tmp_path / "local" / "gguf", "qwen", payload=b"real" * 1000)
-    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+    source = _write_safetensors(tmp_path / "local" / "hf-safetensors", "qwen", payload=b"real" * 1000)
+    cfg = _inferencer("llama", tmp_path / "local" / "hf-safetensors")
 
     def corrupt_copy(src: Path, dst: Path) -> None:
         # Same byte length as the source, but different content -> hash mismatch.
@@ -810,16 +812,16 @@ def test_demote_aborts_on_integrity_mismatch_local_intact(tmp_path: Path) -> Non
             free_bytes=_plenty, status_fn=_not_running, copy_fn=corrupt_copy,
         )
 
-    assert not (ext_root / "gguf" / "qwen.gguf").exists()  # nothing published
-    assert not (ext_root / "gguf" / "qwen.gguf.promote-tmp").exists()  # staging cleaned up
+    assert not (ext_root / "hf-safetensors" / "qwen.safetensors").exists()  # nothing published
+    assert not (ext_root / "hf-safetensors" / "qwen.safetensors.promote-tmp").exists()  # staging cleaned up
     assert source.read_bytes() == b"real" * 1000  # local source intact (no data loss)
 
 
 def test_demote_aborts_and_cleans_up_on_io_error_local_intact(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_gguf(tmp_path / "local" / "gguf", "qwen")
-    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+    source = _write_safetensors(tmp_path / "local" / "hf-safetensors", "qwen")
+    cfg = _inferencer("llama", tmp_path / "local" / "hf-safetensors")
 
     def failing_copy(src: Path, dst: Path) -> None:
         dst.write_bytes(b"partial")  # leave a partial staging artifact...
@@ -831,20 +833,20 @@ def test_demote_aborts_and_cleans_up_on_io_error_local_intact(tmp_path: Path) ->
             free_bytes=_plenty, status_fn=_not_running, copy_fn=failing_copy,
         )
 
-    assert not (ext_root / "gguf" / "qwen.gguf").exists()
-    assert not (ext_root / "gguf" / "qwen.gguf.promote-tmp").exists()  # partial removed
+    assert not (ext_root / "hf-safetensors" / "qwen.safetensors").exists()
+    assert not (ext_root / "hf-safetensors" / "qwen.safetensors.promote-tmp").exists()  # partial removed
     assert source.exists()  # local source intact (no data loss)
 
 
 def test_demote_clears_stale_staging_before_copy(tmp_path: Path) -> None:
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    source = _write_gguf(tmp_path / "local" / "gguf", "qwen")
-    dest_dir = ext_root / "gguf"
+    source = _write_safetensors(tmp_path / "local" / "hf-safetensors", "qwen")
+    dest_dir = ext_root / "hf-safetensors"
     dest_dir.mkdir(parents=True, exist_ok=True)
     # A leftover staging file from a previously-killed demote.
-    (dest_dir / "qwen.gguf.promote-tmp").write_bytes(b"stale-garbage")
-    cfg = _inferencer("llama", tmp_path / "local" / "gguf")
+    (dest_dir / "qwen.safetensors.promote-tmp").write_bytes(b"stale-garbage")
+    cfg = _inferencer("llama", tmp_path / "local" / "hf-safetensors")
 
     result = demote_model(
         _local_model(source), _external_cfg(ext_root), {"llama": cfg}, tmp_path,
@@ -852,7 +854,7 @@ def test_demote_clears_stale_staging_before_copy(tmp_path: Path) -> None:
     )
 
     assert result.verified is True
-    assert (dest_dir / "qwen.gguf").exists()
+    assert (dest_dir / "qwen.safetensors").exists()
     assert not source.exists()
 
 
@@ -865,8 +867,8 @@ def test_demote_raises_when_local_source_cannot_be_reclaimed(tmp_path: Path) -> 
     # over-state reclaimed space and claim the local copy is gone when it is not.
     ext_root = tmp_path / "ext"
     _mount(ext_root)
-    local_dir = tmp_path / "local" / "gguf"
-    source = _write_gguf(local_dir, "qwen")
+    local_dir = tmp_path / "local" / "hf-safetensors"
+    source = _write_safetensors(local_dir, "qwen")
     cfg = _inferencer("llama", local_dir)
     local_dir.chmod(0o500)  # read + execute, no write -> unlink fails
     try:
@@ -879,7 +881,7 @@ def test_demote_raises_when_local_source_cannot_be_reclaimed(tmp_path: Path) -> 
         local_dir.chmod(0o700)
 
     # External copy was still published and verified (no data loss either way).
-    assert (ext_root / "gguf" / "qwen.gguf").exists()
+    assert (ext_root / "hf-safetensors" / "qwen.safetensors").exists()
     assert source.exists()  # local source still present, faithfully reported
 
 
@@ -889,9 +891,9 @@ def test_demote_reuse_raises_when_local_source_cannot_be_reclaimed(tmp_path: Pat
     ext_root = tmp_path / "ext"
     _mount(ext_root)
     payload = b"weights" * 1000
-    local_dir = tmp_path / "local" / "gguf"
-    source = _write_gguf(local_dir, "qwen", payload=payload)
-    existing = _write_gguf(ext_root / "gguf", "qwen", payload=payload)
+    local_dir = tmp_path / "local" / "hf-safetensors"
+    source = _write_safetensors(local_dir, "qwen", payload=payload)
+    existing = _write_safetensors(ext_root / "hf-safetensors", "qwen", payload=payload)
     cfg = _inferencer("llama", local_dir)
     local_dir.chmod(0o500)
     try:

@@ -23,8 +23,8 @@ These are what Part 1 measured. Keep them as the reference points.
 
 | Model | Params | Arch | Context | License | Fit on 48 GB |
 |---|---|---|---|---|---|
-| Qwen3.6-27B (DFlash) | 27B | Dense + speculative | long | open | Comfortable |
-| Qwen3.6-35B-A3B (TurboQuant) | 35B total / ~3B active | Sparse MoE | long | open | Comfortable |
+| Qwen3.6-27B (mlx-lm) | 27B | Dense | long | open | Comfortable |
+| Qwen3.6-35B-A3B (Ollama) | 35B total / ~3B active | Sparse MoE | long | open | Comfortable |
 
 ## Tier 2: agentic-coding specialists to add (highest priority)
 
@@ -35,7 +35,7 @@ Purpose-built or coder-tuned models that are the natural local competitors.
 | Devstral Small 2 (24B) | 24B | Dense | 256K | Apache 2.0 | Comfortable, room for long context | Mistral's agentic SWE specialist; strong tool-use, designed for single-machine coding agents |
 | Qwen3-Coder-30B-A3B | 30B total / 3B active | Sparse MoE | long | Apache 2.0 | Comfortable | Coder-tuned MoE, efficient, a like-for-like MoE coder against the dense Devstral |
 | Qwen3-Coder-Next (80B-A3B) | 80B total / 3B active | Hybrid attention + MoE | 256K | Apache 2.0 | Stretch: needs about 3-bit to fit with context | Best efficiency per active parameter, around 70% on SWE-bench Verified; the "how far can 48 GB push" entry |
-| Ornith-1.0-35B | 35B total / ~3B active | Sparse MoE (256 experts, 8 active + 1 shared) + hybrid Gated DeltaNet attention | 256K | MIT | Comfortable (~21 GB at 4-bit) | Agentic-coding MoE specialist: fine-tuned from Qwen3.5-35B-A3B with self-scaffolding RL (DeepReinforce), claims near-27B-dense coding/tool-use quality at ~3B active. Same 35B/A3B size class as the TurboQuant baseline — the cleanest coder-tuned-vs-general MoE contrast. MLX build exists, so it runs on the existing MLX servers |
+| Ornith-1.0-35B | 35B total / ~3B active | Sparse MoE (256 experts, 8 active + 1 shared) + hybrid Gated DeltaNet attention | 256K | MIT | Comfortable (~21 GB at 4-bit) | Agentic-coding MoE specialist: fine-tuned from Qwen3.5-35B-A3B with self-scaffolding RL (DeepReinforce), claims near-27B-dense coding/tool-use quality at ~3B active. Same 35B/A3B size class as the 35B-A3B baseline — the cleanest coder-tuned-vs-general MoE contrast. MLX build exists, so it runs on mlx-lm |
 
 ## Tier 3: architecture and family contrasts (comparative value)
 
@@ -67,7 +67,7 @@ hosted endpoints rather than locally:
 
 1. Add the two Tier 2 specialists (Devstral Small 2, Qwen3-Coder-30B-A3B) first;
    they are the strongest local agentic coders that fit comfortably. Add
-   Ornith-1.0-35B alongside them — same 35B/A3B class as the TurboQuant baseline,
+   Ornith-1.0-35B alongside them — same 35B/A3B class as the 35B-A3B baseline,
    so it is the most direct coder-tuned-vs-general MoE comparison and reuses the
    existing MLX server path.
 2. Add gpt-oss-20b for a non-Qwen architecture point.
@@ -78,8 +78,8 @@ hosted endpoints rather than locally:
 
 ## Practical notes
 
-- Format: the project's MLX servers (DFlash, TurboQuant, mlx-lm) need MLX-format
-  weights; llama.cpp and Ollama need GGUF. Community MLX and GGUF conversions exist
+- Format: mlx-lm needs MLX-format weights; Ollama needs GGUF (or a tag from its
+  own library). Community MLX and GGUF conversions exist
   for all of the above, but confirm one is published or convert it before adding the
   model to `configs/models.yaml`.
 - Quantizer matters as much as bit-width. A build can come from the model maker

@@ -67,7 +67,7 @@ def test_default_agents_config_loads_qwen_code() -> None:
     agents = load_agents("configs/agents.yaml")
 
     assert agents["qwen-code"].type == "qwen-code"
-    assert agents["qwen-code"].base_url == "http://localhost:8000/v1"
+    assert agents["qwen-code"].base_url == "http://localhost:8080/v1"
     assert agents["qwen-code"].url == "https://github.com/QwenLM/qwen-code"
 
 
@@ -149,7 +149,7 @@ def test_default_models_inferencers_line_up_with_ports() -> None:
     models = load_models("configs/models.yaml")
     inferencers = load_inferencers("configs/inferencers.yaml")
 
-    for model_name in ("local-dflash-qwen", "local-turboquant-qwen-moe", "local-mtplx-qwen"):
+    for model_name in ("local-mlx-qwen", "local-ollama-qwen"):
         declared = models[model_name].inferencer
         assert declared in inferencers, f"{model_name} declares unknown inferencer {declared!r}"
         assert urlparse(models[model_name].base_url).port == inferencers[declared].port

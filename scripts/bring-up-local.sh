@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-backend="${1:-dflash}"
+backend="${1:-mlx-lm}"
 
 port=""
 command_var=""
 example=""
 case "$backend" in
-  dflash)
-    port="${DFLASH_PORT:-8000}"
-    command_var="DFLASH_COMMAND"
-    example="dflash serve --model mlx-community/Qwen3.6-27B-4bit --port ${port}"
+  mlx-lm)
+    port="${MLX_LM_PORT:-8080}"
+    command_var="MLX_LM_COMMAND"
+    example="mlx_lm.server --model mlx-community/Qwen3.6-27B-4bit --port ${port}"
     ;;
-  turboquant)
-    port="${TURBOQUANT_PORT:-8002}"
-    command_var="TURBOQUANT_COMMAND"
-    example="turboquant-serve --model qwen3.6-35b-a3b --port ${port}"
+  ollama)
+    port="${OLLAMA_PORT:-11434}"
+    command_var="OLLAMA_COMMAND"
+    example="ollama serve"
     ;;
   *)
     echo "unknown backend: $backend" >&2

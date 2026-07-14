@@ -82,8 +82,7 @@ external_repo:
   root: /Volumes/SSD/repo
   volume_marker: .my-repo-marker
   subpaths:
-    gguf: gguf-store
-    mlx: mlx-store
+    hf-safetensors: hf-cache
 """,
     )
 
@@ -92,8 +91,7 @@ external_repo:
     assert cfg is not None
     assert cfg.volume_marker == ".my-repo-marker"
     # Overridden formats take the new value; unspecified formats keep the default.
-    assert cfg.subpaths["gguf"] == "gguf-store"
-    assert cfg.subpaths["mlx"] == "mlx-store"
+    assert cfg.subpaths["hf-safetensors"] == "hf-cache"
     assert cfg.subpaths["ollama"] == DEFAULT_EXTERNAL_SUBPATHS["ollama"]
 
 
@@ -166,7 +164,7 @@ def test_load_external_repo_rejects_absolute_subpath(tmp_path) -> None:
 external_repo:
   root: /Volumes/SSD/repo
   subpaths:
-    gguf: /absolute/path
+    hf-safetensors: /absolute/path
 """,
     )
 

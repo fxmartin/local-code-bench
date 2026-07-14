@@ -1,8 +1,7 @@
 """Format-aware local model-store scanner (Epic-11, Story 11.1-001).
 
-Each inferencer keeps its downloaded models on disk differently — plain GGUF
-files, Ollama's content-addressed blob store, the HuggingFace hub cache used by
-MLX/safetensors engines, or a publisher/model directory tree (LM Studio MLX).
+Each inferencer keeps its downloaded models on disk differently — Ollama's
+content-addressed blob store, or the HuggingFace hub cache used by mlx-lm.
 This module reads each store with the strategy that matches its configured
 ``format`` and yields a normalized :class:`StoredModel` per present model.
 
@@ -516,29 +515,6 @@ def _ollama_model_blob_sha(manifest: Path) -> str | None:
 _Found = tuple[str, Path, int]
 
 
-def _scan_gguf(base: Path) -> Iterator[_Found]:
-    """GGUF consumers (llama.cpp, GPT4All, LM Studio GGUF): glob ``*.gguf`` files."""
-
-    for path in sorted(base.rglob("*.gguf")):
-        if not path.is_file():
-            continue
-        # Skip llama.cpp split shards past the first so a model counts once.
-        if _is_secondary_shard(path.name):
-            continue
-        yield path.stem, path, _file_size(path)
-
-
-def _scan_mlx_dirs(base: Path) -> Iterator[_Found]:
-    """LM Studio / publisher-model MLX layout: ``<publisher>/<model>/`` safetensors."""
-
-    for publisher in sorted(_iter_dirs(base)):
-        for model_dir in sorted(_iter_dirs(publisher)):
-            if not any(model_dir.glob("*.safetensors")):
-                continue
-            name = f"{publisher.name}/{model_dir.name}"
-            yield name, model_dir, _dir_size(model_dir)
-
-
 def _scan_hf_cache(base: Path) -> Iterator[_Found]:
     """HuggingFace hub cache: ``models--<org>--<repo>`` directories."""
 
@@ -600,17 +576,6 @@ def _dir_size(base: Path) -> int:
     return total
 
 
-def _is_secondary_shard(filename: str) -> bool:
-    """True for GGUF split parts other than the first (``...-00002-of-00003.gguf``)."""
-
-    stem = filename[: -len(".gguf")] if filename.endswith(".gguf") else filename
-    parts = stem.rsplit("-", 4)
-    # Pattern: <name>-<NNNNN>-of-<MMMMM>
-    if len(parts) >= 4 and parts[-2] == "of" and parts[-3].isdigit() and parts[-1].isdigit():
-        return int(parts[-3]) > 1
-    return False
-
-
 def _ollama_name(manifest: Path, manifests_root: Path) -> str:
     """Reconstruct ``model:tag`` from the manifest path under ``manifests/``."""
 
@@ -650,8 +615,6 @@ def _blob_path(blobs: Path, digest: str) -> Path:
 
 
 _STRATEGIES: dict[StoreFormat, Callable[[Path], Iterator[_Found]]] = {
-    "gguf": _scan_gguf,
     "ollama": _scan_ollama,
     "hf-safetensors": _scan_hf_cache,
-    "mlx": _scan_mlx_dirs,
 }

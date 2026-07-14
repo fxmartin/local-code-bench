@@ -63,10 +63,10 @@ class AgentConfig:
 
 Lifecycle = Literal["server", "app"]
 DetectKind = Literal["binary", "module", "app"]
-StoreFormat = Literal["gguf", "ollama", "hf-safetensors", "mlx"]
+StoreFormat = Literal["ollama", "hf-safetensors"]
 
 #: On-disk model-store formats the inventory scanner (Epic-11) understands.
-STORE_FORMATS: frozenset[str] = frozenset({"gguf", "ollama", "hf-safetensors", "mlx"})
+STORE_FORMATS: frozenset[str] = frozenset({"ollama", "hf-safetensors"})
 
 #: Default sentinel filename written into the external-repo root so the *same*
 #: repo is recognised across remounts (and a coincidentally-present empty mount
@@ -480,7 +480,9 @@ def _parse_agent(entry: Any, index: int) -> AgentConfig:
     supported = supported_harness_kinds()
     if agent_type not in supported:
         allowed = ", ".join(supported) or "(none)"
-        raise ConfigError(f"agents[{index}].type '{agent_type}' is not registered; supported types: {allowed}")
+        raise ConfigError(
+            f"agents[{index}].type '{agent_type}' is not registered; supported types: {allowed}"
+        )
     timeout = entry.get("timeout_seconds", 600)
     if not isinstance(timeout, int | float) or timeout <= 0:
         raise ConfigError(f"agents[{index}].timeout_seconds must be a positive number")

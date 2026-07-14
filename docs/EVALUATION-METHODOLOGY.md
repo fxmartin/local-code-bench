@@ -37,7 +37,7 @@ decode tok/s for each size. That is four streams per model instead of hundreds,
 so it finishes in minutes.
 
 ```bash
-uv run bench --mode sweep --model local-dflash-qwen --run-file results/sweep.jsonl
+uv run bench --mode sweep --model local-mlx-qwen --run-file results/sweep.jsonl
 uv run bench --mode sweep --input results/sweep.jsonl   # summary table
 ```
 
@@ -63,11 +63,11 @@ total joules, so tokens-per-joule can be derived against the token counts alread
 in the task records. It needs root, so it uses `sudo -n` and degrades gracefully
 when passwordless sudo is not configured.
 
-A hard operational constraint surfaced in live testing: on a 48 GB machine, dflash
-and turboquant cannot co-reside. An idle MLX server still holds its full model
-resident, so running both (dense 27B plus draft, and the 35B MoE) alongside a large
-KV cache drives the machine deep into swap, at which point high-context prefill
-numbers measure SSD latency rather than the model. Any head-to-head must bring the
+A hard operational constraint surfaced in live testing: on a 48 GB machine, two
+local inference servers (mlx-lm and Ollama) cannot co-reside with large models
+loaded. An idle server can still hold its full model resident, so running both
+alongside a large KV cache drives the machine deep into swap, at which point
+high-context prefill numbers measure SSD latency rather than the model. Any head-to-head must bring the
 servers up one at a time, never concurrently, and the sweep ladder should be capped
 below the context size where a single model plus its KV cache starts swapping.
 
@@ -120,7 +120,7 @@ primary signal, for two reasons. First, they are not comparable: different
 harness, prompt template, sampling, and test set. Second, and more important for
 this project, they do not cover the served, quantized configurations under test.
 The published score is for the full-precision base model, while this harness
-serves a 4-bit DFlash target and a quantized MoE. Quantization and serving change
+serves quantized local builds. Quantization and serving change
 output quality, and that gap is part of what is being measured. Use net numbers
 to sanity-check the ballpark, never to rank.
 
