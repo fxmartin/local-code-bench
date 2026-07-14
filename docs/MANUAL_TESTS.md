@@ -89,51 +89,52 @@ uv run bench --suite humaneval --model anthropic-claude-baseline --limit 3 --run
   endpoint runs.
 - Token and cost fields are sufficient for leaderboard generation.
 
-## MT-003: Local DFlash Server Bring-Up
+## MT-003: Local MLX-LM Server Bring-Up
 
-**Purpose**: Prove the documented local DFlash bring-up flow matches the
-configured `local-dflash-qwen` endpoint.
+**Purpose**: Prove the documented local MLX-LM bring-up flow matches the
+configured `local-mlx-qwen` endpoint.
 
 **Setup**:
 
 ```bash
-export DFLASH_COMMAND='dflash serve --model mlx-community/Qwen3.6-27B-4bit --port 8000'
-scripts/bring-up-local.sh dflash
+export MLX_LM_COMMAND='mlx_lm.server --model mlx-community/Qwen3.6-27B-4bit --port 8080'
+scripts/bring-up-local.sh mlx-lm
 ```
 
 **Command**:
 
 ```bash
-uv run bench --suite humaneval --model local-dflash-qwen --limit 3 --run-file results/manual-local-dflash.jsonl
+uv run bench --suite humaneval --model local-mlx-qwen --limit 3 --run-file results/manual-local-mlx.jsonl
 ```
 
 **Pass criteria**:
 
-- Bring-up script reports readiness on port 8000.
+- Bring-up script reports readiness on port 8080.
 - Benchmark command writes scored endpoint records.
 - Local records show zero configured token cost and include timing metrics.
 
-## MT-004: Local TurboQuant Server Bring-Up
+## MT-004: Local Ollama Server Bring-Up
 
-**Purpose**: Prove the documented local TurboQuant bring-up flow matches the
-configured `local-turboquant-qwen-moe` endpoint.
+**Purpose**: Prove the documented local Ollama bring-up flow matches the
+configured `local-ollama-qwen` endpoint.
 
 **Setup**:
 
 ```bash
-export TURBOQUANT_COMMAND='turboquant-serve --model manjunathshiva/Qwen3.6-35B-A3B-tq3-g32 --prompt-concurrency 1 --port 8002'
-scripts/bring-up-local.sh turboquant
+ollama pull qwen3.6:27b
+export OLLAMA_COMMAND='ollama serve'
+scripts/bring-up-local.sh ollama
 ```
 
 **Command**:
 
 ```bash
-uv run bench --suite humaneval --model local-turboquant-qwen-moe --limit 3 --run-file results/manual-local-turboquant.jsonl
+uv run bench --suite humaneval --model local-ollama-qwen --limit 3 --run-file results/manual-local-ollama.jsonl
 ```
 
 **Pass criteria**:
 
-- Bring-up script reports readiness on port 8002.
+- Bring-up script reports readiness on port 11434.
 - Benchmark command writes scored endpoint records.
 - Local records show zero configured token cost and include timing metrics.
 
@@ -145,7 +146,7 @@ suite invocation.
 **Setup**:
 
 - OpenRouter and Anthropic keys are available.
-- DFlash and TurboQuant servers are running and ready.
+- MLX-LM and Ollama servers are running and ready.
 
 **Command**:
 
@@ -172,12 +173,12 @@ uv run bench --suite humaneval --skip local-example --run-file results/manual-fu
 **Command**:
 
 ```bash
-uv run bench --suite humaneval --model local-dflash-qwen --limit 10 --run-file results/manual-killed-server.jsonl
+uv run bench --suite humaneval --model local-mlx-qwen --limit 10 --run-file results/manual-killed-server.jsonl
 ```
 
 **Action**:
 
-- Kill the DFlash server after at least one task completes.
+- Kill the MLX-LM server after at least one task completes.
 
 **Pass criteria**:
 
@@ -297,7 +298,7 @@ model.
 
 ```bash
 uv run bench --mode sweep --prompt "Return 1"
-uv run bench --mode sweep --model local-dflash-qwen --prompt "Return 1" --run-file results/manual-sweep.jsonl
+uv run bench --mode sweep --model local-mlx-qwen --prompt "Return 1" --run-file results/manual-sweep.jsonl
 uv run bench --mode sweep --input results/manual-sweep.jsonl
 ```
 
@@ -341,9 +342,9 @@ rg -n "/Users/fxmartin/.*\\.env|\\.env" results LEADERBOARD.md
 **Suggested commands**:
 
 ```bash
-ps -axo pid,comm,rss | rg "dflash|turboquant|mlx|python"
-uv run bench --suite humaneval --model local-dflash-qwen --limit 10 --run-file results/manual-memory-dflash.jsonl
-uv run bench --suite humaneval --model local-turboquant-qwen-moe --limit 10 --run-file results/manual-memory-turboquant.jsonl
+ps -axo pid,comm,rss | rg "ollama|mlx|python"
+uv run bench --suite humaneval --model local-mlx-qwen --limit 10 --run-file results/manual-memory-mlx.jsonl
+uv run bench --suite humaneval --model local-ollama-qwen --limit 10 --run-file results/manual-memory-ollama.jsonl
 ```
 
 **Pass criteria**:

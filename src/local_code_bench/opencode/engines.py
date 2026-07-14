@@ -12,17 +12,8 @@ from local_code_bench.config import ConfigError
 
 # engine name -> OpenAI-compatible `/v1` base URL (loopback, default port).
 ENGINE_ENDPOINTS: dict[str, str] = {
-    "dflash": "http://127.0.0.1:8000/v1",
-    "turboquant": "http://127.0.0.1:8002/v1",
     "mlx-lm": "http://127.0.0.1:8080/v1",
-    "llama-cpp": "http://127.0.0.1:8081/v1",
     "ollama": "http://127.0.0.1:11434/v1",
-    "mlc-llm": "http://127.0.0.1:8082/v1",
-    "vllm-mlx": "http://127.0.0.1:8001/v1",
-    "exo": "http://127.0.0.1:52415/v1",
-    "omlx": "http://127.0.0.1:8004/v1",
-    "lm-studio": "http://127.0.0.1:1234/v1",
-    "gpt4all": "http://127.0.0.1:4891/v1",
 }
 
 

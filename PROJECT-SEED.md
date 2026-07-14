@@ -35,12 +35,12 @@ tok/s, and total latency.
 - **Fixed hardware**: MacBook Pro M3 Max, 48 GB unified memory. Reference articles
   used M4 64 GB — the 48 GB ceiling constrains which quantized models co-resident
   (target + draft/KV cache).
-- **Core design constraint**: one harness, swappable base URL — local MLX serving
-  (e.g. `dflash serve`, `turboquant-serve`, `mlx_lm.server`) vs OpenRouter — both
+- **Core design constraint**: one harness, swappable base URL — local serving
+  (`mlx_lm.server`, `ollama serve`) vs OpenRouter — both
   OpenAI-compatible. Serving runtime to be settled experimentally.
 - **Candidate roster discussed** (to refine in `/brainstorm`): local Qwen3.6 dense
-  (4-bit, via `dflash` + DFlash speculative decoding) and Qwen3.6-35B-A3B MoE (via
-  `turboquant`); cloud GLM and Kimi K2 via OpenRouter; Codex CLI as agent baseline.
+  (4-bit, via `mlx-lm`) and Qwen3.6-35B-A3B MoE (via
+  `ollama`); cloud GLM and Kimi K2 via OpenRouter; Codex CLI as agent baseline.
 - **Methodology reference** (`articles/`): two-part Medium series by Manjunath
   Janardhan. Part 1 = local Claude Code setup via `claude-code-router` (CCR) bridge.
   Part 2 = benchmark harness that bypasses the agent loop, hits the endpoint

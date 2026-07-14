@@ -1,8 +1,8 @@
 """Tests for the format-aware local model-store scanner (Story 11.1-001).
 
 Covers the config surface (`model_store` + `format` on InferencerConfig) and the
-four scan strategies, plus the graceful no-rows behaviour for missing/empty
-stores and `~` expansion against an injected home.
+two scan strategies (HF hub cache, Ollama blob store), plus the graceful no-rows
+behaviour for missing/empty stores and `~` expansion against an injected home.
 """
 
 from __future__ import annotations
@@ -49,22 +49,22 @@ def test_config_parses_model_store_list_and_format(tmp_path) -> None:
         tmp_path,
         """
 inferencers:
-  - name: llama-cpp
+  - name: mlx-lm
     lifecycle: server
     detect:
-      binary: llama-server
-    port: 8081
+      binary: mlx_lm.server
+    port: 8080
     health_url: http://127.0.0.1:{port}/v1/models
-    start: ["llama-server"]
-    model_store: ["~/models", "/opt/gguf"]
-    format: gguf
+    start: ["mlx_lm.server"]
+    model_store: ["~/hub", "/opt/hf-cache"]
+    format: hf-safetensors
 """,
     )
 
-    cfg = load_inferencers(path)["llama-cpp"]
+    cfg = load_inferencers(path)["mlx-lm"]
 
-    assert cfg.model_store == ("~/models", "/opt/gguf")
-    assert cfg.store_format == "gguf"
+    assert cfg.model_store == ("~/hub", "/opt/hf-cache")
+    assert cfg.store_format == "hf-safetensors"
 
 
 def test_config_parses_single_string_model_store(tmp_path) -> None:
@@ -137,14 +137,14 @@ def test_config_rejects_format_without_store(tmp_path) -> None:
         tmp_path,
         """
 inferencers:
-  - name: llama-cpp
+  - name: mlx-lm
     lifecycle: server
     detect:
-      binary: llama-server
-    port: 8081
+      binary: mlx_lm.server
+    port: 8080
     health_url: http://127.0.0.1:{port}/v1/models
-    start: ["llama-server"]
-    format: gguf
+    start: ["mlx_lm.server"]
+    format: hf-safetensors
 """,
     )
 
@@ -186,7 +186,7 @@ inferencers:
     health_url: http://127.0.0.1:{port}/v1/models
     start: ["llama-server"]
     model_store: []
-    format: gguf
+    format: ollama
 """,
     )
 
@@ -207,7 +207,7 @@ inferencers:
     health_url: http://127.0.0.1:{port}/v1/models
     start: ["llama-server"]
     model_store: ["   "]
-    format: gguf
+    format: ollama
 """,
     )
 
@@ -255,62 +255,6 @@ def test_expand_store_path_absolute_unchanged(tmp_path) -> None:
 def test_expand_store_path_falls_back_to_real_home(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("pathlib.Path.home", classmethod(lambda cls: tmp_path))
     assert expand_store_path("~/x") == tmp_path / "x"
-
-
-# --- GGUF strategy --------------------------------------------------------
-
-
-def test_scan_gguf_lists_files_recursively(tmp_path) -> None:
-    store = tmp_path / "gguf"
-    (store / "nested").mkdir(parents=True)
-    top = store / "Qwen2.5-Coder-Q4_K_M.gguf"
-    top.write_bytes(b"x" * 10)
-    nested = store / "nested" / "Llama-3.2-3B-IQ3_XXS.gguf"
-    nested.write_bytes(b"y" * 20)
-    (store / "README.md").write_text("not a model", encoding="utf-8")
-
-    cfg = _base("llama-cpp", model_store=(str(store),), store_format="gguf")
-    models = scan_inferencer(cfg)
-
-    by_name = {m.name: m for m in models}
-    assert set(by_name) == {"Qwen2.5-Coder-Q4_K_M", "Llama-3.2-3B-IQ3_XXS"}
-    assert by_name["Qwen2.5-Coder-Q4_K_M"].size_bytes == 10
-    assert by_name["Llama-3.2-3B-IQ3_XXS"].size_bytes == 20
-    assert all(m.store_format == "gguf" and m.inferencer == "llama-cpp" for m in models)
-
-
-def test_scan_gguf_counts_split_shards_once(tmp_path) -> None:
-    store = tmp_path / "gguf"
-    store.mkdir()
-    (store / "BigModel-00001-of-00003.gguf").write_bytes(b"a" * 5)
-    (store / "BigModel-00002-of-00003.gguf").write_bytes(b"b" * 5)
-    (store / "BigModel-00003-of-00003.gguf").write_bytes(b"c" * 5)
-
-    cfg = _base("llama-cpp", model_store=(str(store),), store_format="gguf")
-    models = scan_inferencer(cfg)
-
-    assert [m.name for m in models] == ["BigModel-00001-of-00003"]
-
-
-# --- MLX (publisher/model directory) strategy ------------------------------
-
-
-def test_scan_mlx_lists_publisher_model_dirs(tmp_path) -> None:
-    store = tmp_path / "mlx"
-    model_dir = store / "mlx-community" / "Llama-3.2-3B-4bit"
-    model_dir.mkdir(parents=True)
-    (model_dir / "model.safetensors").write_bytes(b"z" * 100)
-    (model_dir / "config.json").write_text("{}", encoding="utf-8")
-    # A publisher dir with no safetensors model is ignored.
-    (store / "empty-publisher").mkdir()
-
-    cfg = _base("lm-studio", model_store=(str(store),), store_format="mlx")
-    models = scan_inferencer(cfg)
-
-    assert len(models) == 1
-    assert models[0].name == "mlx-community/Llama-3.2-3B-4bit"
-    assert models[0].size_bytes == 102  # 100 bytes weights + 2 bytes config
-    assert models[0].store_format == "mlx"
 
 
 # --- HF hub cache strategy -------------------------------------------------
@@ -424,9 +368,9 @@ def test_scan_returns_empty_when_no_store_configured() -> None:
 
 def test_scan_missing_store_dir_yields_no_rows(tmp_path) -> None:
     cfg = _base(
-        "llama-cpp",
+        "mlx-lm",
         model_store=(str(tmp_path / "does-not-exist"),),
-        store_format="gguf",
+        store_format="hf-safetensors",
     )
     assert scan_inferencer(cfg) == []
 
@@ -434,86 +378,55 @@ def test_scan_missing_store_dir_yields_no_rows(tmp_path) -> None:
 def test_scan_store_path_is_a_file_yields_no_rows(tmp_path) -> None:
     not_a_dir = tmp_path / "afile"
     not_a_dir.write_text("oops", encoding="utf-8")
-    cfg = _base("llama-cpp", model_store=(str(not_a_dir),), store_format="gguf")
+    cfg = _base("mlx-lm", model_store=(str(not_a_dir),), store_format="hf-safetensors")
     assert scan_inferencer(cfg) == []
 
 
 def test_scan_expands_tilde_against_home(tmp_path) -> None:
     store = tmp_path / "models"
-    store.mkdir()
-    (store / "m.gguf").write_bytes(b"x" * 4)
+    _write_ollama_model(store, "m", "latest", {"sha256:aaa": 4})
 
-    cfg = _base("llama-cpp", model_store=("~/models",), store_format="gguf")
+    cfg = _base("ollama", model_store=("~/models",), store_format="ollama")
     models = scan_inferencer(cfg, home=tmp_path)
 
-    assert [m.name for m in models] == ["m"]
+    assert [m.name for m in models] == ["m:latest"]
 
 
 def test_scan_multiple_store_paths_are_merged(tmp_path) -> None:
     store_a = tmp_path / "a"
     store_b = tmp_path / "b"
-    store_a.mkdir()
-    store_b.mkdir()
-    (store_a / "one.gguf").write_bytes(b"1" * 3)
-    (store_b / "two.gguf").write_bytes(b"2" * 3)
+    _write_ollama_model(store_a, "one", "latest", {"sha256:aaa": 3})
+    _write_ollama_model(store_b, "two", "latest", {"sha256:bbb": 3})
 
     cfg = _base(
-        "llama-cpp",
+        "ollama",
         model_store=(str(store_a), str(store_b)),
-        store_format="gguf",
+        store_format="ollama",
     )
     models = scan_inferencer(cfg)
 
-    assert sorted(m.name for m in models) == ["one", "two"]
+    assert sorted(m.name for m in models) == ["one:latest", "two:latest"]
 
 
 def test_scan_inferencers_flattens_across_configs(tmp_path) -> None:
-    gguf_store = tmp_path / "gguf"
-    gguf_store.mkdir()
-    (gguf_store / "a.gguf").write_bytes(b"x" * 2)
-    mlx_store = tmp_path / "mlx" / "org" / "model"
-    mlx_store.mkdir(parents=True)
-    (mlx_store / "w.safetensors").write_bytes(b"y" * 8)
+    hub_store = tmp_path / "hub"
+    repo = hub_store / "models--org--model" / "snapshots" / "s"
+    repo.mkdir(parents=True)
+    (repo / "w.safetensors").write_bytes(b"y" * 8)
+    ollama_store = tmp_path / "ollama"
+    _write_ollama_model(ollama_store, "a", "latest", {"sha256:aaa": 2})
 
     configs = [
-        _base("llama-cpp", model_store=(str(gguf_store),), store_format="gguf"),
-        _base("mlx-lm", model_store=(str(tmp_path / "mlx"),), store_format="mlx"),
-        _base("dflash"),  # no store -> contributes nothing
+        _base("ollama", model_store=(str(ollama_store),), store_format="ollama"),
+        _base("mlx-lm", model_store=(str(hub_store),), store_format="hf-safetensors"),
+        _base("no-store"),  # no store -> contributes nothing
     ]
     models = scan_inferencers(configs)
 
     assert {(m.inferencer, m.name) for m in models} == {
-        ("llama-cpp", "a"),
+        ("ollama", "a:latest"),
         ("mlx-lm", "org/model"),
     }
-
-
-def test_scan_gguf_ignores_directory_named_like_a_model(tmp_path) -> None:
-    store = tmp_path / "gguf"
-    store.mkdir()
-    # A directory whose name ends in .gguf must not be counted as a model file.
-    (store / "weird.gguf").mkdir()
-    (store / "real.gguf").write_bytes(b"x" * 4)
-
-    cfg = _base("llama-cpp", model_store=(str(store),), store_format="gguf")
-    models = scan_inferencer(cfg)
-
-    assert [m.name for m in models] == ["real"]
-
-
-def test_scan_mlx_skips_model_dir_without_safetensors(tmp_path) -> None:
-    store = tmp_path / "mlx"
-    publisher = store / "org"
-    (publisher / "weights-model").mkdir(parents=True)
-    (publisher / "weights-model" / "m.safetensors").write_bytes(b"w" * 6)
-    # Sibling model dir with only metadata is ignored (no safetensors).
-    (publisher / "config-only").mkdir()
-    (publisher / "config-only" / "config.json").write_text("{}", encoding="utf-8")
-
-    cfg = _base("lm-studio", model_store=(str(store),), store_format="mlx")
-    models = scan_inferencer(cfg)
-
-    assert [m.name for m in models] == ["org/weights-model"]
 
 
 def test_scan_hf_cache_ignores_stray_files(tmp_path) -> None:
@@ -591,17 +504,11 @@ def test_file_size_swallows_oserror(monkeypatch, tmp_path) -> None:
 def test_default_config_carries_store_metadata() -> None:
     inferencers = load_inferencers("configs/inferencers.yaml")
 
-    # MLX servers share the HuggingFace hub cache; ollama uses its blob store.
-    assert inferencers["dflash"].model_store == ("~/.cache/huggingface/hub",)
-    assert inferencers["dflash"].store_format == "hf-safetensors"
-    assert inferencers["omlx"].model_store == ("~/.omlx/models",)
-    assert inferencers["omlx"].store_format == "mlx"
+    # mlx-lm shares the HuggingFace hub cache; ollama uses its blob store.
+    assert inferencers["mlx-lm"].model_store == ("~/.cache/huggingface/hub",)
+    assert inferencers["mlx-lm"].store_format == "hf-safetensors"
     assert inferencers["ollama"].model_store == ("~/.ollama/models",)
     assert inferencers["ollama"].store_format == "ollama"
-    assert inferencers["gpt4all"].store_format == "gguf"
-    # llama-cpp has no fixed store dir and must stay store-less.
-    assert inferencers["llama-cpp"].model_store is None
-    assert inferencers["llama-cpp"].store_format is None
 
 
 def test_default_config_store_paths_are_scannable(tmp_path) -> None:
@@ -619,9 +526,9 @@ def test_default_config_store_paths_are_scannable(tmp_path) -> None:
 def test_stored_model_is_frozen() -> None:
     model = StoredModel(
         inferencer="x",
-        store_format="gguf",
+        store_format="ollama",
         name="m",
-        path="/tmp/m.gguf",
+        path="/tmp/m",
         size_bytes=1,
     )
     with pytest.raises(AttributeError):

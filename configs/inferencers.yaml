@@ -16,9 +16,7 @@
 #   model_store / format  optional (Epic-11): where this engine keeps downloaded
 #              models and the on-disk format the inventory scanner reads them with.
 #              `model_store` is one path or a list of paths (`~` expanded); `format`
-#              is one of gguf | ollama | hf-safetensors | mlx. Set both or neither.
-#              Engines with no fixed store dir (e.g. llama.cpp, fed an explicit
-#              model path per run) simply omit them.
+#              is one of ollama | hf-safetensors. Set both or neither.
 #
 # external_repo  optional (Epic-12): a second-tier model repository on an attached
 #              USB/Thunderbolt SSD. `root` is the repo root on the external volume
@@ -27,7 +25,7 @@
 #              across remounts and the tier reads `mounted` only when root + marker
 #              are present (else `offline`, never an error). `subpaths` optionally
 #              overrides the per-format subdir layout, which by default mirrors the
-#              local store (one subdir per gguf | ollama | hf-safetensors | mlx).
+#              local store (one subdir per ollama | hf-safetensors).
 #              Omit the whole block for a single-tier (local-only) setup. Example:
 #
 # external_repo:
@@ -53,28 +51,6 @@
 #   pins:
 #     - qwen2.5-coder
 inferencers:
-  # --- Headless servers (full lifecycle) ---------------------------------
-  - name: dflash
-    lifecycle: server
-    detect:
-      binary: dflash
-    port: 8000
-    health_url: http://127.0.0.1:{port}/v1/models
-    start: ["dflash", "serve"]
-    url: https://github.com/bstnxbt/dflash-mlx
-    # MLX engines read pre-quantized repos from the shared HuggingFace hub cache.
-    model_store: ~/.cache/huggingface/hub
-    format: hf-safetensors
-  - name: turboquant
-    lifecycle: server
-    detect:
-      binary: turboquant-serve
-    port: 8002
-    health_url: http://127.0.0.1:{port}/v1/models
-    start: ["turboquant-serve"]
-    url: https://github.com/helgklaizar/turboquant-mlx
-    model_store: ~/.cache/huggingface/hub
-    format: hf-safetensors
   - name: mlx-lm
     lifecycle: server
     detect:
@@ -83,16 +59,9 @@ inferencers:
     health_url: http://127.0.0.1:{port}/v1/models
     start: ["mlx_lm.server", "--port", "8080"]
     url: https://github.com/ml-explore/mlx-lm
+    # MLX engines read pre-quantized repos from the shared HuggingFace hub cache.
     model_store: ~/.cache/huggingface/hub
     format: hf-safetensors
-  - name: llama-cpp
-    lifecycle: server
-    detect:
-      binary: llama-server
-    port: 8081
-    health_url: http://127.0.0.1:{port}/v1/models
-    start: ["llama-server", "--port", "8081"]
-    url: https://github.com/ggml-org/llama.cpp
   - name: ollama
     lifecycle: server
     detect:
@@ -105,93 +74,3 @@ inferencers:
     # Content-addressed blob store (manifests/ + sha256 blobs/), not plain files.
     model_store: ~/.ollama/models
     format: ollama
-  - name: mlc-llm
-    lifecycle: server
-    detect:
-      module: mlc_llm
-    port: 8082
-    health_url: http://127.0.0.1:{port}/v1/models
-    start: ["mlc_llm", "serve", "--port", "8082"]
-    url: https://github.com/mlc-ai/mlc-llm
-    model_store: ~/.cache/huggingface/hub
-    format: hf-safetensors
-  - name: vllm-mlx
-    lifecycle: server
-    # The standalone `vllm-mlx` package ships a `vllm-mlx` console script
-    # (`vllm-mlx serve`). The vllm-metal plugin instead provides module `vllm` +
-    # `vllm serve`; switch detect/start to that if you install vllm-metal.
-    detect:
-      binary: vllm-mlx
-    # 8001 rather than 8000 to avoid colliding with dflash.
-    port: 8001
-    health_url: http://127.0.0.1:{port}/v1/models
-    start: ["vllm-mlx", "serve", "--port", "8001"]
-    url: https://github.com/vllm-project/vllm
-    model_store: ~/.cache/huggingface/hub
-    format: hf-safetensors
-  - name: exo
-    lifecycle: server
-    # exo upstream runs as `uv run exo` from its clone; expose an `exo` wrapper on
-    # PATH so detection (shutil.which) and this start command resolve. See
-    # docs/INFERENCER-INSTALLATION.md.
-    detect:
-      binary: exo
-    port: 52415
-    health_url: http://127.0.0.1:{port}/v1/models
-    start: ["exo"]
-    url: https://github.com/exo-explore/exo
-    model_store: ~/.cache/huggingface/hub
-    format: hf-safetensors
-  - name: mtplx
-    lifecycle: server
-    # Native Multi-Token-Prediction MLX runtime: the model drafts ahead with its
-    # own built-in MTP heads and verifies them in one batched pass (no external
-    # drafter). OpenAI/Anthropic-compatible server, so it drops into the endpoint
-    # protocol like dflash/turboquant. MTPLX defaults to 8000 (owned by dflash) —
-    # remapped to 8003 to avoid the collision. Requires its own pre-built MTP
-    # models (the Youssofal Hugging Face catalog); see docs/INFERENCER-INSTALLATION.md.
-    detect:
-      binary: mtplx
-    port: 8003
-    health_url: http://127.0.0.1:{port}/v1/models
-    start: ["mtplx", "serve", "--port", "8003"]
-    url: https://github.com/youssofal/mtplx
-    # Pre-built MTP models from the Youssofal HF catalog, cached in the hub.
-    model_store: ~/.cache/huggingface/hub
-    format: hf-safetensors
-  - name: omlx
-    lifecycle: server
-    # MLX-native server focused on coding-agent workloads: SSD-backed KV cache,
-    # continuous batching, OpenAI/Anthropic-compatible APIs, and a macOS app/CLI.
-    # OMLX defaults to 8000 (owned by dflash) — remapped to 8004 here to avoid
-    # collisions across the benchmark roster.
-    detect:
-      binary: omlx
-    port: 8004
-    health_url: http://127.0.0.1:{port}/v1/models
-    start: ["env", "OMLX_PORT=8004", "omlx", "serve"]
-    url: https://github.com/jundot/omlx
-    # Default zero-config model root for app/Homebrew installs.
-    model_store: ~/.omlx/models
-    format: mlx
-  # --- Detect-only GUI apps ----------------------------------------------
-  - name: lm-studio
-    lifecycle: app
-    detect:
-      app: "LM Studio.app"
-    port: 1234
-    health_url: http://127.0.0.1:{port}/v1/models
-    url: https://lmstudio.ai
-    # LM Studio downloads publisher/model GGUF files under its models dir.
-    model_store: ~/.cache/lm-studio/models
-    format: gguf
-  - name: gpt4all
-    lifecycle: app
-    detect:
-      app: "GPT4All.app"
-    port: 4891
-    health_url: http://127.0.0.1:{port}/v1/models
-    url: https://github.com/nomic-ai/gpt4all
-    # GPT4All stores GGUF files in its application-support models dir.
-    model_store: ~/Library/Application Support/nomic.ai/GPT4All
-    format: gguf

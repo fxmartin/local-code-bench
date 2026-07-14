@@ -1,7 +1,7 @@
 """Best-effort engine-version capture for the OpenCode scorecard (Story 10.5-001).
 
 Each scorecard row records which engine *build* produced it, so a result can be
-traced back to a specific oMLX/Ollama/... version — the run-mode and quant-source
+traced back to a specific Ollama/mlx-lm/... version — the run-mode and quant-source
 lessons of the article are only reproducible if the engine version is pinned too.
 
 Version data is read from the engine's own version endpoint *where one exists*

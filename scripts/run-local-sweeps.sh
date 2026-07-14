@@ -4,8 +4,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-dflash_run_file="${DFLASH_SWEEP_RUN_FILE:-results/sweep-dflash.jsonl}"
-turboquant_run_file="${TURBOQUANT_SWEEP_RUN_FILE:-results/sweep-turbo.jsonl}"
+mlx_run_file="${MLX_LM_SWEEP_RUN_FILE:-results/sweep-mlx.jsonl}"
+ollama_run_file="${OLLAMA_SWEEP_RUN_FILE:-results/sweep-ollama.jsonl}"
 stop_timeout_seconds="${STOP_TIMEOUT_SECONDS:-20}"
 keep_servers="${KEEP_LOCAL_SWEEP_SERVERS:-0}"
 
@@ -13,25 +13,25 @@ usage() {
   cat <<'EOF'
 Usage: scripts/run-local-sweeps.sh
 
-Runs local sweep benchmarks sequentially so DFlash and TurboQuant never hold
+Runs local sweep benchmarks sequentially so mlx-lm and Ollama never hold
 model weights in memory at the same time:
 
   1. stop both local benchmark servers
-  2. start and warm DFlash
-  3. run: uv run bench --mode sweep --model local-dflash-qwen ...
-  4. stop DFlash
-  5. start and warm TurboQuant
-  6. run: uv run bench --mode sweep --model local-turboquant-qwen-moe ...
-  7. stop TurboQuant
+  2. start and warm mlx-lm
+  3. run: uv run bench --mode sweep --model local-mlx-qwen ...
+  4. stop mlx-lm
+  5. start and warm Ollama
+  6. run: uv run bench --mode sweep --model local-ollama-qwen ...
+  7. stop Ollama
   8. summarize both sweep JSONL files
 
 Required when the backend is not already launchable:
-  DFLASH_COMMAND='...'
-  TURBOQUANT_COMMAND='...'
+  MLX_LM_COMMAND='...'
+  OLLAMA_COMMAND='...'
 
 Optional:
-  DFLASH_SWEEP_RUN_FILE=results/sweep-dflash.jsonl
-  TURBOQUANT_SWEEP_RUN_FILE=results/sweep-turbo.jsonl
+  MLX_LM_SWEEP_RUN_FILE=results/sweep-mlx.jsonl
+  OLLAMA_SWEEP_RUN_FILE=results/sweep-ollama.jsonl
   WARMUP_TIMEOUT=300
   STOP_TIMEOUT_SECONDS=20
   KEEP_LOCAL_SWEEP_SERVERS=1
@@ -47,8 +47,8 @@ fi
 
 port_for_backend() {
   case "$1" in
-    dflash) echo "${DFLASH_PORT:-8000}" ;;
-    turboquant) echo "${TURBOQUANT_PORT:-8002}" ;;
+    mlx-lm) echo "${MLX_LM_PORT:-8080}" ;;
+    ollama) echo "${OLLAMA_PORT:-11434}" ;;
     *)
       echo "unknown backend: $1" >&2
       exit 2
@@ -58,8 +58,8 @@ port_for_backend() {
 
 model_for_backend() {
   case "$1" in
-    dflash) echo "local-dflash-qwen" ;;
-    turboquant) echo "local-turboquant-qwen-moe" ;;
+    mlx-lm) echo "local-mlx-qwen" ;;
+    ollama) echo "local-ollama-qwen" ;;
     *)
       echo "unknown backend: $1" >&2
       exit 2
@@ -69,8 +69,8 @@ model_for_backend() {
 
 run_file_for_backend() {
   case "$1" in
-    dflash) echo "$dflash_run_file" ;;
-    turboquant) echo "$turboquant_run_file" ;;
+    mlx-lm) echo "$mlx_run_file" ;;
+    ollama) echo "$ollama_run_file" ;;
     *)
       echo "unknown backend: $1" >&2
       exit 2
@@ -125,8 +125,8 @@ stop_backend() {
 }
 
 stop_all() {
-  stop_backend dflash
-  stop_backend turboquant
+  stop_backend mlx-lm
+  stop_backend ollama
 }
 
 cleanup() {
@@ -182,13 +182,13 @@ trap cleanup EXIT INT TERM
 
 stop_all
 
-start_and_warm dflash turboquant
-run_sweep_for_backend dflash
-stop_backend dflash
+start_and_warm mlx-lm ollama
+run_sweep_for_backend mlx-lm
+stop_backend mlx-lm
 
-start_and_warm turboquant dflash
-run_sweep_for_backend turboquant
-stop_backend turboquant
+start_and_warm ollama mlx-lm
+run_sweep_for_backend ollama
+stop_backend ollama
 
 echo "sweep summary"
-uv run bench --mode sweep --input "$dflash_run_file" "$turboquant_run_file"
+uv run bench --mode sweep --input "$mlx_run_file" "$ollama_run_file"

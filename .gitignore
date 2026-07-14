@@ -31,7 +31,6 @@ results/
 
 # Logs
 *.log
-/tmp/dflash_serve.log
 # ...but the OpenCode benchmark fixture is a version-controlled input, not a log
 !fixtures/opencode-sample.log
 

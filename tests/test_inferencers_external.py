@@ -132,12 +132,13 @@ def test_initialize_repo_is_idempotent(tmp_path) -> None:
     cfg = _cfg(str(root))
 
     initialize_repo(cfg)
-    (root / DEFAULT_EXTERNAL_SUBPATHS["gguf"] / "keep.gguf").write_text("x", encoding="utf-8")
+    keep = root / DEFAULT_EXTERNAL_SUBPATHS["hf-safetensors"] / "keep.safetensors"
+    keep.write_text("x", encoding="utf-8")
 
     # Re-initialising must not wipe existing content or the marker.
     initialize_repo(cfg)
 
-    assert (root / DEFAULT_EXTERNAL_SUBPATHS["gguf"] / "keep.gguf").is_file()
+    assert keep.is_file()
     assert (root / ".lcb-external").is_file()
 
 

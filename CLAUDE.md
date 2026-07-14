@@ -17,8 +17,8 @@ and measure Codex as a first-class coding-agent baseline.
 ## Architecture
 
 A CLI harness that talks to any **OpenAI-compatible `/v1/chat/completions`
-endpoint**, so the *same* code measures a local MLX server (e.g. `dflash serve`,
-`turboquant-serve`, `mlx_lm.server`) and a remote provider (OpenRouter) by swapping
+endpoint**, so the *same* code measures a local server (`mlx_lm.server` or
+`ollama serve`) and a remote provider (OpenRouter) by swapping
 only the base URL and API key. Following the source articles' method, it measures
 per-turn **time-to-first-token (prefill tok/s), decode tok/s, and total latency** —
 because local agentic coding is **prefill-bound, not decode-bound**.

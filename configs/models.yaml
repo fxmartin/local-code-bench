@@ -10,7 +10,7 @@
 models:
   - name: local-example
     type: openai
-    base_url: http://localhost:8000/v1
+    base_url: http://localhost:8080/v1
     model_id: local-coding-model
     pinned_revision: manual
     concurrency: 1
@@ -59,14 +59,14 @@ models:
     price_per_1k_tokens:
       input: 0.003
       output: 0.015
-  - name: local-dflash-qwen
+  - name: local-mlx-qwen
     type: openai
-    base_url: http://localhost:8000/v1
+    base_url: http://localhost:8080/v1
     model_id: mlx-community/Qwen3.6-27B-4bit
     pinned_revision: manual-2026-06-21
     concurrency: 1
-    # Declares the engine `--manage-inferencers` auto-starts (port 8000 = dflash).
-    inferencer: dflash
+    # Declares the engine `--manage-inferencers` auto-starts (port 8080 = mlx-lm).
+    inferencer: mlx-lm
     # Qwen3.6 reasons inline (in code comments) and can overrun the 1024 default,
     # truncating the solution. 2048 gives it room. To go faster instead, try
     # disabling thinking via extra_body if the MLX server honors it.
@@ -74,37 +74,16 @@ models:
     price_per_1k_tokens:
       input: 0.0
       output: 0.0
-  - name: local-turboquant-qwen-moe
+  - name: local-ollama-qwen
     type: openai
-    base_url: http://localhost:8002/v1
-    model_id: manjunathshiva/Qwen3.6-35B-A3B-tq3-g32
-    pinned_revision: manual-2026-06-21
+    # Ollama exposes an OpenAI-compatible endpoint under /v1.
+    base_url: http://localhost:11434/v1
+    # Set to the exact tag you pulled (`ollama list`).
+    model_id: qwen3.6:27b
+    pinned_revision: manual-2026-07-14
     concurrency: 1
-    # Declares the engine `--manage-inferencers` auto-starts (port 8002 = turboquant).
-    inferencer: turboquant
-    # Qwen3.6 MoE reasons in code comments and can overrun the budget on tricky
-    # tasks (e.g. HumanEval/113). Raising the cap did not help and this server build
-    # ignores chat_template_kwargs.enable_thinking, so we accept it as a real finding
-    # rather than chase it. 2048 is enough for the tasks where it does terminate.
-    max_tokens: 2048
-    price_per_1k_tokens:
-      input: 0.0
-      output: 0.0
-  - name: local-mtplx-qwen
-    type: openai
-    base_url: http://localhost:8003/v1
-    # MTPLX needs its OWN pre-built MTP models (the Youssofal HF catalog: Qwen 3.5/3.6,
-    # Gemma 4), verified by `mtplx inspect`. This points at an MTPLX-specific repo, so a
-    # strict same-artifact A/B against other engines is NOT claimed — the run metadata
-    # records the differing model build. MTPLX's optional per-machine auto-tuning is a
-    # MANUAL pre-step FX runs once outside the harness; see docs/INFERENCER-INSTALLATION.md.
-    model_id: Youssofal/Qwen3.6-27B-MTPLX
-    pinned_revision: manual-2026-06-26
-    concurrency: 1
-    # Declares the engine `--manage-inferencers` auto-starts (port 8003 = mtplx).
-    inferencer: mtplx
-    # Native MTP speculative decoding; like the other Qwen3.6 entries it reasons inline,
-    # so give the solution room to terminate.
+    # Declares the engine `--manage-inferencers` auto-starts (port 11434 = ollama).
+    inferencer: ollama
     max_tokens: 2048
     price_per_1k_tokens:
       input: 0.0

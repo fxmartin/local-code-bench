@@ -26,41 +26,27 @@ separate experiments.
 
 ## Local Backend Choice
 
-For local MLX serving, the current focus is **TurboQuant** and **DFlash** rather
-than Ollama or LM Studio.
+For local serving, the current focus is two engines: **MLX-LM** and **Ollama**.
 
-TurboQuant and DFlash are closer to the workload this repo is trying to measure:
-they expose OpenAI-compatible HTTP endpoints while keeping control over MLX
-loading, quantized model choices, draft/verify behavior, prompt processing, and
-serving parameters. That matters because this harness needs to compare local
-models on both output quality and low-level throughput, including input token/s,
-output token/s, and prefill behavior.
+MLX-LM (`mlx_lm.server`) is Apple's official MLX toolkit and the baseline native
+Apple Silicon server: it exposes an OpenAI-compatible HTTP endpoint while keeping
+direct control over MLX loading and quantized model choice. That matters because
+this harness needs to compare local models on both output quality and low-level
+throughput, including input token/s, output token/s, and prefill behavior.
+Ollama is the easiest zero-to-running path — a model registry plus an
+OpenAI-compatible API over llama.cpp — and represents what most people actually
+run locally.
 
-The local backend pair is intentionally not the same model served two ways. It
-tracks the two Apple Silicon strategies described in the reference articles:
+The local backend pair serves the same Qwen generation through the two runtimes:
 
-- **DFlash** serves `mlx-community/Qwen3.6-27B-4bit`, a dense 27B target with a
-  purpose-built `z-lab/Qwen3.6-27B-DFlash` draft model. DFlash is lossless
-  speculative decoding: the draft proposes tokens and the target verifies them,
-  so decode throughput improves without changing the target model's output.
-- **TurboQuant** serves `manjunathshiva/Qwen3.6-35B-A3B-tq3-g32`, a sparse MoE
-  with about 35B total parameters but far fewer active parameters per token.
-  The reference benchmark argues that this matters most for long agent prompts,
-  where prefill dominates the wait time and speculative decoding alone cannot
-  help as much.
+- **MLX-LM** serves `mlx-community/Qwen3.6-27B-4bit` on port 8080 from the
+  shared Hugging Face cache (`hf-safetensors` format).
+- **Ollama** serves `qwen3.6:27b` on port 11434 from its content-addressed blob
+  store (`ollama` format).
 
-That makes the local comparison "dense 27B + speculative decoding" versus
-"sparse MoE + quantized serving," not a pure serving-runtime shootout. If a
-future experiment needs to isolate only the server implementation, add a separate
-same-model pair rather than replacing these article-aligned baselines.
-
-Ollama and LM Studio are useful general-purpose local model tools, but they are
-less suitable as the primary benchmark path here. They add product-level
-abstractions around model management and serving, can hide implementation
-details that affect timing, and are not optimized for the specific MLX
-experiments this repo is running on a 48 GB Apple Silicon machine. They remain
-reasonable compatibility targets later, but TurboQuant and DFlash give the
-harness a cleaner path for reproducible local-vs-cloud measurements right now.
+That makes the local comparison a serving-runtime and on-disk-format shootout
+on the same model family, within the 48 GB memory budget of the benchmark
+machine.
 
 ## Development
 
@@ -214,7 +200,7 @@ use it, either grant passwordless sudo for `powermetrics` or run the whole comma
 under sudo:
 
 ```bash
-sudo -v && uv run bench --suite canary --model local-dflash-qwen --power
+sudo -v && uv run bench --suite canary --model local-mlx-qwen --power
 ```
 
 When a sweep run file carries power records, the `--mode sweep --input` summary adds
@@ -225,19 +211,18 @@ with the token counts in the task records to derive tokens per joule.
 ### Auto-Starting A Local Inferencer
 
 A local model may declare the inference engine it needs via an `inferencer:` field in
-`configs/models.yaml` (e.g. `local-dflash-qwen` declares `dflash`). By default the
+`configs/models.yaml` (e.g. `local-mlx-qwen` declares `mlx-lm`). By default the
 harness assumes that server is already running. Pass `--manage-inferencers` to have a
 suite or sweep run bring the declared engine up **exclusively** first — every other
 running headless server is stopped (after confirmation) so exactly one engine holds the
 GPU and the timing numbers stay valid:
 
 ```bash
-uv run bench --suite canary --model local-dflash-qwen --manage-inferencers --yes
+uv run bench --suite canary --model local-mlx-qwen --manage-inferencers --yes
 ```
 
 `--yes` auto-confirms stopping the other engines (a non-interactive shell defaults to
-*no*); `--force` permits starting past a running GUI app such as LM Studio (which is
-never force-quit). Without `--manage-inferencers` the run behaviour is unchanged.
+*no*). Without `--manage-inferencers` the run behaviour is unchanged.
 
 Use `OPENROUTER_API_KEY` for the OpenRouter entries and `ANTHROPIC_API_KEY` for
 the Anthropic baseline. API keys are read from the shell environment or a local
@@ -248,8 +233,8 @@ printf 'OPENROUTER_API_KEY=sk-or-...\n' > .env
 printf 'ANTHROPIC_API_KEY=sk-ant-...\n' >> .env
 ```
 
-Local MLX servers are configured as OpenAI-compatible endpoints;
-`scripts/bring-up-local.sh dflash` and `scripts/bring-up-local.sh turboquant`
+Local servers are configured as OpenAI-compatible endpoints;
+`scripts/bring-up-local.sh mlx-lm` and `scripts/bring-up-local.sh ollama`
 print the expected manual server commands. The script's readiness gate issues a
 real completion (not just a `/v1/models` ping), so it blocks through the cold-start
 weight load and only reports the backend "warm" once the model is actually resident
@@ -285,7 +270,7 @@ or cost is absent.
 
 Qwen Code uses the OpenAI-compatible path and can point at the same local
 inferencer endpoint as endpoint-mode models. The bundled `qwen-code` agent
-targets `http://localhost:8000/v1`; override or add entries in
+targets `http://localhost:8080/v1` (the mlx-lm server); override or add entries in
 `configs/agents.yaml` with `base_url`, `model`, and optional `api_key_env` when
 the endpoint requires a key:
 
@@ -309,20 +294,18 @@ identical across every model. A thin `run-bench.sh` wrapper forwards every flag:
 
 ```bash
 # Against a model's configured endpoint:
-./run-bench.sh --model local-dflash-qwen
+./run-bench.sh --model local-mlx-qwen
 
 # Pick a known engine's default /v1 endpoint instead of editing config:
 ./run-bench.sh --model local --engine ollama
 
 # Override the endpoint directly, flip on high-reasoning mode, and tag provenance:
-./run-bench.sh --model local --endpoint http://127.0.0.1:1234/v1 \
+./run-bench.sh --model local --endpoint http://127.0.0.1:8080/v1 \
   --mode thinking --quant IQ3_XXS --provider unsloth
 ```
 
-`--engine` resolves to the locked default `/v1` endpoint for any of the configured engines
-(`dflash`, `turboquant`, `mlx-lm`, `llama-cpp`, `ollama`, `mlc-llm`, `vllm-mlx`,
-`exo`, `omlx`, `lm-studio`, `gpt4all`); `--endpoint` wins when both are given. oMLX's
-Anthropic endpoint is reached by setting the model's `type: anthropic` in config.
+`--engine` resolves to the locked default `/v1` endpoint for either of the configured
+engines (`mlx-lm`, `ollama`); `--endpoint` wins when both are given.
 Each run records the quant string, quant provider (the Unsloth-vs-Bartowski lesson),
 engine, endpoint, mode, and the pinned seed/temperature (temperature defaults to 0
 for determinism). Results are written to `results/opencode-<model>-*.jsonl`.
@@ -330,7 +313,7 @@ for determinism). Results are written to `results/opencode-<model>-*.jsonl`.
 Equivalent without the wrapper:
 
 ```bash
-uv run bench opencode --model local-dflash-qwen
+uv run bench opencode --model local-mlx-qwen
 ```
 
 ### Scorecard and provenance note
@@ -371,7 +354,7 @@ points) of the Task B error rate, the tok/s range, and how many of the N runs
 passed Task A — rather than averaging the spread away:
 
 ```bash
-./run-bench.sh --model local-dflash-qwen --repeat 3
+./run-bench.sh --model local-mlx-qwen --repeat 3
 ```
 
 Every scorecard row also records the **engine version** where the engine exposes
@@ -399,12 +382,15 @@ and records TTFT and prefill tok/s at each size. Override the ladder with
 on constrained memory:
 
 ```bash
-uv run bench --mode sweep --model local-turboquant-qwen-moe --context-sizes 2000,8000,16000
+uv run bench --mode sweep --model local-ollama-qwen --context-sizes 2000,8000,16000
 ```
 
-`scripts/run-local-sweeps.sh` automates the dense-vs-MoE comparison safely: it brings
-up one local server at a time (refusing to proceed if the other is still resident),
-sweeps it, then swaps. It honors `SWEEP_CONTEXT_SIZES` and `POWER=1`.
+`scripts/run-local-sweeps.sh` automates the mlx-lm-vs-Ollama comparison safely: it
+brings up one local server at a time (refusing to proceed if the other is still
+resident), sweeps it, then swaps, writing `results/sweep-mlx.jsonl` and
+`results/sweep-ollama.jsonl` (override with `MLX_LM_SWEEP_RUN_FILE` /
+`OLLAMA_SWEEP_RUN_FILE`; start commands come from `MLX_LM_COMMAND` /
+`OLLAMA_COMMAND`). It honors `SWEEP_CONTEXT_SIZES` and `POWER=1`.
 
 ## Results Dashboard
 
@@ -451,19 +437,16 @@ your own runs (results JSONL is gitignored).
 ## Inferencer Lifecycle
 
 `bench inferencer` detects, inspects, and controls the local inference engines
-declared in `configs/inferencers.yaml` (DFlash, TurboQuant, MLX-LM, llama.cpp,
-Ollama, MTPLX, and friends; LM Studio / GPT4All are detect-only GUI apps). Exactly
-one headless server is allowed to hold the GPU at a time, so timing measurements
-stay valid:
+declared in `configs/inferencers.yaml` (MLX-LM and Ollama). Exactly one headless
+server is allowed to hold the GPU at a time, so timing measurements stay valid:
 
 ```bash
 uv run bench inferencer list              # installed state, lifecycle, port, and reference URL
 uv run bench inferencer status            # installed/running/healthy/pid/url table
 uv run bench inferencer status --watch    # live table, refreshes on --interval (ANSI clear)
-uv run bench inferencer start dflash      # prompts to stop any other running engines first
-uv run bench inferencer start dflash --yes    # auto-confirm stopping others (non-tty defaults to no)
-uv run bench inferencer start dflash --force  # start past a running GUI app instead of refusing
-uv run bench inferencer stop dflash       # idempotent stop
+uv run bench inferencer start mlx-lm      # prompts to stop any other running engines first
+uv run bench inferencer start mlx-lm --yes    # auto-confirm stopping others (non-tty defaults to no)
+uv run bench inferencer stop mlx-lm       # idempotent stop
 uv run bench inferencer models            # downloaded models per engine: format, quant, size, tier
 uv run bench inferencer models --shared   # only models several engines can serve (sharing sets)
 uv run bench inferencer models --json     # emit the inventory as JSON
@@ -477,9 +460,8 @@ uv run bench inferencer tier --apply      # apply the auto-tiering plan via the 
 `bench inferencer models` scans each engine's configured `model_store` with a
 format-aware strategy and lists what is actually downloaded — name, format, quant,
 and on-disk size. `--shared` collapses copies of the same on-disk artifact (one HF
-cache entry, the same `.gguf`, or one Ollama blob) into a single logical model and
-names every engine that can serve it, so several MLX engines sharing one download
-show up once. `--json` emits the same inventory machine-readably. Each row also
+cache entry or one Ollama blob) into a single logical model and names every engine
+that can serve it, so engines sharing one download show up once. `--json` emits the same inventory machine-readably. Each row also
 carries a `TIER` column (`local`, `external`, or `external-offline`) and `--tier`
 filters the listing to one tier. A config or scan failure prints `bench: error: ...`
 and exits 2, like the other verbs.
@@ -522,27 +504,15 @@ explicitly applied. When the external SSD is offline auto-tiering is paused and 
 changes. Omit the block to leave auto-tiering disabled.
 
 Starting an engine enforces the one-active invariant: any other running headless
-servers are listed and stopped only after you confirm, then the target starts. A
-running GUI app blocks the start with a warning to quit it manually unless `--force`
-is passed; the harness never force-quits a GUI app. State lives under
-`.runtime/inferencers/` (gitignored). Override paths with `--config` and `--state-dir`.
+servers are listed and stopped only after you confirm, then the target starts.
+State lives under `.runtime/inferencers/` (gitignored). Override paths with
+`--config` and `--state-dir`.
 
 The harness never installs an engine — it only detects what you have, and `list`/`status`
 print each engine's reference `url` so an uninstalled engine points you to its own install
 page. Installation is always manual and link-guided. For step-by-step, per-engine setup on
 the M3 Max (install, start, verify), see
 [`docs/INFERENCER-INSTALLATION.md`](docs/INFERENCER-INSTALLATION.md).
-
-**MTPLX (native MTP).** [MTPLX](https://github.com/youssofal/mtplx) is an MLX-native
-Multi-Token-Prediction runtime: the model drafts tokens ahead with its own built-in MTP
-heads and verifies them in one batched pass (no external drafter), exposing an
-OpenAI/Anthropic-compatible server on port **8003** (remapped off its 8000 default, which
-DFlash owns). It requires its **own pre-built MTP models** (the `Youssofal` Hugging Face
-catalog — Qwen 3.5/3.6, Gemma 4 — verified with `mtplx inspect`), so the `local-mtplx-qwen`
-model row points at an MTPLX-specific repo and a strict same-artifact A/B against other
-engines is **not** claimed; the run metadata records the differing model build. MTPLX's
-optional per-machine auto-tuning is a **manual** one-time pre-step you run yourself outside
-the harness — the harness neither triggers it nor depends on it.
 
 ## Unified Dashboard
 
@@ -601,7 +571,7 @@ The **Inventory** section is a thin browser client over a `GET /api/inventory`
 endpoint that surfaces the Epic-11 local model-store scanner: it lists the models
 downloaded on this box per inferencer, grouped by on-disk format with their quant,
 provider, and size, and a second table flags the *shared* ones — a single stored
-artifact (the same HuggingFace cache entry, `.gguf` file, or Ollama blob) several
+artifact (the same HuggingFace cache entry or Ollama blob) several
 engines can serve, so you are not storing it more than once. Clicking a downloaded
 model jumps to the **Run** section with a compatible inferencer pre-filled, so you can
 benchmark a local download visually. The endpoint projects only what identifies a
