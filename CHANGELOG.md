@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## v0.51.0 (2026-07-14)
+
+### Features
+
+- **dashboard**: Show amber starting state while an engine boots
+  ([`8ff45d7`](https://github.com/fxmartin/local-code-bench/commit/8ff45d788de338f28d2273c6a9df3f202fb06775))
+
+- **inferencers**: Focus local engines on mlx-lm and ollama
+  ([`7799a3f`](https://github.com/fxmartin/local-code-bench/commit/7799a3f0e0131c5b961045e183d6f11ad0f8cba5))
+
+### Breaking Changes
+
+- **inferencers**: Only mlx-lm and ollama remain as managed local inferencer engines; gguf/mlx store
+  formats and the removed engines' model entries are no longer valid config.
+
+
 ## v0.50.1 (2026-07-02)
 
 ### Bug Fixes
