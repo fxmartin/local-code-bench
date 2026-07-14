@@ -933,7 +933,7 @@ _PAGE = """<!DOCTYPE html>
   button.act { font: inherit; padding: 0.25rem 0.7rem; cursor: pointer; }
   button.act:disabled { opacity: 0.4; cursor: default; }
   .dot { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 50%; }
-  .up { background: #2e9e44; } .down { background: #999; }
+  .up { background: #2e9e44; } .down { background: #999; } .warn { background: #b9770e; }
   #inf-err { color: #c0392b; min-height: 1.2rem; }
   #modal { position: fixed; inset: 0; background: #0008; display: none;
            align-items: center; justify-content: center; }
@@ -1240,6 +1240,7 @@ _PAGE = """<!DOCTYPE html>
   const err = document.getElementById("inf-err");
   const modal = document.getElementById("modal");
   let pending = null;
+  const STARTING = new Set();
 
   function setError(msg) { err.textContent = msg || ""; }
 
@@ -1256,17 +1257,22 @@ _PAGE = """<!DOCTYPE html>
   function render(items) {
     rows.innerHTML = "";
     for (const it of items) {
+      if (it.running) STARTING.delete(it.name);
+      const starting = STARTING.has(it.name);
       const tr = document.createElement("tr");
-      const dot = it.running ? "up" : "down";
+      const dot = it.running ? "up" : (starting ? "warn" : "down");
+      const detail = starting ? "starting…" : it.detail;
       const action = it.lifecycle === "app"
         ? "<span>manage in app</span>"
         : (it.running
             ? `<button class="act" data-stop="${it.name}">Stop</button>`
-            : `<button class="act" data-start="${it.name}">Start</button>`);
+            : (starting
+                ? `<button class="act" data-starting="${it.name}" disabled>Starting…</button>`
+                : `<button class="act" data-start="${it.name}">Start</button>`));
       tr.innerHTML =
         `<td><span class="dot ${dot}"></span></td>` +
         `<td>${it.name}</td><td>${it.lifecycle}</td><td>${it.port}</td>` +
-        `<td>${it.pid ?? ""}</td><td>${it.detail}</td><td>${action}</td>`;
+        `<td>${it.pid ?? ""}</td><td>${detail}</td><td>${action}</td>`;
       rows.appendChild(tr);
     }
   }
@@ -1280,10 +1286,20 @@ _PAGE = """<!DOCTYPE html>
 
   async function startEngine(name, confirm, afterStart) {
     setError("");
+    STARTING.add(name);
+    refresh();
     const url = "/api/start?name=" + encodeURIComponent(name) + (confirm ? "&confirm=1" : "");
     const { status, body } = await post(url);
-    if (status === 409 && body.needs_confirmation) { openModal(name, body, afterStart); return; }
-    if (status >= 400) setError(body.message || body.error || ("start failed (" + status + ")"));
+    if (status === 409 && body.needs_confirmation) {
+      STARTING.delete(name);
+      refresh();
+      openModal(name, body, afterStart);
+      return;
+    }
+    if (status >= 400) {
+      STARTING.delete(name);
+      setError(body.message || body.error || ("start failed (" + status + ")"));
+    }
     refresh();
     if (status < 400 && afterStart) afterStart();
   }

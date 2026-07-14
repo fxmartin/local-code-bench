@@ -908,6 +908,14 @@ def test_chat_section_renders_per_reply_metrics() -> None:
     assert "eval rate" in body
 
 
+def test_inferencers_section_shows_pending_start_state() -> None:
+    body = ud.render_page()
+
+    assert "STARTING" in body
+    assert "Starting…" in body
+    assert "data-starting" in body
+
+
 def test_chat_section_is_thin_client_over_chat_endpoint() -> None:
     body = ud.render_page()
     # AC4: posts to the existing streaming endpoint; no new front-end stack
