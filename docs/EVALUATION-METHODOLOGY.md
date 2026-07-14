@@ -248,8 +248,19 @@ above them — and, being unpublished before this repository, doubles as a
 contamination tripwire: a model that aces the public suites but stumbles here
 is pattern-matching, not reading the spec.
 
-The ladder (rung 1 is the OpenCode Task A log-classifier):
+The ladder:
 
+- **`logclass-cli` (rung 1, easy mini-app).** A Python port of the OpenCode
+  Task A log classifier, so the whole ladder runs through one pipeline with
+  comparable pass@1 rows and no Go toolchain. The severity semantics are
+  test-enforced to match the Go original's single source of truth
+  (`opencode.fixtures.classify_line`), and where `prompts/task-a.md` left
+  output formats loose (the Go scorer matches by regex), this spec pins them
+  exactly. The Go Task A stays untouched in the `bench opencode` flow — it
+  keeps the cross-language axis and its scorecard history. Slices: `counts`,
+  `json-filter`, `edge-rules`, `exit-codes`; the discriminating edges are the
+  case-sensitive substring rules (lowercase `error` is `unknown`, `WARNING`
+  is `warn`, `FATALITY` is `error`) and first-match precedence.
 - **`jsondiff-cli` (rung 2, medium mini-app).** A deterministic JSON diff
   tool. The spec pins edges that discriminate between models: JSON type
   strictness (`true` is not `1`, but `1` equals `1.0` — the Python bool-is-int
@@ -296,6 +307,7 @@ registered there are loadable by name everywhere a built-in suite is — the
 endpoint runner, agent mode, and rescore all accept the id:
 
 ```bash
+uv run bench --suite logclass-cli --model openrouter-glm-4.6 --max-tokens 2048
 uv run bench --suite jsondiff-cli --model openrouter-glm-4.6 --max-tokens 2048
 uv run bench --suite calc-cli --model openrouter-glm-4.6 --max-tokens 3072
 uv run bench --suite bugfix-py --model openrouter-glm-4.6 --max-tokens 2048
