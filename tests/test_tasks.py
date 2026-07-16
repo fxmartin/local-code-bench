@@ -251,6 +251,90 @@ def test_load_evalplus_parses_cache_and_scores(tmp_path) -> None:
     assert score_completion(tasks[0], "def is_even(n):\n    return n % 2 == 0").passed is True
 
 
+@pytest.mark.parametrize(
+    ("task_id", "entry_point", "canonical_solution", "raw_input"),
+    [
+        (
+            "Mbpp/2",
+            "received_expected_type",
+            "def received_expected_type(value):\n    return isinstance(value, tuple)\n",
+            [[1, 2]],
+        ),
+        (
+            "Mbpp/115",
+            "received_expected_type",
+            (
+                "def received_expected_type(value):\n"
+                "    return isinstance(value[0], set) and isinstance(value[1], dict)\n"
+            ),
+            [[[1, 2], []]],
+        ),
+        (
+            "Mbpp/124",
+            "received_expected_type",
+            (
+                "def received_expected_type(number, value):\n"
+                "    return isinstance(number, float) and isinstance(value, complex)\n"
+            ),
+            ["1.5", "2+3j"],
+        ),
+    ],
+)
+def test_load_mbpp_plus_restores_serialized_input_types(
+    tmp_path,
+    task_id,
+    entry_point,
+    canonical_solution,
+    raw_input,
+) -> None:
+    from local_code_bench.scoring import score_completion
+
+    cache = tmp_path / "benchmarks"
+    record = {
+        "task_id": task_id,
+        "entry_point": entry_point,
+        "prompt": "",
+        "canonical_solution": canonical_solution,
+        "base_input": [raw_input],
+        "plus_input": [],
+    }
+    _write_evalplus_cache(cache, [record], filename="MbppPlus.jsonl")
+
+    task = load_suite("mbpp-plus", cache_dir=cache)[0]
+
+    always_true = f"def {entry_point}(*args):\n    return True"
+    assert score_completion(task, always_true).passed is True
+
+
+@pytest.mark.parametrize(
+    ("task_id", "raw_inputs", "expected"),
+    [
+        ("Mbpp/63", [[[[1, 2], [3, 4]]]], [[[(1, 2), (3, 4)]]]),
+        ("Mbpp/75", [[[[1, 2], [3, 4]], "x"]], [[[(1, 2), (3, 4)], "x"]]),
+        ("Mbpp/106", [["x", [1, 2]]], [["x", (1, 2)]]),
+        ("Mbpp/250", [[[1, 2], "x"]], [[(1, 2), "x"]]),
+        ("Mbpp/259", [[[[1, 2], [3, 4]]]], [[((1, 2), (3, 4))]]),
+        ("Mbpp/278", [[[[1, 2], "x"]]], [[((1, 2), "x")]]),
+        ("Mbpp/307", [[[1, 2], "x", "y"]], [[(1, 2), "x", "y"]]),
+        ("Mbpp/722", [[{"a": [1, 2]}, "x"]], [[{"a": (1, 2)}, "x"]]),
+        ("Mbpp/252", [["2+3j"]], [[2 + 3j]]),
+        ("Mbpp/580", [[[1, [2, 3]]]], [((1, (2, 3)),)]),
+        ("Mbpp/999", [[[1, 2]]], [[[1, 2]]]),
+    ],
+)
+def test_deserialize_mbpp_inputs_matches_evalplus(task_id, raw_inputs, expected) -> None:
+    from local_code_bench.tasks import _deserialize_mbpp_inputs
+
+    assert _deserialize_mbpp_inputs(task_id, raw_inputs) == expected
+
+
+def test_deserialize_mbpp_inputs_rejects_invalid_task_id() -> None:
+    from local_code_bench.tasks import _deserialize_mbpp_inputs
+
+    with pytest.raises(TaskLoadError, match="invalid task_id"):
+        _deserialize_mbpp_inputs("Mbpp/not-a-number", [[]])
+
+
 def test_load_evalplus_reports_missing_file(tmp_path) -> None:
     cache = tmp_path / "benchmarks"
     cache.mkdir()

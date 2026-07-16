@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import textwrap
 from dataclasses import dataclass
 
 from local_code_bench.sandbox import SandboxResult, run_in_sandbox
@@ -19,16 +21,27 @@ class ScoreResult:
 def extract_code(text: str) -> str:
     if "```" not in text:
         return text.strip()
+    candidates: list[str] = []
     parts = text.split("```")
     for index in range(1, len(parts), 2):
         block = parts[index]
         lines = block.splitlines()
         if lines and lines[0].strip().lower() in {"python", "py"}:
-            return "\n".join(lines[1:]).strip()
-        candidate = block.strip()
+            candidate = textwrap.dedent("\n".join(lines[1:])).strip()
+            if candidate:
+                candidates.append(candidate)
+            continue
+        candidate = textwrap.dedent(block).strip()
         if "def " in candidate or "class " in candidate:
-            return candidate
-    return ""
+            candidates.append(candidate)
+
+    for candidate in reversed(candidates):
+        try:
+            ast.parse(candidate)
+        except SyntaxError:
+            continue
+        return candidate
+    return candidates[-1] if candidates else ""
 
 
 def score_completion(
