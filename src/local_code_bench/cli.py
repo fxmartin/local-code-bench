@@ -7,11 +7,12 @@ import json
 import shutil
 import sys
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from local_code_bench.agents import completed_agent_pairs, run_agent_task
 from local_code_bench.config import (
+    AgentConfig,
     ConfigError,
     InferencerConfig,
     ModelConfig,
@@ -20,6 +21,11 @@ from local_code_bench.config import (
     load_external_repo,
     load_inferencers,
     load_models,
+)
+from local_code_bench.engine_provenance import (
+    EngineProvenance,
+    EngineProvenanceError,
+    capture_engine_provenance,
 )
 from local_code_bench.inferencers import autotier, detect, manager
 from local_code_bench.inferencers.external import check_availability
@@ -42,7 +48,6 @@ from local_code_bench.inferencers.tiering import (
 from local_code_bench.leaderboard import generate_leaderboard
 from local_code_bench.metrics import CompletionMeasurement, capture_stream_metrics
 from local_code_bench.opencode.blackbox import score_task_a
-from local_code_bench.opencode.engine_version import capture_engine_version
 from local_code_bench.opencode.fixtures import ground_truth, load_fixture
 from local_code_bench.opencode.invoke import OpenCodeOverrides, resolve_model, run_opencode
 from local_code_bench.opencode.scorecard import (
@@ -58,7 +63,7 @@ from local_code_bench.opencode.sweep import read_model_list
 from local_code_bench.opencode.taskb import score_task_b
 from local_code_bench.power import PowerSampler
 from local_code_bench.provider import ChatRequest, ProviderError, provider_for_model
-from local_code_bench.results import append_jsonl, new_run_path
+from local_code_bench.results import append_jsonl, new_run_path, read_jsonl
 from local_code_bench.rescore import rescore_endpoint_records
 from local_code_bench.runner import run_endpoint_suite, select_models
 from local_code_bench.sweep import CONTEXT_SIZES, run_sweep, summarize_sweep, sweep_prompts
@@ -393,6 +398,34 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
         help="run each model N times and surface run-to-run variance (default 1)",
     )
+    opencode.add_argument(
+        "--manage-inferencers",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="start the selected local engine exclusively before the run",
+    )
+    opencode.add_argument(
+        "--inferencers-config",
+        default=argparse.SUPPRESS,
+        help="path to inferencer registry YAML",
+    )
+    opencode.add_argument(
+        "--inferencer-state-dir",
+        default=argparse.SUPPRESS,
+        help="directory holding inferencer process state files",
+    )
+    opencode.add_argument(
+        "--yes",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="auto-confirm stopping another managed engine",
+    )
+    opencode.add_argument(
+        "--force",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="start past a running GUI app without force-quitting it",
+    )
     return parser
 
 
@@ -453,6 +486,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.model:
                 models = select_models(load_models(args.config), include=args.model, skip=args.skip)
                 _maybe_manage_inferencers(args, models)
+                engines = _capture_model_engine_provenance(args, models)
                 result_path = (
                     Path(args.run_file) if args.run_file else new_run_path(args.results_dir, prefix="sweep")
                 )
@@ -462,8 +496,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                         question=question,
                         result_path=result_path,
                         sizes=sweep_sizes,
+                        engine_provenance=engines,
                     )
-                _emit_power(sampler, result_path, models=models, requested=args.power)
+                _emit_power(
+                    sampler,
+                    result_path,
+                    models=models,
+                    requested=args.power,
+                    engine_provenance=engines,
+                )
                 print(f"sweep={summary} results={result_path}")
                 return 0
             for size, prompt in sweep_prompts(question, sweep_sizes):
@@ -478,6 +519,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.agent not in agents:
                 available = ", ".join(sorted(agents))
                 raise ConfigError(f"unknown agent '{args.agent}'. Available agents: {available}")
+            agent = agents[args.agent]
+            agent_engine = _capture_agent_engine_provenance(args, agent)
+            if args.resume and result_path.exists() and agent_engine is not None:
+                _validate_agent_resume_provenance(result_path, agent, agent_engine)
             tasks = limit_tasks(load_suite(args.suite, cache_dir=args.cache_dir), args.limit)
             done = completed_agent_pairs(result_path) if args.resume else set()
             for index, task in enumerate(tasks, start=1):
@@ -485,13 +530,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                     print(f"[{index}/{len(tasks)}] {args.agent} {task.task_id}: skipped", flush=True)
                     continue
                 run_agent_task(
-                    agent=agents[args.agent],
+                    agent=agent,
                     task=task,
                     result_path=result_path,
                     progress=lambda message, index=index, total=len(tasks): print(
                         f"[{index}/{total}] {message}",
                         flush=True,
                     ),
+                    engine_provenance=agent_engine,
                 )
             print(f"agent={args.agent} tasks={len(tasks)} results={result_path}")
             return 0
@@ -499,6 +545,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.suite:
             models = select_models(load_models(args.config), include=args.model, skip=args.skip)
             _maybe_manage_inferencers(args, models)
+            engines = _capture_model_engine_provenance(args, models)
             tasks = limit_tasks(load_suite(args.suite, cache_dir=args.cache_dir), args.limit)
             result_path = Path(args.run_file) if args.run_file else new_run_path(args.results_dir, prefix=args.suite)
             with PowerSampler(enabled=args.power) as sampler:
@@ -512,8 +559,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     concurrency_override=args.concurrency,
                     timeout_seconds=args.timeout,
                     warmup=args.warmup,
+                    engine_provenance=engines,
                 )
-            _emit_power(sampler, result_path, models=models, requested=args.power)
+            _emit_power(
+                sampler,
+                result_path,
+                models=models,
+                requested=args.power,
+                engine_provenance=engines,
+            )
             print(f"suite={args.suite} results={result_path} summary={summary}")
             return 0
 
@@ -525,13 +579,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not args.model or not args.prompt:
             parser.error("--model and --prompt must be provided together")
         try:
+            configured_models = load_models(args.config)
+            if args.model not in configured_models:
+                available = ", ".join(sorted(configured_models)) or "(none)"
+                raise ConfigError(
+                    f"unknown model '{args.model}'. Available models: {available}"
+                )
+            models = [configured_models[args.model]]
+            _maybe_manage_inferencers(args, models)
+            engines = _capture_model_engine_provenance(args, models)
             result_path, measurement = run_single_prompt(
                 config_path=Path(args.config),
                 model_name=args.model,
                 prompt=args.prompt,
                 results_dir=Path(args.results_dir),
+                engine_provenance=engines.get(args.model),
             )
-        except (ConfigError, ProviderError) as exc:
+        except (
+            ConfigError,
+            ProviderError,
+            EngineProvenanceError,
+            InferencerError,
+            ValueError,
+        ) as exc:
             print(f"bench: error: {exc}", file=sys.stderr)
             return 2
 
@@ -650,7 +720,8 @@ def run_opencode_command(args: argparse.Namespace) -> int:
             raise ConfigError(f"unknown model '{name}'. Available models: {available}") from exc
 
         resolved = resolve_model(model, overrides, mode=args.opencode_mode)
-        engine_version = capture_engine_version(resolved.engine, resolved.base_url)
+        engine_provenance = _capture_opencode_engine_provenance(args, resolved)
+        engine_version = engine_provenance.label if engine_provenance is not None else None
 
         for run_index in range(1, args.repeat + 1):
             result_path, records = run_opencode(
@@ -663,6 +734,7 @@ def run_opencode_command(args: argparse.Namespace) -> int:
                 temperature=args.temperature,
                 max_tokens=args.max_tokens,
                 progress=lambda message: print(message, flush=True),
+                engine_provenance=engine_provenance,
             )
             run_tag = f" run={run_index}/{args.repeat}" if args.repeat > 1 else ""
             print(
@@ -692,6 +764,37 @@ def _opencode_model_names(args: argparse.Namespace) -> list[str]:
     if not args.model:
         raise ConfigError("opencode requires --model or --sweep")
     return [args.model]
+
+
+def _capture_opencode_engine_provenance(
+    args: argparse.Namespace,
+    model: ModelConfig,
+) -> EngineProvenance | None:
+    engine_name = model.engine or model.inferencer
+    if engine_name is None:
+        return None
+    configs = load_inferencers(args.inferencers_config)
+    if engine_name not in configs:
+        available = ", ".join(sorted(configs)) or "(none)"
+        raise ConfigError(
+            f"OpenCode model '{model.name}' declares unknown engine "
+            f"'{engine_name}'. Available: {available}"
+        )
+    if args.manage_inferencers:
+        manager.start_exclusive(
+            configs[engine_name],
+            configs,
+            args.inferencer_state_dir,
+            confirm=_make_inferencer_confirm(args),
+            force=args.force,
+            progress=lambda message: print(message, flush=True),
+        )
+    return capture_engine_provenance(
+        engine_name,
+        model.base_url,
+        inferencer_config=configs[engine_name],
+        state_dir=args.inferencer_state_dir,
+    )
 
 
 def _score_opencode_run(
@@ -1300,6 +1403,7 @@ def run_single_prompt(
     model_name: str,
     prompt: str,
     results_dir: Path,
+    engine_provenance: EngineProvenance | None = None,
 ) -> tuple[Path, CompletionMeasurement]:
     models = load_models(config_path)
     try:
@@ -1307,6 +1411,11 @@ def run_single_prompt(
     except KeyError as exc:
         available = ", ".join(sorted(models)) or "(none)"
         raise ConfigError(f"unknown model '{model_name}'. Available models: {available}") from exc
+    if model.inferencer is not None and engine_provenance is None:
+        raise EngineProvenanceError(
+            f"model '{model.name}' requires exact engine provenance for "
+            f"inferencer '{model.inferencer}'"
+        )
 
     provider = provider_for_model(model)
     measurement = capture_stream_metrics(
@@ -1314,29 +1423,29 @@ def run_single_prompt(
         prompt,
     )
     result_path = new_run_path(results_dir, prefix=model.name)
-    append_jsonl(
-        result_path,
-        {
-            "run_mode": "endpoint",
-            "model": model.name,
-            "provider_type": model.type,
-            "model_id": model.model_id,
-            "pinned_revision": model.pinned_revision,
-            "prompt": prompt,
-            "raw_response": measurement.response,
-            "metrics": {
-                "ttft_seconds": measurement.ttft_seconds,
-                "latency_seconds": measurement.latency_seconds,
-                "prefill_tokens_per_second": measurement.prefill_tokens_per_second,
-                "decode_tokens_per_second": measurement.decode_tokens_per_second,
-            },
-            "tokens": {
-                "prompt": measurement.prompt_tokens,
-                "completion": measurement.completion_tokens,
-                "estimated": measurement.token_counts_estimated,
-            },
+    record: dict[str, object] = {
+        "run_mode": "endpoint",
+        "model": model.name,
+        "provider_type": model.type,
+        "model_id": model.model_id,
+        "pinned_revision": model.pinned_revision,
+        "prompt": prompt,
+        "raw_response": measurement.response,
+        "metrics": {
+            "ttft_seconds": measurement.ttft_seconds,
+            "latency_seconds": measurement.latency_seconds,
+            "prefill_tokens_per_second": measurement.prefill_tokens_per_second,
+            "decode_tokens_per_second": measurement.decode_tokens_per_second,
         },
-    )
+        "tokens": {
+            "prompt": measurement.prompt_tokens,
+            "completion": measurement.completion_tokens,
+            "estimated": measurement.token_counts_estimated,
+        },
+    }
+    if engine_provenance is not None:
+        record["engine"] = engine_provenance.as_dict()
+    append_jsonl(result_path, record)
     return result_path, measurement
 
 
@@ -1372,6 +1481,92 @@ def _maybe_manage_inferencers(args: argparse.Namespace, models: list[ModelConfig
             force=args.force,
             progress=lambda message: print(message, flush=True),
         )
+
+
+def _capture_model_engine_provenance(
+    args: argparse.Namespace,
+    models: list[ModelConfig],
+) -> dict[str, EngineProvenance]:
+    declared = [model for model in models if model.inferencer is not None]
+    if not declared:
+        return {}
+    configs = load_inferencers(args.inferencers_config)
+    captured: dict[str, EngineProvenance] = {}
+    for model in declared:
+        inferencer_name = model.inferencer
+        if inferencer_name not in configs:
+            available = ", ".join(sorted(configs)) or "(none)"
+            raise ConfigError(
+                f"model '{model.name}' declares unknown inferencer "
+                f"'{inferencer_name}'. Available: {available}"
+            )
+        captured[model.name] = capture_engine_provenance(
+            inferencer_name,
+            model.base_url,
+            inferencer_config=configs[inferencer_name],
+            state_dir=args.inferencer_state_dir,
+        )
+    return captured
+
+
+def _capture_agent_engine_provenance(
+    args: argparse.Namespace,
+    agent: AgentConfig,
+) -> EngineProvenance | None:
+    inferencer_name = agent.inferencer
+    if inferencer_name is None:
+        return None
+    base_url = agent.base_url
+    if not isinstance(base_url, str):
+        raise ConfigError(
+            f"agent '{agent.name}' declares inferencer "
+            f"'{inferencer_name}' but has no base_url"
+        )
+    configs = load_inferencers(args.inferencers_config)
+    if inferencer_name not in configs:
+        available = ", ".join(sorted(configs)) or "(none)"
+        raise ConfigError(
+            f"agent '{agent.name}' declares unknown inferencer "
+            f"'{inferencer_name}'. Available: {available}"
+        )
+    if args.manage_inferencers:
+        manager.start_exclusive(
+            configs[inferencer_name],
+            configs,
+            args.inferencer_state_dir,
+            confirm=_make_inferencer_confirm(args),
+            force=args.force,
+            progress=lambda message: print(message, flush=True),
+        )
+    return capture_engine_provenance(
+        inferencer_name,
+        base_url,
+        inferencer_config=configs[inferencer_name],
+        state_dir=args.inferencer_state_dir,
+    )
+
+
+def _validate_agent_resume_provenance(
+    result_path: Path,
+    agent: AgentConfig,
+    expected: EngineProvenance,
+) -> None:
+    agent_name = agent.name
+    for record in read_jsonl(result_path):
+        if record.get("run_mode") != "agent" or record.get("agent") != agent_name:
+            continue
+        try:
+            actual = EngineProvenance.from_dict(record.get("engine"))
+        except EngineProvenanceError as exc:
+            raise ConfigError(
+                f"cannot resume {result_path}: engine provenance does not match "
+                f"agent '{agent_name}' (legacy or missing provenance)"
+            ) from exc
+        if actual.fingerprint != expected.fingerprint:
+            raise ConfigError(
+                f"cannot resume {result_path}: engine provenance does not match "
+                f"agent '{agent_name}' ({actual.label} != {expected.label})"
+            )
 
 
 def _make_inferencer_confirm(
@@ -1419,6 +1614,7 @@ def _emit_power(
     *,
     models: list[ModelConfig],
     requested: bool,
+    engine_provenance: Mapping[str, EngineProvenance] | None = None,
 ) -> None:
     summary = sampler.result()
     if summary.available:
@@ -1428,6 +1624,15 @@ def _emit_power(
         if len(names) == 1:
             # A single-model run (the local sweep case) can attribute power directly.
             record["model"] = names[0]
+            provenance = (engine_provenance or {}).get(names[0])
+            if provenance is not None:
+                record["engine"] = provenance.as_dict()
+        engines = {
+            name: provenance.as_dict()
+            for name, provenance in (engine_provenance or {}).items()
+        }
+        if engines:
+            record["engines"] = engines
         append_jsonl(result_path, record)
         print(
             "power: avg_gpu={a}W max_gpu={m}W avg_combined={c}W energy={e}J over {d}s".format(

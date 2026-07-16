@@ -26,6 +26,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..config import InferencerConfig, resolve_health_url
+from ..engine_provenance import (
+    EngineProvenance,
+    EngineProvenanceError,
+    capture_mlx_provenance,
+)
 from . import detect
 
 _LOG_TAIL_LINES = 20
@@ -136,6 +141,12 @@ def start(
     log_path = _log_path(state_path, cfg.name)
     command = list(cfg.start or ())
     health_url = resolve_health_url(cfg)
+    engine_provenance: EngineProvenance | None = None
+    if cfg.name == "mlx-lm":
+        try:
+            engine_provenance = capture_mlx_provenance(command)
+        except EngineProvenanceError as exc:
+            raise InferencerError(f"{cfg.name}: {exc}") from exc
 
     if progress is not None:
         progress(f"starting {cfg.name}: {' '.join(command)}")
@@ -154,7 +165,15 @@ def start(
     finally:
         log_file.close()
 
-    _write_state(state_path, cfg.name, pid=proc.pid, port=cfg.port, command=command, health_url=health_url)
+    _write_state(
+        state_path,
+        cfg.name,
+        pid=proc.pid,
+        port=cfg.port,
+        command=command,
+        health_url=health_url,
+        engine_provenance=engine_provenance,
+    )
 
     if _await_health(proc, health_url, timeout, poll_interval, health_timeout):
         if progress is not None:
@@ -197,6 +216,38 @@ def stop(
             progress(f"stopping {cfg.name} (pid {pid})")
         _terminate_group(pid, grace_period)
     _remove_state(state_dir, cfg.name)
+
+
+def managed_engine_provenance(
+    cfg: InferencerConfig,
+    state_dir: str | Path,
+) -> EngineProvenance:
+    """Return provenance persisted for the healthy managed process.
+
+    A legacy or manually started MLX-LM process is deliberately insufficient: its
+    installed package may not be the package serving the benchmark endpoint.
+    """
+
+    current = status(cfg, state_dir)
+    if not current.running or not current.healthy:
+        raise InferencerError(
+            f"{cfg.name}: no healthy managed process; restart it with --manage-inferencers"
+        )
+    state = _read_state(state_dir, cfg.name)
+    value = state.get("engine") if state is not None else None
+    try:
+        provenance = EngineProvenance.from_dict(value)
+    except EngineProvenanceError as exc:
+        raise InferencerError(
+            f"{cfg.name}: managed state has no exact engine provenance; "
+            "restart it with --manage-inferencers"
+        ) from exc
+    if provenance.name != cfg.name:
+        raise InferencerError(
+            f"{cfg.name}: managed provenance identifies {provenance.name!r}; "
+            "restart it with --manage-inferencers"
+        )
+    return provenance
 
 
 def running_others(
@@ -325,6 +376,7 @@ def _write_state(
     port: int,
     command: list[str],
     health_url: str,
+    engine_provenance: EngineProvenance | None = None,
 ) -> None:
     state = {
         "name": name,
@@ -334,6 +386,8 @@ def _write_state(
         "command": command,
         "health_url": health_url,
     }
+    if engine_provenance is not None:
+        state["engine"] = engine_provenance.as_dict()
     _state_path(state_dir, name).write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 

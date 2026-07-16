@@ -230,7 +230,10 @@ uv run bench --suite canary --model local-mlx-qwen --manage-inferencers --yes
 ```
 
 `--yes` auto-confirms stopping the other engines (a non-interactive shell defaults to
-*no*). Without `--manage-inferencers` the run behaviour is unchanged.
+*no*). MLX-LM runs require `--manage-inferencers` so the harness can bind the result
+to the exact `mlx-lm` and `mlx` packages used by the managed process. Ollama may
+already be running because its exact version is read from the live `/api/version`
+endpoint. A local run fails before writing results if exact provenance is unavailable.
 
 Use `OPENROUTER_API_KEY` for the OpenRouter entries and `ANTHROPIC_API_KEY` for
 the Anthropic baseline. API keys are read from the shell environment or a local
@@ -365,9 +368,32 @@ passed Task A — rather than averaging the spread away:
 ./run-bench.sh --model local-mlx-qwen --repeat 3
 ```
 
-Every scorecard row also records the **engine version** where the engine exposes
-one (e.g. Ollama's `/api/version`); engines without a version endpoint show `-`.
-This pins the build that produced each result alongside the quant and mode.
+Every local scorecard row records the exact **engine version**. Ollama is queried
+through its live `/api/version` endpoint; MLX-LM records both the `mlx-lm` and `mlx`
+package versions backing the harness-managed process. Capture is strict: a local run
+does not start if the version cannot be established.
+
+### Engine provenance schema
+
+Local endpoint, sweep, agent, and OpenCode result records carry the same normalized
+object:
+
+```json
+{
+  "engine": {
+    "name": "mlx-lm",
+    "versions": {"mlx-lm": "0.31.3", "mlx": "0.32.0"},
+    "capture_method": "managed-process"
+  }
+}
+```
+
+Ollama uses `capture_method: live-api`. Historical records patched from verified
+installation history use `manual-backfill`; the reusable migration command is
+`scripts/backfill-engine-provenance.py` and requires a backup directory. Resume
+refuses to append if the current engine fingerprint differs from the existing run.
+Leaderboards, sweeps, dashboards, and run history group identical model names by
+engine fingerprint so results from different runtime versions are never merged.
 
 ## Leaderboard And Sweep
 
@@ -427,7 +453,7 @@ uv run bench --mode dashboard --input results/run.jsonl --serve --port 8770
 
 Pass `--input` more than once to merge several result files into one view. The
 generator embeds only a curated set of aggregate fields (model/agent/suite names,
-pass rates, latency, TTFT, throughput, cost), and reduces data-quality warning
+engine versions, pass rates, latency, TTFT, throughput, cost), and reduces data-quality warning
 sources to file basenames, so API keys, `.env` contents, raw secrets, and host
 paths never reach the committed artifact.
 

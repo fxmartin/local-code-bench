@@ -82,8 +82,23 @@ def test_status_payload_lists_every_engine_with_safe_fields(monkeypatch):
         "pid": 42,
         "port": 8000,
         "healthy": True,
+        "engine_version": None,
         "detail": "ok",
     }
+
+
+def test_status_payload_includes_running_engine_version(monkeypatch):
+    statuses = {"dflash": _status("dflash", running=True, healthy=True, pid=42)}
+    monkeypatch.setattr(manager, "status_all", lambda configs, state_dir: statuses)
+    monkeypatch.setattr(
+        dashboard,
+        "_engine_version_label",
+        lambda config, status, state_dir: "dflash 1.2.3",
+    )
+
+    _, payload = dashboard.status_action(_configs(), ".runtime")
+
+    assert payload["inferencers"][0]["engine_version"] == "dflash 1.2.3"
 
 
 def test_status_payload_never_leaks_secrets(monkeypatch):

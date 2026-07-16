@@ -109,6 +109,18 @@ def test_sweep_series_groups_by_model_and_omits_missing_throughput() -> None:
     assert "8,000" in omitted[0].label
 
 
+def test_sweep_series_keeps_engine_versions_separate() -> None:
+    points = (
+        SweepPoint("m1", 2000, 1.0, 100.0, engine_label="ollama 0.31.0"),
+        SweepPoint("m1", 2000, 0.5, 120.0, engine_label="ollama 0.32.0"),
+    )
+
+    series, omitted = sweep_series(points)
+
+    assert set(series) == {"m1 · ollama 0.31.0", "m1 · ollama 0.32.0"}
+    assert omitted == []
+
+
 def test_render_charts_section_contains_offline_svg_with_titles() -> None:
     models = _models(
         [

@@ -17,6 +17,7 @@ from local_code_bench.cli import (
     run_single_prompt,
 )
 from local_code_bench.config import AgentConfig, ConfigError, InferencerConfig, ModelConfig, TokenPrices
+from local_code_bench.engine_provenance import EngineProvenance
 from local_code_bench.power import PowerSummary
 from local_code_bench.inferencers.manager import InferencerError, InferencerStatus
 from local_code_bench.metrics import StreamEvent
@@ -189,7 +190,7 @@ def test_leaderboard_mode_writes_requested_output(tmp_path, capsys) -> None:
 
     assert exit_code == 0
     assert f"wrote {output_path}" in capsys.readouterr().out
-    assert "| m | 1/1 |" in output_path.read_text(encoding="utf-8")
+    assert "| m | unknown (legacy) | 1/1 |" in output_path.read_text(encoding="utf-8")
 
 
 def test_sweep_summary_mode_reads_stored_records(tmp_path, capsys) -> None:
@@ -207,7 +208,7 @@ def test_sweep_summary_mode_reads_stored_records(tmp_path, capsys) -> None:
     exit_code = main(["--mode", "sweep", "--input", str(result_path)])
 
     assert exit_code == 0
-    assert "| m | 2000 | 1.250 | 50.000 |" in capsys.readouterr().out
+    assert "| m | unknown (legacy) | 2000 | 1.250 | 50.000 |" in capsys.readouterr().out
 
 
 def test_rescore_mode_scores_stored_endpoint_record(tmp_path, monkeypatch, capsys) -> None:
@@ -1267,6 +1268,15 @@ def test_opencode_dispatches_to_run_opencode(monkeypatch, tmp_path, capsys) -> N
         return tmp_path / "opencode-run.jsonl", [("task-a", None), ("task-b", None)]
 
     monkeypatch.setattr("local_code_bench.cli.run_opencode", fake_run_opencode)
+    provenance = EngineProvenance(
+        name="ollama",
+        versions={"ollama": "0.32.0"},
+        capture_method="live-api",
+    )
+    monkeypatch.setattr(
+        "local_code_bench.cli._capture_opencode_engine_provenance",
+        lambda _args, _model: provenance,
+    )
 
     exit_code = main(
         [
@@ -1287,6 +1297,7 @@ def test_opencode_dispatches_to_run_opencode(monkeypatch, tmp_path, capsys) -> N
     assert captured["mode"] == "thinking"
     assert captured["overrides"].engine == "ollama"
     assert captured["seed"] == 9
+    assert captured["engine_provenance"] == provenance
     assert "opencode" in capsys.readouterr().out
 
 
@@ -1394,8 +1405,14 @@ def _scoreable_run(monkeypatch, tmp_path):
         ]
 
     monkeypatch.setattr("local_code_bench.cli.run_opencode", fake_run_opencode)
+    provenance = EngineProvenance(
+        name="ollama",
+        versions={"ollama": "0.5.7"},
+        capture_method="live-api",
+    )
     monkeypatch.setattr(
-        "local_code_bench.cli.capture_engine_version", lambda _engine, _url: "ollama 0.5.7"
+        "local_code_bench.cli._capture_opencode_engine_provenance",
+        lambda _args, _model: provenance,
     )
 
 

@@ -32,6 +32,14 @@ def _endpoint_record(**overrides: object) -> dict[str, object]:
     return record
 
 
+def _engine(version: str, *, method: str = "live-api") -> dict[str, object]:
+    return {
+        "name": "ollama",
+        "versions": {"ollama": version},
+        "capture_method": method,
+    }
+
+
 def test_endpoint_records_grouped_with_aggregated_metrics() -> None:
     records = [
         _endpoint_record(task_id="HumanEval/0", passed=True),
@@ -125,6 +133,25 @@ def test_endpoint_dedupes_to_latest_attempt_per_task() -> None:
     assert agg.total_cost_usd == 0.01
 
 
+def test_endpoint_groups_and_dedupes_by_engine_identity() -> None:
+    records = [
+        _endpoint_record(engine=_engine("0.31.0"), passed=False),
+        _endpoint_record(engine=_engine("0.32.0"), passed=True),
+        _endpoint_record(
+            engine=_engine("0.32.0", method="manual-backfill"),
+            passed=False,
+        ),
+    ]
+
+    data = build_dashboard_data(records)
+
+    assert len(data.endpoint_models) == 2
+    by_engine = {aggregate.engine_label: aggregate for aggregate in data.endpoint_models}
+    assert by_engine["ollama 0.31.0"].passed == 0
+    assert by_engine["ollama 0.32.0"].passed == 0
+    assert by_engine["ollama 0.32.0"].engine_capture_method == "manual-backfill"
+
+
 def test_agent_rows_expose_wall_time_without_throughput_mixing() -> None:
     records = [
         {
@@ -215,6 +242,32 @@ def test_sweep_dedupes_latest_per_model_and_context() -> None:
 
     assert len(data.sweep_points) == 1
     assert data.sweep_points[0].ttft_seconds == 0.5
+
+
+def test_sweep_points_split_by_engine_identity() -> None:
+    records = [
+        {
+            "run_mode": "sweep",
+            "model": "m1",
+            "context_tokens": 2000,
+            "engine": _engine("0.31.0"),
+            "metrics": {"ttft_seconds": 1.0},
+        },
+        {
+            "run_mode": "sweep",
+            "model": "m1",
+            "context_tokens": 2000,
+            "engine": _engine("0.32.0"),
+            "metrics": {"ttft_seconds": 0.5},
+        },
+    ]
+
+    points = build_dashboard_data(records).sweep_points
+
+    assert [(point.engine_label, point.ttft_seconds) for point in points] == [
+        ("ollama 0.31.0", 1.0),
+        ("ollama 0.32.0", 0.5),
+    ]
 
 
 def test_malformed_records_become_warnings_not_crashes() -> None:

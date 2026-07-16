@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from local_code_bench.config import ModelConfig, TokenPrices
+from local_code_bench.engine_provenance import EngineProvenance
 from local_code_bench.metrics import StreamEvent
 from local_code_bench.provider import ProviderError
 from local_code_bench.runner import completed_pairs, run_endpoint_suite, select_models
@@ -29,7 +34,13 @@ class FailingProvider:
         yield
 
 
-def model(name: str, *, concurrency: int = 1, max_tokens: int | None = None) -> ModelConfig:
+def model(
+    name: str,
+    *,
+    concurrency: int = 1,
+    max_tokens: int | None = None,
+    inferencer: str | None = None,
+) -> ModelConfig:
     return ModelConfig(
         name=name,
         type="openai",
@@ -39,6 +50,7 @@ def model(name: str, *, concurrency: int = 1, max_tokens: int | None = None) -> 
         price_per_1k_tokens=TokenPrices(input=1.0, output=2.0),
         concurrency=concurrency,
         max_tokens=max_tokens,
+        inferencer=inferencer,
     )
 
 
@@ -240,3 +252,72 @@ def test_run_endpoint_suite_passes_timeout_to_scorer(tmp_path, monkeypatch) -> N
     )
 
     assert captured["timeout"] == 30.0
+
+
+def test_local_endpoint_suite_records_engine_on_metadata_and_task(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: FakeProvider())
+    local_model = model("local", inferencer="ollama")
+    provenance = EngineProvenance(
+        name="ollama",
+        versions={"ollama": "0.32.0"},
+        capture_method="live-api",
+    )
+    path = tmp_path / "run.jsonl"
+
+    run_endpoint_suite(
+        models=[local_model],
+        tasks=[task()],
+        result_path=path,
+        engine_provenance={"local": provenance},
+    )
+
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert records[0]["models"]["local"]["engine"] == provenance.as_dict()
+    assert records[1]["engine"] == provenance.as_dict()
+
+
+def test_local_endpoint_suite_requires_engine_before_writing(tmp_path) -> None:
+    path = tmp_path / "run.jsonl"
+
+    with pytest.raises(ValueError, match="requires exact engine provenance"):
+        run_endpoint_suite(
+            models=[model("local", inferencer="ollama")],
+            tasks=[task()],
+            result_path=path,
+        )
+
+    assert not path.exists()
+
+
+def test_resume_rejects_changed_engine_version_before_appending(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: FakeProvider())
+    local_model = model("local", inferencer="ollama")
+    old = EngineProvenance(
+        name="ollama",
+        versions={"ollama": "0.31.0"},
+        capture_method="live-api",
+    )
+    new = EngineProvenance(
+        name="ollama",
+        versions={"ollama": "0.32.0"},
+        capture_method="live-api",
+    )
+    path = tmp_path / "run.jsonl"
+    run_endpoint_suite(
+        models=[local_model],
+        tasks=[task()],
+        result_path=path,
+        engine_provenance={"local": old},
+    )
+    original = path.read_text(encoding="utf-8")
+
+    with pytest.raises(ValueError, match="engine provenance does not match"):
+        run_endpoint_suite(
+            models=[local_model],
+            tasks=[task()],
+            result_path=path,
+            resume=True,
+            engine_provenance={"local": new},
+        )
+
+    assert path.read_text(encoding="utf-8") == original

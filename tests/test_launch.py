@@ -9,6 +9,7 @@ import pytest
 
 from local_code_bench import launch
 from local_code_bench.config import InferencerConfig, ModelConfig, TokenPrices
+from local_code_bench.engine_provenance import EngineProvenance
 from local_code_bench.inferencers import manager
 from local_code_bench.inferencers.manager import InferencerError, InferencerStatus
 from local_code_bench.tasks import BenchmarkTask
@@ -111,6 +112,7 @@ def _patch_backends(monkeypatch, *, calls, suites_by_name=None, block=None):
         return _status(cfg.name, running=True, healthy=True)
 
     monkeypatch.setattr(manager, "start_exclusive", _fake_start)
+    _patch_engine_provenance(monkeypatch)
 
     def _fake_load(name, *, cache_dir):
         tasks = (suites_by_name or {}).get(name, [_task(name, f"{name}/0")])
@@ -127,6 +129,18 @@ def _patch_backends(monkeypatch, *, calls, suites_by_name=None, block=None):
         return {"passed": 1, "failed": 0, "infra_failed": 0, "skipped": 0}
 
     monkeypatch.setattr(launch.runner, "run_endpoint_suite", _fake_run)
+
+
+def _patch_engine_provenance(monkeypatch) -> None:
+    monkeypatch.setattr(
+        launch,
+        "capture_engine_provenance",
+        lambda engine, _url, **_kwargs: EngineProvenance(
+            name=engine,
+            versions={engine: "1.0"},
+            capture_method="managed-process",
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +220,7 @@ def test_completed_run_records_terminal_state_and_counts(tmp_path, monkeypatch):
 
 def test_run_jsonl_is_written_to_results_dir(tmp_path, monkeypatch):
     written: list[str] = []
+    _patch_engine_provenance(monkeypatch)
 
     monkeypatch.setattr(manager, "running_others", lambda *a, **k: [])
     monkeypatch.setattr(
@@ -319,6 +334,7 @@ def test_launch_needs_confirmation_when_another_server_runs(tmp_path, monkeypatc
 
 
 def test_launch_with_confirm_stops_others_via_start_exclusive(tmp_path, monkeypatch):
+    _patch_engine_provenance(monkeypatch)
     others = [_status("turboquant", running=True, healthy=True, pid=9, port=8002)]
     monkeypatch.setattr(manager, "running_others", lambda *a, **k: others)
     seen: dict = {}
@@ -368,6 +384,7 @@ def test_launch_blocked_by_running_gui_never_quits_it(tmp_path, monkeypatch):
 
 
 def test_background_failure_marks_run_failed_with_reason(tmp_path, monkeypatch):
+    _patch_engine_provenance(monkeypatch)
     monkeypatch.setattr(manager, "running_others", lambda *a, **k: [])
     monkeypatch.setattr(
         manager,

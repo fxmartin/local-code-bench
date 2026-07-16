@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping
 from pathlib import Path
 
 from local_code_bench.config import ModelConfig
+from local_code_bench.engine_provenance import (
+    EngineProvenance,
+    engine_fingerprint,
+    engine_label,
+)
 from local_code_bench.metrics import estimate_tokens
 from local_code_bench.metrics import capture_stream_metrics
 from local_code_bench.provider import ChatRequest, provider_for_model
@@ -34,43 +40,57 @@ def run_sweep(
     question: str,
     result_path: Path,
     sizes: tuple[int, ...] = CONTEXT_SIZES,
+    engine_provenance: Mapping[str, EngineProvenance] | None = None,
 ) -> dict[str, int]:
     count = 0
+    engines = engine_provenance or {}
     for model in models:
+        provenance = engines.get(model.name)
+        if model.inferencer is not None and provenance is None:
+            raise ValueError(
+                f"model '{model.name}' requires exact engine provenance for "
+                f"inferencer '{model.inferencer}'"
+            )
         provider = provider_for_model(model)
         for size, prompt in sweep_prompts(question, sizes):
             measurement = capture_stream_metrics(
                 provider.stream_chat(ChatRequest(prompt=prompt, temperature=0.0)),
                 prompt,
             )
-            append_jsonl(
-                result_path,
-                {
-                    "run_mode": "sweep",
-                    "model": model.name,
-                    "context_tokens": size,
-                    "prompt_tokens": measurement.prompt_tokens,
-                    "raw_response": measurement.response,
-                    "metrics": {
-                        "ttft_seconds": measurement.ttft_seconds,
-                        "latency_seconds": measurement.latency_seconds,
-                        "prefill_tokens_per_second": measurement.prefill_tokens_per_second,
-                        "decode_tokens_per_second": measurement.decode_tokens_per_second,
-                    },
+            record: dict[str, object] = {
+                "run_mode": "sweep",
+                "model": model.name,
+                "context_tokens": size,
+                "prompt_tokens": measurement.prompt_tokens,
+                "raw_response": measurement.response,
+                "metrics": {
+                    "ttft_seconds": measurement.ttft_seconds,
+                    "latency_seconds": measurement.latency_seconds,
+                    "prefill_tokens_per_second": measurement.prefill_tokens_per_second,
+                    "decode_tokens_per_second": measurement.decode_tokens_per_second,
                 },
-            )
+            }
+            if provenance is not None:
+                record["engine"] = provenance.as_dict()
+            append_jsonl(result_path, record)
             count += 1
     return {"sweeps": count}
 
 
 def summarize_sweep(records: list[dict[str, object]]) -> str:
-    grouped: dict[str, list[tuple[int, float, float]]] = defaultdict(list)
+    grouped: dict[tuple[str, object, str], list[tuple[int, float, float]]] = defaultdict(list)
     for record in records:
         model = record.get("model")
         size = record.get("context_tokens")
         metrics = record.get("metrics")
         if isinstance(model, str) and isinstance(size, int) and isinstance(metrics, dict):
-            grouped[model].append(
+            grouped[
+                (
+                    model,
+                    engine_fingerprint(record.get("engine")),
+                    engine_label(record.get("engine")),
+                )
+            ].append(
                 (
                     size,
                     float(metrics.get("ttft_seconds", 0.0) or 0.0),
@@ -78,12 +98,15 @@ def summarize_sweep(records: list[dict[str, object]]) -> str:
                 )
             )
     lines = [
-        "| Model | Context Tokens | TTFT | Prefill tok/s |",
-        "|---|---:|---:|---:|",
+        "| Model | Engine | Context Tokens | TTFT | Prefill tok/s |",
+        "|---|---|---:|---:|---:|",
     ]
-    for model, items in sorted(grouped.items()):
+    for (model, _engine, label), items in sorted(grouped.items()):
         for size, ttft, prefill in sorted(items):
-            lines.append(f"| {model} | {size} | {ttft:.3f} | {prefill:.3f} |")
+            lines.append(
+                f"| {model} | {label} | {size} | "
+                f"{ttft:.3f} | {prefill:.3f} |"
+            )
     lines.append("")
     power_lines = _power_table(records)
     if power_lines:

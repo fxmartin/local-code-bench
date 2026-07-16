@@ -19,6 +19,7 @@ from local_code_bench.agents import (
 )
 from local_code_bench.agents import run_codex_task
 from local_code_bench.config import AgentConfig
+from local_code_bench.engine_provenance import EngineProvenance, EngineProvenanceError
 from local_code_bench.results import append_jsonl, read_jsonl
 from local_code_bench.tasks import BenchmarkTask
 
@@ -764,6 +765,53 @@ def test_run_codex_task_records_executable_not_found(tmp_path) -> None:
     assert record["cost_status"] == "unavailable"
     assert read_jsonl(result_path)[0]["failure_reason"] == record["failure_reason"]
     assert messages == ["codex suite/1: failed"]
+
+
+def test_local_agent_records_engine_provenance(tmp_path) -> None:
+    agent = AgentConfig(
+        "qwen-local",
+        "qwen-code",
+        str(tmp_path / "missing-qwen"),
+        "workspace-write",
+        10,
+        inferencer="mlx-lm",
+    )
+    provenance = EngineProvenance(
+        name="mlx-lm",
+        versions={"mlx-lm": "0.31.3", "mlx": "0.32.0"},
+        capture_method="managed-process",
+    )
+    result_path = tmp_path / "agent.jsonl"
+
+    record = run_agent_task(
+        agent=agent,
+        task=BenchmarkTask("t1", "humaneval", "prompt", "assert True", "solution", "v"),
+        result_path=result_path,
+        engine_provenance=provenance,
+    )
+
+    assert record["engine"] == provenance.as_dict()
+
+
+def test_local_agent_requires_engine_before_writing(tmp_path) -> None:
+    agent = AgentConfig(
+        "qwen-local",
+        "qwen-code",
+        "qwen",
+        "workspace-write",
+        10,
+        inferencer="mlx-lm",
+    )
+    result_path = tmp_path / "agent.jsonl"
+
+    with pytest.raises(EngineProvenanceError, match="requires exact engine provenance"):
+        run_agent_task(
+            agent=agent,
+            task=BenchmarkTask("t1", "humaneval", "prompt", "assert True", "solution", "v"),
+            result_path=result_path,
+        )
+
+    assert not result_path.exists()
 
 
 def test_detect_agent_installation_reports_missing_command_and_url(tmp_path) -> None:

@@ -8,11 +8,16 @@ from pathlib import Path
 import pytest
 
 from local_code_bench.config import InferencerConfig
+from local_code_bench.engine_provenance import EngineProvenance
 from local_code_bench.inferencers import manager
 from local_code_bench.inferencers.manager import InferencerError, InferencerStatus
 
 
-def _server_cfg(name: str = "dflash", port: int = 8000) -> InferencerConfig:
+def _server_cfg(
+    name: str = "dflash",
+    port: int = 8000,
+    start: tuple[str, ...] = ("dflash", "serve"),
+) -> InferencerConfig:
     return InferencerConfig(
         name=name,
         lifecycle="server",
@@ -20,7 +25,7 @@ def _server_cfg(name: str = "dflash", port: int = 8000) -> InferencerConfig:
         detect_target="dflash",
         port=port,
         health_url="http://127.0.0.1:{port}/v1/models",
-        start=("dflash", "serve"),
+        start=start,
     )
 
 
@@ -136,6 +141,36 @@ def test_start_spawns_polls_health_and_reports_running(tmp_path, monkeypatch) ->
     assert state["port"] == 8000
     assert state["command"] == ["dflash", "serve"]
     assert state["health_url"] == "http://127.0.0.1:8000/v1/models"
+
+
+def test_start_mlx_lm_persists_exact_engine_provenance(tmp_path, monkeypatch) -> None:
+    cfg = _server_cfg(name="mlx-lm", start=("mlx_lm.server", "--port", "8080"))
+    provenance = EngineProvenance(
+        name="mlx-lm",
+        versions={"mlx-lm": "0.31.3", "mlx": "0.32.0"},
+        capture_method="managed-process",
+    )
+    monkeypatch.setattr(manager.subprocess, "Popen", _make_popen([]))
+    monkeypatch.setattr(manager, "health_check", lambda url, timeout=1.0: True)
+    monkeypatch.setattr(manager, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(manager.detect, "is_installed", lambda c: True)
+    monkeypatch.setattr(manager, "capture_mlx_provenance", lambda command: provenance)
+
+    manager.start(cfg, tmp_path)
+
+    state = json.loads((tmp_path / "mlx-lm.json").read_text(encoding="utf-8"))
+    assert state["engine"] == provenance.as_dict()
+    assert manager.managed_engine_provenance(cfg, tmp_path) == provenance
+
+
+def test_managed_engine_provenance_rejects_legacy_state(tmp_path, monkeypatch) -> None:
+    cfg = _server_cfg(name="mlx-lm", start=("mlx_lm.server",))
+    _write_state_file(tmp_path, "mlx-lm", pid=4321, port=8000)
+    monkeypatch.setattr(manager, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(manager, "health_check", lambda url, timeout=1.0: True)
+
+    with pytest.raises(manager.InferencerError, match="restart it with --manage-inferencers"):
+        manager.managed_engine_provenance(cfg, tmp_path)
 
 
 # --- start: failure ---------------------------------------------------------

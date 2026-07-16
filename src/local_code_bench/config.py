@@ -59,6 +59,7 @@ class AgentConfig:
     api_key_env: str | None = None
     system_prompt: str | None = None
     append_system_prompt: str | None = None
+    inferencer: str | None = None
 
 
 Lifecycle = Literal["server", "app"]
@@ -501,6 +502,7 @@ def _parse_agent(entry: Any, index: int) -> AgentConfig:
         api_key_env=_optional_str(entry, "api_key_env", index, root="agents"),
         system_prompt=_optional_str(entry, "system_prompt", index, root="agents"),
         append_system_prompt=_optional_str(entry, "append_system_prompt", index, root="agents"),
+        inferencer=_optional_str(entry, "inferencer", index, root="agents"),
     )
 
 

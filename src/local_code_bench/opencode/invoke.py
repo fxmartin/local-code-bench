@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from local_code_bench.config import ConfigError, ModelConfig
+from local_code_bench.engine_provenance import EngineProvenance, EngineProvenanceError
 from local_code_bench.metrics import CompletionMeasurement, capture_stream_metrics
 from local_code_bench.opencode.engines import endpoint_for_engine
 from local_code_bench.provider import ChatRequest, provider_for_model
@@ -111,12 +112,13 @@ def build_record(
     temperature: float,
     prompt_file: Path,
     measurement: CompletionMeasurement,
+    engine_provenance: EngineProvenance | None = None,
 ) -> dict[str, Any]:
     """Assemble one JSONL record: provenance metadata + captured metrics."""
 
     wall_clock = measurement.latency_seconds
     tokens_per_second = measurement.completion_tokens / wall_clock if wall_clock > 0 else None
-    return {
+    record = {
         "run_mode": "opencode",
         "task": task,
         "model": model.name,
@@ -124,7 +126,7 @@ def build_record(
         "pinned_revision": model.pinned_revision,
         "provider_type": model.type,
         "endpoint": model.base_url,
-        "engine": model.engine,
+        "engine_name": model.engine or model.inferencer,
         "quant": model.quant,
         "provider": model.provider,
         "mode": mode,
@@ -145,6 +147,9 @@ def build_record(
             "estimated": measurement.token_counts_estimated,
         },
     }
+    if engine_provenance is not None:
+        record["engine"] = engine_provenance.as_dict()
+    return record
 
 
 def run_opencode(
@@ -159,6 +164,7 @@ def run_opencode(
     max_tokens: int | None = None,
     run_path: Path | None = None,
     progress: Callable[[str], None] | None = None,
+    engine_provenance: EngineProvenance | None = None,
 ) -> tuple[Path, list[tuple[str, CompletionMeasurement]]]:
     """Drive both task prompts against one model end-to-end, capturing each run.
 
@@ -168,6 +174,17 @@ def run_opencode(
     """
 
     resolved = resolve_model(model, overrides, mode=mode)
+    engine_name = resolved.engine or resolved.inferencer
+    if engine_name is not None and engine_provenance is None:
+        raise EngineProvenanceError(
+            f"OpenCode model '{resolved.name}' requires exact engine provenance "
+            f"for '{engine_name}'"
+        )
+    if engine_provenance is not None and engine_provenance.name != engine_name:
+        raise EngineProvenanceError(
+            f"OpenCode model '{resolved.name}' uses engine '{engine_name}' but "
+            f"provenance identifies '{engine_provenance.name}'"
+        )
     provider = provider_for_model(resolved)
     result_path = run_path or new_run_path(results_dir, prefix=f"opencode-{resolved.name}")
     effective_max_tokens = max_tokens if max_tokens is not None else resolved.max_tokens
@@ -193,6 +210,7 @@ def run_opencode(
                 temperature=temperature,
                 prompt_file=prompt_file,
                 measurement=measurement,
+                engine_provenance=engine_provenance,
             ),
         )
         records.append((task, measurement))

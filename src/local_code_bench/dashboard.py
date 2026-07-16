@@ -95,6 +95,8 @@ def _safe_data(data: DashboardData) -> dict[str, object]:
 def _safe_endpoint(model: EndpointModelAggregate) -> dict[str, object]:
     return {
         "model": model.model,
+        "engine_label": model.engine_label,
+        "engine_capture_method": model.engine_capture_method,
         "suite": model.suite,
         "attempts": model.attempts,
         "passed": model.passed,
@@ -116,6 +118,8 @@ def _safe_endpoint(model: EndpointModelAggregate) -> dict[str, object]:
 def _safe_agent(run: AgentAggregate) -> dict[str, object]:
     return {
         "agent": run.agent,
+        "engine_label": run.engine_label,
+        "engine_capture_method": run.engine_capture_method,
         "suite": run.suite,
         "attempts": run.attempts,
         "passed": run.passed,
@@ -133,6 +137,7 @@ def _safe_run(run: RunSummary) -> dict[str, object]:
         "timestamp": run.timestamp,
         "models": list(run.models),
         "agents": list(run.agents),
+        "engines": list(run.engines),
         "suites": list(run.suites),
         "task_count": run.task_count,
         "passed": run.passed,
@@ -145,6 +150,8 @@ def _safe_run(run: RunSummary) -> dict[str, object]:
 def _safe_sweep(point: SweepPoint) -> dict[str, object]:
     return {
         "model": point.model,
+        "engine_label": point.engine_label,
+        "engine_capture_method": point.engine_capture_method,
         "context_tokens": point.context_tokens,
         "ttft_seconds": point.ttft_seconds,
         "prefill_tokens_per_second": point.prefill_tokens_per_second,
@@ -301,6 +308,7 @@ def _render_html(data: DashboardData) -> str:
 def _endpoint_section(models: tuple[EndpointModelAggregate, ...]) -> str:
     headers = [
         "Model",
+        "Engine",
         "Suite",
         "pass@1",
         "Median Latency (s)",
@@ -313,6 +321,7 @@ def _endpoint_section(models: tuple[EndpointModelAggregate, ...]) -> str:
     rows = [
         [
             _cell(model.model),
+            _cell(model.engine_label),
             _cell(model.suite or "—"),
             _num(f"{model.passed}/{model.attempts}"),
             _num(_fmt(model.median_latency_seconds, 3)),
@@ -335,10 +344,19 @@ def _endpoint_section(models: tuple[EndpointModelAggregate, ...]) -> str:
 
 
 def _agent_section(runs: tuple[AgentAggregate, ...]) -> str:
-    headers = ["Agent", "Suite", "pass@1", "Median Wall Time (s)", "Sandbox", "Failures"]
+    headers = [
+        "Agent",
+        "Engine",
+        "Suite",
+        "pass@1",
+        "Median Wall Time (s)",
+        "Sandbox",
+        "Failures",
+    ]
     rows = [
         [
             _cell(run.agent),
+            _cell(run.engine_label),
             _cell(run.suite or "—"),
             _num(f"{run.passed}/{run.attempts}"),
             _num(_fmt(run.median_wall_time_seconds, 3)),
@@ -351,10 +369,11 @@ def _agent_section(runs: tuple[AgentAggregate, ...]) -> str:
 
 
 def _sweep_section(points: tuple[SweepPoint, ...]) -> str:
-    headers = ["Model", "Context Tokens", "TTFT (s)", "Prefill tok/s"]
+    headers = ["Model", "Engine", "Context Tokens", "TTFT (s)", "Prefill tok/s"]
     rows = [
         [
             _cell(point.model),
+            _cell(point.engine_label),
             _num(f"{point.context_tokens:,}"),
             _num(_fmt(point.ttft_seconds, 3)),
             _num(_fmt(point.prefill_tokens_per_second, 1)),
@@ -369,6 +388,7 @@ def _run_history_section(runs: tuple[RunSummary, ...]) -> str:
         "Run",
         "Timestamp",
         "Models / Agents",
+        "Engines",
         "Suites",
         "Tasks",
         "pass@1",
@@ -388,6 +408,7 @@ def _run_history_section(runs: tuple[RunSummary, ...]) -> str:
                 _cell(run.source),
                 _cell(run.timestamp or "—"),
                 _cell(actors),
+                _cell(", ".join(run.engines) or "unknown (legacy)"),
                 _cell(", ".join(run.suites) or "—"),
                 _num(str(run.task_count)),
                 _num(f"{run.passed}/{run.task_count}"),
@@ -457,6 +478,7 @@ def _is_num_header(header: str) -> bool:
         "Model",
         "Suite",
         "Agent",
+        "Engine",
         "Sandbox",
         "Run",
         "Timestamp",

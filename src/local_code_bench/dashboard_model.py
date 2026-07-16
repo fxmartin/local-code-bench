@@ -22,6 +22,13 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from statistics import median
 
+from local_code_bench.engine_provenance import (
+    EngineFingerprint,
+    engine_capture_method,
+    engine_fingerprint,
+    engine_label,
+)
+
 RAW_RESPONSE_PREVIEW_LIMIT = 512
 
 
@@ -74,6 +81,8 @@ class EndpointModelAggregate:
     total_cost_usd: float
     mean_cost_usd: float
     tasks: tuple[EndpointTaskResult, ...]
+    engine_label: str = "unknown (legacy)"
+    engine_capture_method: str | None = None
 
 
 @dataclass(frozen=True)
@@ -106,6 +115,8 @@ class AgentAggregate:
     median_wall_time_seconds: float | None
     sandbox_mode: str | None
     tasks: tuple[AgentTaskResult, ...]
+    engine_label: str = "unknown (legacy)"
+    engine_capture_method: str | None = None
 
 
 @dataclass(frozen=True)
@@ -116,6 +127,8 @@ class SweepPoint:
     context_tokens: int
     ttft_seconds: float | None
     prefill_tokens_per_second: float | None
+    engine_label: str = "unknown (legacy)"
+    engine_capture_method: str | None = None
 
 
 @dataclass(frozen=True)
@@ -131,6 +144,7 @@ class RunSummary:
     timestamp: str | None
     models: tuple[str, ...]
     agents: tuple[str, ...]
+    engines: tuple[str, ...]
     suites: tuple[str, ...]
     task_count: int
     passed: int
@@ -207,9 +221,13 @@ def build_dashboard_data(
     """Transform raw result records into dashboard-ready aggregates."""
 
     collected: list[DataQualityWarning] = list(warnings or [])
-    endpoint: dict[tuple[str, str | None], dict[str, dict[str, object]]] = defaultdict(dict)
-    agent: dict[tuple[str, str | None], dict[str, dict[str, object]]] = defaultdict(dict)
-    sweep: dict[tuple[str, int], dict[str, object]] = {}
+    endpoint: dict[
+        tuple[str, str | None, EngineFingerprint], dict[str, dict[str, object]]
+    ] = defaultdict(dict)
+    agent: dict[
+        tuple[str, str | None, EngineFingerprint], dict[str, dict[str, object]]
+    ] = defaultdict(dict)
+    sweep: dict[tuple[str, EngineFingerprint, int], dict[str, object]] = {}
 
     for record in records:
         if not isinstance(record, dict):
@@ -236,11 +254,11 @@ def build_dashboard_data(
 
     endpoint_models = tuple(
         _endpoint_aggregate(model, suite, tasks.values())
-        for (model, suite), tasks in sorted(endpoint.items(), key=_group_key)
+        for (model, suite, _engine), tasks in sorted(endpoint.items(), key=_group_key)
     )
     agent_runs = tuple(
         _agent_aggregate(name, suite, tasks.values())
-        for (name, suite), tasks in sorted(agent.items(), key=_group_key)
+        for (name, suite, _engine), tasks in sorted(agent.items(), key=_group_key)
     )
     sweep_points = tuple(
         _sweep_point(record) for _, record in sorted(sweep.items(), key=lambda item: item[0])
@@ -261,7 +279,9 @@ def build_run_summary(source: str, records: Sequence[object]) -> RunSummary:
     are summarized separately so wall-clock never contaminates endpoint speed.
     """
 
-    deduped: dict[tuple[str, str, str | None, str], dict[str, object]] = {}
+    deduped: dict[
+        tuple[str, str, str | None, EngineFingerprint, str], dict[str, object]
+    ] = {}
     timestamp: str | None = None
     for record in records:
         if not isinstance(record, dict):
@@ -281,11 +301,20 @@ def build_run_summary(source: str, records: Sequence[object]) -> RunSummary:
             continue
         suite = record.get("suite")
         suite_value = suite if isinstance(suite, str) else None
-        deduped[(str(mode), actor, suite_value, task_id)] = record
+        deduped[
+            (
+                str(mode),
+                actor,
+                suite_value,
+                engine_fingerprint(record.get("engine")),
+                task_id,
+            )
+        ] = record
 
     items = list(deduped.values())
     models = sorted({str(item["model"]) for item in items if item.get("run_mode") == "endpoint"})
     agents = sorted({str(item["agent"]) for item in items if item.get("run_mode") == "agent"})
+    engines = sorted({engine_label(item.get("engine")) for item in items})
     suites = sorted({str(item["suite"]) for item in items if isinstance(item.get("suite"), str)})
     task_count = len(items)
     passed = sum(1 for item in items if item.get("passed") is True)
@@ -308,6 +337,7 @@ def build_run_summary(source: str, records: Sequence[object]) -> RunSummary:
         timestamp=timestamp,
         models=tuple(models),
         agents=tuple(agents),
+        engines=tuple(engines),
         suites=tuple(suites),
         task_count=task_count,
         passed=passed,
@@ -320,7 +350,9 @@ def build_run_summary(source: str, records: Sequence[object]) -> RunSummary:
 def _ingest_keyed(
     record: dict[str, object],
     actor_key: str,
-    target: dict[tuple[str, str | None], dict[str, dict[str, object]]],
+    target: dict[
+        tuple[str, str | None, EngineFingerprint], dict[str, dict[str, object]]
+    ],
     warnings: list[DataQualityWarning],
 ) -> None:
     actor = record.get(actor_key)
@@ -335,13 +367,13 @@ def _ingest_keyed(
         return
     suite = record.get("suite")
     suite_value = suite if isinstance(suite, str) else None
-    # Latest record per (actor, suite, task_id) wins, matching leaderboard dedupe.
-    target[(actor, suite_value)][task_id] = record
+    # Latest record per (actor, suite, engine, task_id) wins.
+    target[(actor, suite_value, engine_fingerprint(record.get("engine")))][task_id] = record
 
 
 def _ingest_sweep(
     record: dict[str, object],
-    target: dict[tuple[str, int], dict[str, object]],
+    target: dict[tuple[str, EngineFingerprint, int], dict[str, object]],
     warnings: list[DataQualityWarning],
 ) -> None:
     model = record.get("model")
@@ -354,7 +386,7 @@ def _ingest_sweep(
             )
         )
         return
-    target[(model, context)] = record
+    target[(model, engine_fingerprint(record.get("engine")), context)] = record
 
 
 def _endpoint_aggregate(
@@ -374,6 +406,8 @@ def _endpoint_aggregate(
     tasks = tuple(_endpoint_task(item) for item in items)
     return EndpointModelAggregate(
         model=model,
+        engine_label=engine_label(items[0].get("engine")),
+        engine_capture_method=engine_capture_method(items[0].get("engine")),
         suite=suite,
         run_mode="endpoint",
         attempts=attempts,
@@ -431,6 +465,8 @@ def _agent_aggregate(
     tasks = tuple(_agent_task(item) for item in items)
     return AgentAggregate(
         agent=name,
+        engine_label=engine_label(items[0].get("engine")),
+        engine_capture_method=engine_capture_method(items[0].get("engine")),
         suite=suite,
         run_mode="agent",
         attempts=attempts,
@@ -461,6 +497,8 @@ def _sweep_point(record: dict[str, object]) -> SweepPoint:
     context = record.get("context_tokens")
     return SweepPoint(
         model=str(record.get("model")),
+        engine_label=engine_label(record.get("engine")),
+        engine_capture_method=engine_capture_method(record.get("engine")),
         context_tokens=context if isinstance(context, int) else 0,  # validated during ingest
         ttft_seconds=_metric(record, "ttft_seconds"),
         prefill_tokens_per_second=_metric(record, "prefill_tokens_per_second"),
@@ -512,6 +550,8 @@ def _preview(value: object) -> str:
     return value[:RAW_RESPONSE_PREVIEW_LIMIT]
 
 
-def _group_key(item: tuple[tuple[str, str | None], object]) -> tuple[str, str]:
-    (actor, suite), _ = item
-    return (actor, suite or "")
+def _group_key(
+    item: tuple[tuple[str, str | None, EngineFingerprint], object],
+) -> tuple[str, str, EngineFingerprint]:
+    (actor, suite, engine), _ = item
+    return (actor, suite or "", engine)
