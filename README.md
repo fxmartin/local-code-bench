@@ -556,6 +556,9 @@ together — switch between them client-side with no reload and no build step:
 
 ```bash
 uv run bench dashboard                       # serve on http://127.0.0.1:8765
+uv run bench dashboard &                     # background process; lifecycle state is recorded
+uv run bench dashboard --status              # report its PID and URL
+uv run bench dashboard --stop                # gracefully stop that exact process
 uv run bench dashboard --port 8888           # pick a different localhost port
 uv run bench dashboard --input results/run.jsonl   # Results section reads these files
 uv run bench dashboard --models configs/models.yaml --suites configs/suites.yaml  # Run launcher catalogs
@@ -583,8 +586,11 @@ Results section reads every `*.jsonl` under `--results-dir` (default `results/`)
 which is also where launched runs write, so newly launched runs appear automatically;
 pass `--input` one or more times to view specific files instead. `--config` and
 `--state-dir` point at the inferencer registry and its state dir. The server binds
-localhost only and exposes no API keys, `.env` contents, or host paths. This
-supersedes `bench inferencer dashboard`, which remains available.
+localhost only and exposes no API keys, `.env` contents, or host paths. Dashboard
+process state lives at `.runtime/dashboard.json`; override it with `--state-file`.
+Stop validates the saved process identity before sending SIGTERM, so stale state or
+PID reuse cannot kill an unrelated process. This supersedes
+`bench inferencer dashboard`, which remains available.
 
 A `POST /api/chat` endpoint streams a model reply token-by-token over Server-Sent
 Events, so you can smoke-test a model without writing a benchmark. Post a JSON body
