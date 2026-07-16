@@ -103,6 +103,20 @@ def test_parse_openai_sse_lines_extracts_content_and_usage() -> None:
     assert events[-1].completion_tokens == 1
 
 
+def test_parse_openai_sse_lines_extracts_reasoning_delta() -> None:
+    events = list(
+        parse_openai_sse_lines(
+            [
+                'data: {"choices":[{"delta":{"reasoning":"Thinking"}}]}\n',
+                'data: {"choices":[{"delta":{"reasoning_content":" more"}}]}\n',
+                "data: [DONE]\n",
+            ]
+        )
+    )
+
+    assert [event.content for event in events] == ["Thinking", " more"]
+
+
 def test_parse_openai_sse_lines_ignores_noise_and_supports_text_choices() -> None:
     events = list(
         parse_openai_sse_lines(

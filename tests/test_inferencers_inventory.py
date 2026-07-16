@@ -273,7 +273,46 @@ def test_scan_hf_cache_decodes_repo_names(tmp_path) -> None:
 
     assert len(models) == 1
     assert models[0].name == "mlx-community/Qwen2.5-Coder-7B"
+    assert models[0].path == str(repo)
     assert models[0].size_bytes == 50
+
+
+def test_scan_hf_cache_skips_incomplete_indexed_snapshot(tmp_path) -> None:
+    store = tmp_path / "hub"
+    repo = store / "models--mlx-community--Broken" / "snapshots" / "abc"
+    repo.mkdir(parents=True)
+    (repo / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "weight_map": {
+                    "a": "model-00001-of-00002.safetensors",
+                    "b": "model-00002-of-00002.safetensors",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (repo / "model-00002-of-00002.safetensors").write_bytes(b"w" * 50)
+
+    cfg = _base("mlx-lm", model_store=(str(store),), store_format="hf-safetensors")
+
+    assert scan_inferencer(cfg) == []
+
+
+def test_scan_hf_local_dir_decodes_provider_model_layout(tmp_path) -> None:
+    store = tmp_path / "models" / "mlx"
+    repo = store / "mlx-community" / "Ornith-1.0-9B-4bit"
+    repo.mkdir(parents=True)
+    (repo / "config.json").write_text("{}", encoding="utf-8")
+    (repo / "model-00001-of-00002.safetensors").write_bytes(b"w" * 50)
+
+    cfg = _base("mlx-lm", model_store=(str(store),), store_format="hf-safetensors")
+    models = scan_inferencer(cfg)
+
+    assert len(models) == 1
+    assert models[0].name == "mlx-community/Ornith-1.0-9B-4bit"
+    assert models[0].path == str(repo)
+    assert models[0].size_bytes > 0
 
 
 # --- Ollama blob store strategy --------------------------------------------
@@ -504,8 +543,12 @@ def test_file_size_swallows_oserror(monkeypatch, tmp_path) -> None:
 def test_default_config_carries_store_metadata() -> None:
     inferencers = load_inferencers("configs/inferencers.yaml")
 
-    # mlx-lm shares the HuggingFace hub cache; ollama uses its blob store.
-    assert inferencers["mlx-lm"].model_store == ("~/.cache/huggingface/hub",)
+    # mlx-lm scans the HuggingFace hub cache plus local-dir model shelf entries;
+    # ollama uses its blob store.
+    assert inferencers["mlx-lm"].model_store == (
+        "~/.cache/huggingface/hub",
+        "~/.cache/model-shelf/models/mlx",
+    )
     assert inferencers["mlx-lm"].store_format == "hf-safetensors"
     assert inferencers["ollama"].model_store == ("~/.ollama/models",)
     assert inferencers["ollama"].store_format == "ollama"

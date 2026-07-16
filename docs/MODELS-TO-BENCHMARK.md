@@ -15,7 +15,8 @@ KV cache (which grows with context length) plus framework and OS overhead. On a
 room for a real context window. The crucial subtlety for Mixture-of-Experts models:
 **all experts must be resident, so memory is set by total parameters, not active
 ones.** Active parameters buy speed, not memory. An 80B-total, 3B-active MoE still
-needs roughly 80B worth of memory.
+needs roughly 80B worth of memory unless a special low-bit runtime, such as a
+TurboQuant-style per-path quantization, changes the storage and kernel path.
 
 ## Tier 1: current baselines (already in the harness)
 
@@ -53,12 +54,24 @@ family versus another).
 |---|---|---|---|---|---|---|
 | Qwen3-8B | 8B | Dense | long | Apache 2.0 | Trivial | The "how small can you go and stay useful" floor; also the model that runs on 16 GB machines |
 
+## Tier 5: extreme 48 GB stretch targets
+
+These are not ordinary MLX/Ollama candidates. They depend on special
+ultra-low-bit quantization and runtime kernels, so benchmark them only after the
+comfortable local coding specialists are covered.
+
+| Model | Params | Arch | Context | License | Fit on 48 GB | Why |
+|---|---|---|---|---|---|---|
+| Nemotron-3-Super-120B-A12B TurboQuant | 120B total / ~12B active | Hybrid Mamba + sparse attention + LatentMoE | up to 1M reported | NVIDIA open model license; re-check model card | Claimed stretch: ~36 GB on disk, 40.8 GB peak with `tq3a-tq2e-g32` | Tests the article claim that TurboQuant-MLX can make a 120B-class model usable on 48 GB. Keep separate from normal local rows because arithmetic caveats and runtime-specific kernels can dominate results |
+
 ## Out of local range on 48 GB (reserve for the Part 4 cloud comparison)
 
-These do not fit 48 GB and belong in the cloud-versus-local comparison, run through
-hosted endpoints rather than locally:
+These do not fit 48 GB through ordinary local formats and belong in the
+cloud-versus-local comparison unless an explicitly pinned ultra-compressed runtime
+variant is being tested:
 
-- gpt-oss-120b (116.8B total / 5.1B active): needs roughly 64 GB or more.
+- gpt-oss-120b (116.8B total / 5.1B active): needs roughly 64 GB or more in normal
+  local formats.
 - Devstral 2 (123B), Qwen3-235B-A22B: 128 GB-class machines.
 - DeepSeek V3/V4, GLM-5.x, Kimi K2.x, MiniMax M3: frontier MoE, hundreds of GB to
   over a terabyte; cloud only for this project.
@@ -73,7 +86,10 @@ hosted endpoints rather than locally:
 2. Add gpt-oss-20b for a non-Qwen architecture point.
 3. Add Qwen3-Coder-Next as the deliberate "stretch the 48 GB envelope" case, using a
    low-bit quant, and watch for the swap cliff seen in Part 1.
-4. Add Qwen3-8B and Qwen3-32B (general) only if you want the size-scaling and
+4. Add Nemotron-3-Super-120B-A12B TurboQuant only as an explicit "extreme
+   compression on 48 GB" experiment. Run a fit-check and numeric canary before any
+   full coding benchmark.
+5. Add Qwen3-8B and Qwen3-32B (general) only if you want the size-scaling and
    coder-fine-tune-effect curves.
 
 ## Practical notes
@@ -88,6 +104,10 @@ hosted endpoints rather than locally:
   uniform, so quality varies between two "4-bit" files of the same model. Pin the
   exact build and revision in the config, and prefer a calibration-based or dynamic
   quant where available. See Part 0, section 4, in the series plan.
+- Ultra-compressed runtimes need extra metadata beyond `model_id`: record the
+  quantizer, policy name, attention bits, expert bits, group size, disk size, peak
+  memory, sampler defaults, and known caveats. For Nemotron TurboQuant, numeric
+  reasoning is a known weak spot, so do not rank it without a numeric canary.
 - Each new local model is one `models` entry (name, base_url, model_id, pinned
   revision, prices set to zero). Keep `concurrency: 1` for all local entries.
 - Reasoning models: decide the thinking policy (Part 0 and the methodology doc) per
@@ -107,3 +127,7 @@ hosted endpoints rather than locally:
 - Ornith-1.0-35B GGUF: https://huggingface.co/deepreinforce-ai/Ornith-1.0-35B-GGUF
 - Ornith-1.0-35B MLX (mixed 5/8-bit, third-party): https://huggingface.co/leonsarmiento/Ornith-1.0-35B-5bit-mlx
 - Ornith-1.0-35B overview (Andrew Zhu, Medium): https://xhinker.medium.com/ornith-1-0-35b-the-moe-model-that-runs-like-3b-thinks-like-27b-1e7a0fe5a64e
+- Nemotron-3-Super-120B-A12B TurboQuant article: https://medium.com/data-science-collective/nemotron-120b-on-a-48-gb-macbook-27-tok-s-with-turboquant-hybrid-quantization-mlx-529d93cbc960
+- Nemotron-3-Super-120B-A12B TurboQuant model: https://huggingface.co/manjunathshiva/Nemotron-3-Super-120B-A12B-tq3a-tq2e-g32
+- TurboQuant-MLX: https://github.com/manjunathshiva/turboquant-mlx
+- NVIDIA Nemotron-3-Super report: https://arxiv.org/abs/2604.12374

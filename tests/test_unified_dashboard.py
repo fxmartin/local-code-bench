@@ -218,6 +218,58 @@ def test_api_start_without_flags_defaults_false(monkeypatch) -> None:
     assert seen == {"confirm": False, "force": False}
 
 
+def test_api_start_with_chat_model_overrides_mlx_start_command(monkeypatch) -> None:
+    local_path = "/cache/models/mlx/mlx-community/Ornith-1.0-9B-4bit"
+    monkeypatch.setattr(
+        ud.inventory,
+        "scan_inferencers",
+        lambda configs, **k: [
+            _stored(
+                "mlx-lm",
+                "hf-safetensors",
+                "mlx-community/Ornith-1.0-9B-4bit",
+                local_path,
+                9,
+            )
+        ],
+    )
+    seen: dict = {}
+
+    def _fake_start(name, configs, state_dir, *, confirm, force=False):
+        seen.update(name=name, command=configs[name].start)
+        return 200, {"started": {"name": name}}
+
+    monkeypatch.setattr(ud.inferencer_panel, "start_action", _fake_start)
+    ctx = ud.DashboardContext(
+        configs={
+            "mlx-lm": InferencerConfig(
+                name="mlx-lm",
+                lifecycle="server",
+                detect_kind="module",
+                detect_target="mlx_lm",
+                port=8080,
+                health_url="http://127.0.0.1:{port}/v1/models",
+                start=("mlx_lm.server", "--port", "8080"),
+                model_store=("~/models",),
+                store_format="hf-safetensors",
+            )
+        },
+        state_dir=".runtime",
+    )
+
+    resp = ud.handle_request(
+        "POST",
+        "/api/start?name=mlx-lm&model=mlx-community%2FOrnith-1.0-9B-4bit",
+        ctx,
+    )
+
+    assert resp.status == 200
+    assert seen == {
+        "name": "mlx-lm",
+        "command": ("mlx_lm.server", "--port", "8080", "--model", local_path),
+    }
+
+
 def test_api_stop_routes_to_stop_action(monkeypatch) -> None:
     seen: dict = {}
     monkeypatch.setattr(
@@ -1515,6 +1567,57 @@ def test_api_chat_inventory_model_resolves_through_selected_inferencer(monkeypat
     assert model.model_id == "ornith:9b"
     assert model.base_url == "http://127.0.0.1:11434/v1"
     assert model.inferencer == "ollama"
+
+
+def test_api_chat_inventory_hf_model_uses_default_model_id(monkeypatch) -> None:
+    local_path = "/cache/models/mlx/mlx-community/Ornith-1.0-9B-4bit"
+    monkeypatch.setattr(
+        ud.inventory,
+        "scan_inferencers",
+        lambda configs, **k: [
+            _stored(
+                "mlx-lm",
+                "hf-safetensors",
+                "mlx-community/Ornith-1.0-9B-4bit",
+                local_path,
+                9,
+            )
+        ],
+    )
+    captured: dict[str, object] = {}
+
+    class _Provider:
+        def stream_chat(self, request):
+            return [StreamEvent(content="ok")]
+
+    def _provider_for_model(model):
+        captured["model"] = model
+        return _Provider()
+
+    monkeypatch.setattr(ud.chat, "provider_for_model", _provider_for_model)
+    ctx = ud.DashboardContext(
+        configs={"mlx-lm": _server_cfg("mlx-lm", 8080)},
+        state_dir=".runtime",
+    )
+
+    resp = ud.handle_request(
+        "POST",
+        "/api/chat",
+        ctx,
+        json.dumps(
+            {
+                "model": "mlx-community/Ornith-1.0-9B-4bit",
+                "inferencer": "mlx-lm",
+                "messages": [{"role": "user", "content": "hi"}],
+            }
+        ).encode("utf-8"),
+    )
+
+    assert isinstance(resp, ud.chat.ChatStreamResponse)
+    model = captured["model"]
+    assert isinstance(model, ModelConfig)
+    assert model.name == "mlx-community/Ornith-1.0-9B-4bit"
+    assert model.model_id == "default_model"
 
 
 def test_inventory_section_is_navigable_and_thin_client_over_scanner() -> None:

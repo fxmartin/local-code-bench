@@ -232,7 +232,13 @@ def _content_delta(chunk: Any) -> str:
     delta = first.get("delta")
     if isinstance(delta, dict):
         content = delta.get("content")
-        return content if isinstance(content, str) else ""
+        if isinstance(content, str):
+            return content
+        reasoning = delta.get("reasoning")
+        if isinstance(reasoning, str):
+            return reasoning
+        reasoning_content = delta.get("reasoning_content")
+        return reasoning_content if isinstance(reasoning_content, str) else ""
     text = first.get("text")
     return text if isinstance(text, str) else ""
 

@@ -516,13 +516,52 @@ _Found = tuple[str, Path, int]
 
 
 def _scan_hf_cache(base: Path) -> Iterator[_Found]:
-    """HuggingFace hub cache: ``models--<org>--<repo>`` directories."""
+    """HuggingFace model stores.
 
+    Supports both the hub cache layout (``models--<org>--<repo>``) and the
+    ``hf download --local-dir`` shelf layout (``<org>/<repo>/model*.safetensors``).
+    """
+
+    saw_hub_layout = False
     for repo_dir in sorted(_iter_dirs(base)):
         if not repo_dir.name.startswith("models--"):
             continue
+        saw_hub_layout = True
         name = repo_dir.name[len("models--") :].replace("--", "/")
-        yield name, repo_dir, _dir_size(repo_dir)
+        snapshots = repo_dir / "snapshots"
+        for snapshot in sorted(_iter_dirs(snapshots)):
+            if _is_complete_hf_model_dir(snapshot):
+                yield name, snapshot, _dir_size(snapshot)
+    if saw_hub_layout:
+        return
+
+    for provider_dir in sorted(_iter_dirs(base)):
+        for repo_dir in sorted(_iter_dirs(provider_dir)):
+            if _is_complete_hf_model_dir(repo_dir):
+                yield f"{provider_dir.name}/{repo_dir.name}", repo_dir, _dir_size(repo_dir)
+
+
+def _is_complete_hf_model_dir(path: Path) -> bool:
+    if not any(path.glob("*.safetensors")):
+        return False
+
+    index = path / "model.safetensors.index.json"
+    if not index.is_file():
+        return True
+
+    try:
+        doc = json.loads(index.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return False
+    if not isinstance(doc, dict):
+        return False
+
+    weight_map = doc.get("weight_map")
+    if not isinstance(weight_map, dict):
+        return False
+
+    shard_names = {name for name in weight_map.values() if isinstance(name, str)}
+    return bool(shard_names) and all((path / name).is_file() for name in shard_names)
 
 
 def _scan_ollama(base: Path) -> Iterator[_Found]:
