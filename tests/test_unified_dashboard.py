@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from local_code_bench.config import InferencerConfig, ModelConfig, TokenPrices
+from local_code_bench.engine_provenance import EngineProvenance
 from local_code_bench.inferencers import manager
 from local_code_bench.inferencers.manager import InferencerStatus
 from local_code_bench.metrics import StreamEvent
@@ -1169,6 +1170,15 @@ def test_launch_flows_to_live_progress_and_results(tmp_path: Path, monkeypatch) 
 
     monkeypatch.setattr(launch.manager, "running_others", lambda *a, **k: [])
     monkeypatch.setattr(launch.manager, "start_exclusive", _fake_start_exclusive)
+    monkeypatch.setattr(
+        launch,
+        "capture_engine_provenance",
+        lambda *args, **kwargs: EngineProvenance(
+            name="dflash",
+            versions={"dflash": "1.0"},
+            capture_method="managed-process",
+        ),
+    )
     monkeypatch.setattr(launch.tasks, "load_suite", _dummy_tasks)
     monkeypatch.setattr(launch.runner, "run_endpoint_suite", _fake_run_suite)
 

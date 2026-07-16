@@ -22,6 +22,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from ..config import InferencerConfig, load_inferencers
+from ..engine_provenance import EngineProvenanceError, capture_engine_provenance
 from . import manager
 from .manager import InferencerError, InferencerStatus
 
@@ -40,7 +41,7 @@ class Response:
     body: bytes
 
 
-def _serialize(status: InferencerStatus) -> dict:
+def _serialize(status: InferencerStatus, engine_version: str | None = None) -> dict:
     """Project a status onto JSON-safe fields only (never host-sensitive secrets)."""
 
     return {
@@ -51,6 +52,7 @@ def _serialize(status: InferencerStatus) -> dict:
         "pid": status.pid,
         "port": status.port,
         "healthy": status.healthy,
+        "engine_version": engine_version,
         "detail": status.detail,
     }
 
@@ -70,7 +72,34 @@ def status_action(
     """Build the `/api/status` payload — one safe row per engine."""
 
     statuses = manager.status_all(configs, state_dir)
-    return 200, {"inferencers": [_serialize(status) for status in statuses.values()]}
+    return 200, {
+        "inferencers": [
+            _serialize(status, _engine_version_label(configs[name], status, state_dir))
+            for name, status in statuses.items()
+        ]
+    }
+
+
+def _engine_version_label(
+    config: InferencerConfig,
+    status: InferencerStatus,
+    state_dir: str | Path,
+) -> str | None:
+    """Best-effort version for the status UI; benchmark capture remains strict."""
+
+    if not status.healthy:
+        return None
+    health = urlsplit(config.health_url.format(port=config.port))
+    base_url = f"{health.scheme}://{health.netloc}"
+    try:
+        return capture_engine_provenance(
+            config.name,
+            base_url,
+            inferencer_config=config,
+            state_dir=state_dir,
+        ).label
+    except EngineProvenanceError:
+        return None
 
 
 def start_action(
@@ -270,7 +299,7 @@ _PAGE = """<!DOCTYPE html>
 <p id="err"></p>
 <table>
   <thead>
-    <tr><th></th><th>Engine</th><th>Lifecycle</th><th>Port</th><th>PID</th><th>State</th><th></th></tr>
+    <tr><th></th><th>Engine</th><th>Version</th><th>Lifecycle</th><th>Port</th><th>PID</th><th>State</th><th></th></tr>
   </thead>
   <tbody id="rows"></tbody>
 </table>
@@ -314,7 +343,8 @@ function render(items) {
           : `<button data-start="${it.name}">Start</button>`);
     tr.innerHTML =
       `<td><span class="dot ${dot}"></span></td>` +
-      `<td>${it.name}</td><td>${it.lifecycle}</td><td>${it.port}</td>` +
+      `<td>${it.name}</td><td>${it.engine_version || "-"}</td>` +
+      `<td>${it.lifecycle}</td><td>${it.port}</td>` +
       `<td>${it.pid ?? ""}</td><td>${it.detail}</td><td>${action}</td>`;
     rows.appendChild(tr);
   }

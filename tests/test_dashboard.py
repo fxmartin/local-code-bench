@@ -8,6 +8,11 @@ from local_code_bench.results import append_jsonl
 
 
 def _seed_records(path) -> None:
+    engine = {
+        "name": "ollama",
+        "versions": {"ollama": "0.32.0"},
+        "capture_method": "live-api",
+    }
     append_jsonl(
         path,
         {
@@ -16,6 +21,7 @@ def _seed_records(path) -> None:
             "suite": "humaneval",
             "task_id": "HumanEval/0",
             "passed": True,
+            "engine": engine,
             "cost_usd": 0.01,
             "metrics": {
                 "latency_seconds": 1.0,
@@ -33,6 +39,7 @@ def _seed_records(path) -> None:
             "suite": "humaneval",
             "task_id": "HumanEval/1",
             "passed": False,
+            "engine": engine,
             "cost_usd": 0.02,
             "failure_type": "infra",
             "metrics": {
@@ -60,6 +67,7 @@ def _seed_records(path) -> None:
             "run_mode": "sweep",
             "model": "m1",
             "context_tokens": 2000,
+            "engine": engine,
             "metrics": {"ttft_seconds": 1.5, "prefill_tokens_per_second": 180.0},
         },
     )
@@ -90,11 +98,14 @@ def test_generate_dashboard_writes_self_contained_html(tmp_path) -> None:
     embedded = json.loads(match.group(1).replace("<\\/", "</"))
     assert embedded["endpoint_models"][0]["model"] == "m1"
     assert embedded["endpoint_models"][0]["pass_rate"] == 0.5
+    assert embedded["endpoint_models"][0]["engine_label"] == "ollama 0.32.0"
     assert embedded["agent_runs"][0]["agent"] == "codex"
     assert embedded["sweep_points"][0]["context_tokens"] == 2000
+    assert embedded["sweep_points"][0]["engine_label"] == "ollama 0.32.0"
     # Core dashboard browsable without JS: tables rendered server-side.
     assert "<table" in content
     assert "m1" in content
+    assert "ollama 0.32.0" in content
     assert "codex" in content
 
 

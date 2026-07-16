@@ -68,6 +68,7 @@ def test_default_agents_config_loads_qwen_code() -> None:
 
     assert agents["qwen-code"].type == "qwen-code"
     assert agents["qwen-code"].base_url == "http://localhost:8080/v1"
+    assert agents["qwen-code"].inferencer == "mlx-lm"
     assert agents["qwen-code"].url == "https://github.com/QwenLM/qwen-code"
 
 
@@ -337,6 +338,7 @@ agents:
     api_key_env: QWEN_LOCAL_API_KEY
     system_prompt: Custom system prompt.
     append_system_prompt: Extra benchmark instructions.
+    inferencer: mlx-lm
     url: https://github.com/QwenLM/qwen-code
 """,
         encoding="utf-8",
@@ -350,6 +352,7 @@ agents:
     assert agents["qwen-local"].api_key_env == "QWEN_LOCAL_API_KEY"
     assert agents["qwen-local"].system_prompt == "Custom system prompt."
     assert agents["qwen-local"].append_system_prompt == "Extra benchmark instructions."
+    assert agents["qwen-local"].inferencer == "mlx-lm"
     assert agents["qwen-local"].url == "https://github.com/QwenLM/qwen-code"
 
 

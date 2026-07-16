@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from local_code_bench.config import ConfigError, ModelConfig, TokenPrices
+from local_code_bench.engine_provenance import EngineProvenance
 from local_code_bench.metrics import StreamEvent
 from local_code_bench.opencode.invoke import (
     OPENCODE_TASKS,
@@ -169,6 +170,11 @@ def test_build_record_captures_metadata_and_metrics() -> None:
         token_counts_estimated=False,
     )
     model = _model(quant="IQ3_XXS", provider="unsloth", engine="dflash")
+    provenance = EngineProvenance(
+        name="dflash",
+        versions={"dflash": "1.2.3"},
+        capture_method="managed-process",
+    )
 
     record = build_record(
         task="task-a",
@@ -178,6 +184,7 @@ def test_build_record_captures_metadata_and_metrics() -> None:
         temperature=0.0,
         prompt_file=Path("prompts/task-a.md"),
         measurement=measurement,
+        engine_provenance=provenance,
     )
 
     assert record["run_mode"] == "opencode"
@@ -185,7 +192,8 @@ def test_build_record_captures_metadata_and_metrics() -> None:
     assert record["model"] == "local"
     assert record["quant"] == "IQ3_XXS"
     assert record["provider"] == "unsloth"
-    assert record["engine"] == "dflash"
+    assert record["engine_name"] == "dflash"
+    assert record["engine"] == provenance.as_dict()
     assert record["endpoint"] == "http://localhost:9000/v1"
     assert record["mode"] == "thinking"
     assert record["seed"] == 7
@@ -263,6 +271,11 @@ def test_run_opencode_sends_resolved_endpoint_and_max_tokens(tmp_path: Path, mon
         prompts_dir=tmp_path / "prompts",
         results_dir=tmp_path / "results",
         max_tokens=256,
+        engine_provenance=EngineProvenance(
+            name="mlx-lm",
+            versions={"mlx-lm": "0.31.3", "mlx": "0.32.0"},
+            capture_method="managed-process",
+        ),
     )
 
     assert captured["base_url"] == "http://127.0.0.1:8080/v1"

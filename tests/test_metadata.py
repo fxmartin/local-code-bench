@@ -8,6 +8,7 @@ storage tiers, so the leaderboard/dashboard can caveat external-served speed.
 from __future__ import annotations
 
 from local_code_bench.config import ModelConfig, TokenPrices
+from local_code_bench.engine_provenance import EngineProvenance
 from local_code_bench.metadata import run_metadata
 
 
@@ -37,3 +38,19 @@ def test_run_metadata_includes_tier_when_supplied() -> None:
     meta = run_metadata(models=[_model()], suite="canary", tier=tier)
 
     assert meta["tier"] == tier
+
+
+def test_run_metadata_includes_engine_provenance_per_model() -> None:
+    provenance = EngineProvenance(
+        name="ollama",
+        versions={"ollama": "0.32.0"},
+        capture_method="live-api",
+    )
+
+    meta = run_metadata(
+        models=[_model()],
+        suite="canary",
+        engine_provenance={"qwen": provenance},
+    )
+
+    assert meta["models"]["qwen"]["engine"] == provenance.as_dict()  # type: ignore[index]

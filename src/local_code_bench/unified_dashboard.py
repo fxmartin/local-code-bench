@@ -1063,7 +1063,7 @@ _PAGE = """<!DOCTYPE html>
   <p id="inf-err"></p>
   <table>
     <thead>
-      <tr><th></th><th>Engine</th><th>Lifecycle</th><th>Port</th><th>PID</th><th>State</th><th></th></tr>
+      <tr><th></th><th>Engine</th><th>Version</th><th>Lifecycle</th><th>Port</th><th>PID</th><th>State</th><th></th></tr>
     </thead>
     <tbody id="rows"></tbody>
   </table>
@@ -1079,6 +1079,7 @@ _PAGE = """<!DOCTYPE html>
     <thead>
       <tr>
         <th data-sort-key="name">Model / Agent</th>
+        <th data-sort-key="engine_label">Engine</th>
         <th data-sort-key="run_mode">Run Mode</th>
         <th data-sort-key="suite">Suite</th>
         <th class="num" data-sort-key="pass_rate">pass@1</th>
@@ -1097,7 +1098,7 @@ _PAGE = """<!DOCTYPE html>
   <table>
     <thead>
       <tr>
-        <th>Run</th><th>Timestamp</th><th>Models / Agents</th><th>Suites</th>
+        <th>Run</th><th>Timestamp</th><th>Models / Agents</th><th>Engines</th><th>Suites</th>
         <th class="num">Tasks</th><th class="num">pass@1</th><th class="num">Median Speed</th>
       </tr>
     </thead>
@@ -1108,7 +1109,7 @@ _PAGE = """<!DOCTYPE html>
   <table>
     <thead>
       <tr>
-        <th>Model</th><th class="num">Context Tokens</th>
+        <th>Model</th><th>Engine</th><th class="num">Context Tokens</th>
         <th class="num">TTFT</th><th class="num">Prefill tok/s</th>
       </tr>
     </thead>
@@ -1330,7 +1331,8 @@ _PAGE = """<!DOCTYPE html>
                 : `<button class="act" data-start="${it.name}">Start</button>`));
       tr.innerHTML =
         `<td><span class="dot ${dot}"></span></td>` +
-        `<td>${it.name}</td><td>${it.lifecycle}</td><td>${it.port}</td>` +
+        `<td>${it.name}</td><td>${it.engine_version || "-"}</td>` +
+        `<td>${it.lifecycle}</td><td>${it.port}</td>` +
         `<td>${it.pid ?? ""}</td><td>${detail}</td><td>${action}</td>`;
       rows.appendChild(tr);
     }
@@ -1431,7 +1433,8 @@ _PAGE = """<!DOCTYPE html>
     const rows = [];
     for (const m of DATA.endpoint_models || []) {
       rows.push({
-        kind: "endpoint", name: m.model, run_mode: "endpoint", suite: m.suite,
+        kind: "endpoint", name: m.model, engine_label: m.engine_label,
+        run_mode: "endpoint", suite: m.suite,
         pass_rate: m.pass_rate, median_speed_seconds: m.median_latency_seconds,
         median_prefill_tokens_per_second: m.median_prefill_tokens_per_second,
         median_decode_tokens_per_second: m.median_decode_tokens_per_second,
@@ -1440,7 +1443,8 @@ _PAGE = """<!DOCTYPE html>
     }
     for (const a of DATA.agent_runs || []) {
       rows.push({
-        kind: "agent", name: a.agent, run_mode: "agent", suite: a.suite,
+        kind: "agent", name: a.agent, engine_label: a.engine_label,
+        run_mode: "agent", suite: a.suite,
         pass_rate: a.pass_rate, median_speed_seconds: a.median_wall_time_seconds,
         median_prefill_tokens_per_second: null, median_decode_tokens_per_second: null,
         mean_cost_usd: null, failure_count: a.failure_count, tasks: a.tasks || [],
@@ -1454,7 +1458,8 @@ _PAGE = """<!DOCTYPE html>
     let out = rows;
     if (q) {
       out = rows.filter((r) =>
-        [r.name, r.run_mode, r.suite].some((v) => (v || "").toLowerCase().includes(q)));
+        [r.name, r.engine_label, r.run_mode, r.suite]
+          .some((v) => (v || "").toLowerCase().includes(q)));
     }
     const key = SORT.key, dir = SORT.dir;
     return out.slice().sort((a, b) => {
@@ -1472,12 +1477,13 @@ _PAGE = """<!DOCTYPE html>
     const tbody = document.getElementById("leaderboard");
     tbody.innerHTML = "";
     const rows = applyFilterAndSort(leaderboardRows());
-    if (!rows.length) { fillEmpty(tbody, 9, "No leaderboard rows yet."); return; }
+    if (!rows.length) { fillEmpty(tbody, 10, "No leaderboard rows yet."); return; }
     for (const r of rows) {
       const tr = document.createElement("tr");
       tr.className = "row-clickable";
       tr.append(
-        cell(r.name), cell(r.run_mode), cell(r.suite || "-"),
+        cell(r.name), cell(r.engine_label || "unknown (legacy)"),
+        cell(r.run_mode), cell(r.suite || "-"),
         cell(pct(r.pass_rate), true), cell(num(r.median_speed_seconds), true),
         cell(num(r.median_prefill_tokens_per_second), true),
         cell(num(r.median_decode_tokens_per_second), true),
@@ -1485,7 +1491,7 @@ _PAGE = """<!DOCTYPE html>
         cell(r.failure_count, true),
       );
       tr.addEventListener("click", () => {
-        OPEN = { kind: r.kind, name: r.name, suite: r.suite };
+        OPEN = { kind: r.kind, name: r.name, engine_label: r.engine_label, suite: r.suite };
         renderDrilldown();
       });
       tbody.appendChild(tr);
@@ -1494,7 +1500,8 @@ _PAGE = """<!DOCTYPE html>
 
   function findRow(open) {
     return leaderboardRows().find(
-      (r) => r.kind === open.kind && r.name === open.name && r.suite === open.suite);
+      (r) => r.kind === open.kind && r.name === open.name &&
+        r.engine_label === open.engine_label && r.suite === open.suite);
   }
 
   function renderDrilldown() {
@@ -1505,7 +1512,8 @@ _PAGE = """<!DOCTYPE html>
     if (!row) { OPEN = null; return; }
 
     const title = document.createElement("h3");
-    title.textContent = "Tasks - " + row.name + (row.suite ? " (" + row.suite + ")" : "");
+    title.textContent = "Tasks - " + row.name + " / " + row.engine_label +
+      (row.suite ? " (" + row.suite + ")" : "");
     host.appendChild(title);
 
     const table = document.createElement("table");
@@ -1552,7 +1560,7 @@ _PAGE = """<!DOCTYPE html>
     const tbody = document.getElementById("run-history");
     tbody.innerHTML = "";
     const rows = DATA.runs || [];
-    if (!rows.length) { fillEmpty(tbody, 7, "No runs yet."); return; }
+    if (!rows.length) { fillEmpty(tbody, 8, "No runs yet."); return; }
     for (const r of rows) {
       const actors = (r.models || []).concat(r.agents || []);
       const speed = r.median_latency_seconds !== null && r.median_latency_seconds !== undefined
@@ -1560,6 +1568,7 @@ _PAGE = """<!DOCTYPE html>
       const tr = document.createElement("tr");
       tr.append(
         cell(r.source), cell(r.timestamp || "-"), cell(actors.join(", ") || "-"),
+        cell((r.engines || []).join(", ") || "unknown (legacy)"),
         cell((r.suites || []).join(", ") || "-"), cell(r.task_count, true),
         cell(pct(r.pass_rate), true), cell(num(speed), true),
       );
@@ -1570,11 +1579,12 @@ _PAGE = """<!DOCTYPE html>
   function renderSweep(rows) {
     const tbody = document.getElementById("sweep");
     tbody.innerHTML = "";
-    if (!rows.length) { fillEmpty(tbody, 4, "No sweep records yet."); return; }
+    if (!rows.length) { fillEmpty(tbody, 5, "No sweep records yet."); return; }
     for (const r of rows) {
       const tr = document.createElement("tr");
       tr.append(
-        cell(r.model), cell(r.context_tokens, true),
+        cell(r.model), cell(r.engine_label || "unknown (legacy)"),
+        cell(r.context_tokens, true),
         cell(num(r.ttft_seconds), true), cell(num(r.prefill_tokens_per_second), true),
       );
       tbody.appendChild(tr);

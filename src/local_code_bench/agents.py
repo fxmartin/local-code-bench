@@ -16,6 +16,7 @@ from time import perf_counter
 from typing import Protocol, cast
 
 from local_code_bench.config import AgentConfig
+from local_code_bench.engine_provenance import EngineProvenance, EngineProvenanceError
 from local_code_bench.results import append_jsonl, read_jsonl
 from local_code_bench.scoring import score_completion
 from local_code_bench.tasks import BenchmarkTask
@@ -323,7 +324,18 @@ def run_agent_task(
     result_path: Path,
     retain_workspace: bool = False,
     progress: Callable[[str], None] | None = None,
+    engine_provenance: EngineProvenance | None = None,
 ) -> dict[str, object]:
+    if agent.inferencer is not None and engine_provenance is None:
+        raise EngineProvenanceError(
+            f"agent '{agent.name}' requires exact engine provenance for "
+            f"inferencer '{agent.inferencer}'"
+        )
+    if engine_provenance is not None and engine_provenance.name != agent.inferencer:
+        raise EngineProvenanceError(
+            f"agent '{agent.name}' declares inferencer '{agent.inferencer}' but "
+            f"provenance identifies '{engine_provenance.name}'"
+        )
     workspace = materialize_task_workspace(task)
     started = perf_counter()
     adapter = adapter_for(agent.type)
@@ -396,6 +408,8 @@ def run_agent_task(
     finally:
         if not retain_workspace:
             shutil.rmtree(workspace.root, ignore_errors=True)
+    if engine_provenance is not None:
+        record["engine"] = engine_provenance.as_dict()
     append_jsonl(result_path, record)
     if progress is not None:
         status = "passed" if record.get("passed") is True else "failed"
@@ -410,6 +424,7 @@ def run_codex_task(
     result_path: Path,
     retain_workspace: bool = False,
     progress: Callable[[str], None] | None = None,
+    engine_provenance: EngineProvenance | None = None,
 ) -> dict[str, object]:
     return run_agent_task(
         agent=agent,
@@ -417,6 +432,7 @@ def run_codex_task(
         result_path=result_path,
         retain_workspace=retain_workspace,
         progress=progress,
+        engine_provenance=engine_provenance,
     )
 
 

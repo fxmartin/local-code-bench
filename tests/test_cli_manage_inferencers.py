@@ -13,6 +13,7 @@ import pytest
 
 from local_code_bench.cli import _make_inferencer_confirm, main
 from local_code_bench.config import InferencerConfig, ModelConfig, TokenPrices
+from local_code_bench.engine_provenance import EngineProvenance
 from local_code_bench.inferencers import manager
 from local_code_bench.tasks import BenchmarkTask
 
@@ -48,6 +49,19 @@ def _patch_suite(monkeypatch, model):
     monkeypatch.setattr(
         "local_code_bench.cli.run_endpoint_suite",
         lambda **_kwargs: {"passed": 1, "failed": 0, "infra_failed": 0, "skipped": 0},
+    )
+    _patch_provenance(monkeypatch)
+
+
+def _patch_provenance(monkeypatch) -> None:
+    provenance = EngineProvenance(
+        name="dflash",
+        versions={"dflash": "1.0"},
+        capture_method="managed-process",
+    )
+    monkeypatch.setattr(
+        "local_code_bench.cli._capture_model_engine_provenance",
+        lambda _args, models: {model.name: provenance for model in models},
     )
 
 
@@ -199,6 +213,7 @@ def test_sweep_flow_starts_declared_inferencer(tmp_path, monkeypatch, capsys) ->
         "local_code_bench.cli.load_inferencers", lambda _path: {"dflash": _dflash_cfg()}
     )
     monkeypatch.setattr("local_code_bench.cli.run_sweep", lambda **_kwargs: "ok")
+    _patch_provenance(monkeypatch)
 
     captured: dict[str, object] = {}
 
@@ -246,6 +261,7 @@ def test_sweep_flow_with_custom_context_sizes_and_power(tmp_path, monkeypatch, c
         "local_code_bench.cli.load_inferencers", lambda _path: {"dflash": _dflash_cfg()}
     )
     monkeypatch.setattr(manager, "start_exclusive", lambda *a, **k: None)
+    _patch_provenance(monkeypatch)
 
     captured: dict[str, object] = {}
 

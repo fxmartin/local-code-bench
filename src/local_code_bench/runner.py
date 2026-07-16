@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from pathlib import Path
 
 from local_code_bench.config import ModelConfig
 from local_code_bench.cost import calculate_cost_usd
+from local_code_bench.engine_provenance import EngineProvenance, EngineProvenanceError
 from local_code_bench.metadata import run_metadata
 from local_code_bench.metrics import CompletionMeasurement, capture_stream_metrics
 from local_code_bench.provider import ChatRequest, ProviderError, provider_for_model
@@ -65,16 +66,29 @@ def run_endpoint_suite(
     concurrency_override: int | None = None,
     timeout_seconds: float | None = None,
     warmup: bool = False,
+    engine_provenance: Mapping[str, EngineProvenance] | None = None,
 ) -> dict[str, int]:
     model_list = list(models)
     task_list = list(tasks)
+    engines = dict(engine_provenance or {})
+    _validate_required_provenance(model_list, engines)
+    if resume and result_path.exists():
+        _validate_resume_provenance(result_path, model_list, engines)
     if not resume or not result_path.exists():
-        append_jsonl(result_path, run_metadata(models=model_list, suite=_suite_name(task_list)))
+        append_jsonl(
+            result_path,
+            run_metadata(
+                models=model_list,
+                suite=_suite_name(task_list),
+                engine_provenance=engines,
+            ),
+        )
     done = completed_pairs(result_path) if resume else set()
     summary = {"passed": 0, "failed": 0, "infra_failed": 0, "skipped": 0}
     total = len(model_list) * len(task_list)
     state = _ProgressState(current=0, total=total, progress=progress)
     for model in model_list:
+        provenance = engines.get(model.name)
         model_max_tokens = _resolve_max_tokens(model, max_tokens)
         try:
             provider = provider_for_model(model)
@@ -82,7 +96,9 @@ def run_endpoint_suite(
             for task in task_list:
                 if _skip_done(model, task, done, summary, state):
                     continue
-                record = failure_record(model, task, str(exc), infra=True)
+                record = failure_record(
+                    model, task, str(exc), infra=True, engine_provenance=provenance
+                )
                 append_jsonl(result_path, record)
                 summary["infra_failed"] += 1
                 state.emit(model.name, task.task_id, "infra-failed")
@@ -97,7 +113,12 @@ def run_endpoint_suite(
                 if _skip_done(model, task, done, summary, state):
                     continue
                 record, summary_key, status = _execute_task(
-                    provider, model, task, model_max_tokens, timeout_seconds
+                    provider,
+                    model,
+                    task,
+                    model_max_tokens,
+                    timeout_seconds,
+                    provenance,
                 )
                 append_jsonl(result_path, record)
                 summary[summary_key] += 1
@@ -111,7 +132,13 @@ def run_endpoint_suite(
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
             futures = {
                 pool.submit(
-                    _execute_task, provider, model, task, model_max_tokens, timeout_seconds
+                    _execute_task,
+                    provider,
+                    model,
+                    task,
+                    model_max_tokens,
+                    timeout_seconds,
+                    provenance,
                 ): task
                 for task in pending
             }
@@ -149,6 +176,7 @@ def _execute_task(
     task: BenchmarkTask,
     max_tokens: int | None,
     timeout_seconds: float | None = None,
+    engine_provenance: EngineProvenance | None = None,
 ) -> tuple[dict[str, object], str, str]:
     try:
         measurement = capture_stream_metrics(
@@ -161,12 +189,39 @@ def _execute_task(
             score = score_completion(task, measurement.response, timeout_seconds=timeout_seconds)
         else:
             score = score_completion(task, measurement.response)
-        record = endpoint_record(model, task, measurement, score.passed, score.reason)
+        record = endpoint_record(
+            model,
+            task,
+            measurement,
+            score.passed,
+            score.reason,
+            engine_provenance=engine_provenance,
+        )
         return record, ("passed" if score.passed else "failed"), ("passed" if score.passed else "failed")
     except ProviderError as exc:
-        return failure_record(model, task, str(exc), infra=True), "infra_failed", "infra-failed"
+        return (
+            failure_record(
+                model,
+                task,
+                str(exc),
+                infra=True,
+                engine_provenance=engine_provenance,
+            ),
+            "infra_failed",
+            "infra-failed",
+        )
     except Exception as exc:
-        return failure_record(model, task, f"scoring failed: {exc}", infra=False), "failed", "failed"
+        return (
+            failure_record(
+                model,
+                task,
+                f"scoring failed: {exc}",
+                infra=False,
+                engine_provenance=engine_provenance,
+            ),
+            "failed",
+            "failed",
+        )
 
 
 def _skip_done(
@@ -222,8 +277,10 @@ def endpoint_record(
     measurement: CompletionMeasurement,
     passed: bool | None,
     reason: str | None,
+    *,
+    engine_provenance: EngineProvenance | None = None,
 ) -> dict[str, object]:
-    return {
+    record: dict[str, object] = {
         "run_mode": "endpoint",
         "model": model.name,
         "provider_type": model.type,
@@ -253,6 +310,9 @@ def endpoint_record(
             "estimated": measurement.token_counts_estimated,
         },
     }
+    if engine_provenance is not None:
+        record["engine"] = engine_provenance.as_dict()
+    return record
 
 
 def failure_record(
@@ -261,8 +321,9 @@ def failure_record(
     reason: str,
     *,
     infra: bool,
+    engine_provenance: EngineProvenance | None = None,
 ) -> dict[str, object]:
-    return {
+    record: dict[str, object] = {
         "run_mode": "endpoint",
         "model": model.name,
         "provider_type": model.type,
@@ -274,6 +335,59 @@ def failure_record(
         "failure_type": "infra" if infra else "model",
         "cost_usd": 0.0,
     }
+    if engine_provenance is not None:
+        record["engine"] = engine_provenance.as_dict()
+    return record
+
+
+def _validate_required_provenance(
+    models: list[ModelConfig],
+    engines: Mapping[str, EngineProvenance],
+) -> None:
+    for model in models:
+        if model.inferencer is None:
+            continue
+        provenance = engines.get(model.name)
+        if provenance is None:
+            raise ValueError(
+                f"model '{model.name}' requires exact engine provenance for "
+                f"inferencer '{model.inferencer}'"
+            )
+        if provenance.name != model.inferencer:
+            raise ValueError(
+                f"model '{model.name}' declares inferencer '{model.inferencer}' but "
+                f"provenance identifies '{provenance.name}'"
+            )
+
+
+def _validate_resume_provenance(
+    result_path: Path,
+    models: list[ModelConfig],
+    engines: Mapping[str, EngineProvenance],
+) -> None:
+    metadata = next(
+        (record for record in read_jsonl(result_path) if record.get("record_type") == "metadata"),
+        None,
+    )
+    stored_models = metadata.get("models") if isinstance(metadata, dict) else None
+    for model in models:
+        expected = engines.get(model.name)
+        if expected is None:
+            continue
+        stored_model = stored_models.get(model.name) if isinstance(stored_models, dict) else None
+        stored_engine = stored_model.get("engine") if isinstance(stored_model, dict) else None
+        try:
+            actual = EngineProvenance.from_dict(stored_engine)
+        except EngineProvenanceError as exc:
+            raise ValueError(
+                f"cannot resume {result_path}: engine provenance does not match "
+                f"model '{model.name}' (legacy or missing provenance)"
+            ) from exc
+        if actual.fingerprint != expected.fingerprint:
+            raise ValueError(
+                f"cannot resume {result_path}: engine provenance does not match "
+                f"model '{model.name}' ({actual.label} != {expected.label})"
+            )
 
 
 def task_to_dict(task: BenchmarkTask) -> dict[str, object]:

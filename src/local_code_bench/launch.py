@@ -34,6 +34,11 @@ from uuid import uuid4
 
 from . import results, runner, tasks
 from .config import InferencerConfig, ModelConfig
+from .engine_provenance import (
+    EngineProvenance,
+    EngineProvenanceError,
+    capture_engine_provenance,
+)
 from .inferencers import manager
 from .inferencers.dashboard import (
     _GUI_BLOCK_MESSAGE,
@@ -79,11 +84,12 @@ class RunState:
     failed: int = 0
     last_event: str | None = None
     error: str | None = None
+    engine_provenance: EngineProvenance | None = None
 
     def serialize(self) -> dict[str, object]:
         """Project onto JSON-safe fields only (``result_file`` is a name, not a path)."""
 
-        return {
+        payload: dict[str, object] = {
             "run_id": self.id,
             "model": self.model,
             "inferencer": self.inferencer,
@@ -97,6 +103,9 @@ class RunState:
             "last_event": self.last_event,
             "error": self.error,
         }
+        if self.engine_provenance is not None:
+            payload["engine"] = self.engine_provenance.as_dict()
+        return payload
 
 
 class RunOrchestrator:
@@ -169,6 +178,18 @@ class RunOrchestrator:
                 self._active_run_id = None
             return start_code, start_payload
 
+        try:
+            engine_provenance = capture_engine_provenance(
+                inferencer,
+                self._models[model].base_url,
+                inferencer_config=self._inferencers[inferencer],
+                state_dir=self._state_dir,
+            )
+        except (EngineProvenanceError, InferencerError) as exc:
+            with self._lock:
+                self._active_run_id = None
+            return 502, {"error": str(exc)}
+
         result_path = results.new_run_path(self._results_dir)
         state = RunState(
             id=run_id,
@@ -176,6 +197,7 @@ class RunOrchestrator:
             inferencer=inferencer,
             suites=list(suites),
             result_file=result_path.name,
+            engine_provenance=engine_provenance,
         )
         self._runs[run_id] = state
         # Snapshot the accept payload before the background thread can advance the
@@ -287,6 +309,9 @@ class RunOrchestrator:
                     tasks=suite_tasks,
                     result_path=result_path,
                     progress=lambda message, s=state: self._on_progress(s, message),
+                    engine_provenance={model.name: state.engine_provenance}
+                    if state.engine_provenance is not None
+                    else None,
                 )
                 state.passed += summary.get("passed", 0)
                 state.failed += summary.get("failed", 0) + summary.get("infra_failed", 0)

@@ -27,4 +27,5 @@ agents:
     timeout_seconds: 600
     model: mlx-community/Qwen3.6-27B-4bit
     base_url: http://localhost:8080/v1
+    inferencer: mlx-lm
     url: https://github.com/QwenLM/qwen-code

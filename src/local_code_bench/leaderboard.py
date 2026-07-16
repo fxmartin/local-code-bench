@@ -6,6 +6,7 @@ from collections import defaultdict
 from pathlib import Path
 from statistics import median
 
+from local_code_bench.engine_provenance import engine_fingerprint, engine_label
 from local_code_bench.results import read_jsonl
 
 
@@ -20,32 +21,32 @@ def generate_leaderboard(result_paths: list[Path], output_path: Path) -> str:
         "",
         "## Endpoint Models",
         "",
-        "| Model | pass@1 | Median Latency | Prefill tok/s | Decode tok/s | $/task | Infra Failures |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        "| Model | Engine | pass@1 | Median Latency | Prefill tok/s | Decode tok/s | $/task | Infra Failures |",
+        "|---|---|---:|---:|---:|---:|---:|---:|",
     ]
-    lines.extend(endpoint or ["| _No endpoint records_ | | | | | | |"])
+    lines.extend(endpoint or ["| _No endpoint records_ | | | | | | | |"])
     lines.extend(
         [
             "",
             "## Agent Runs",
             "",
-            "| Agent | pass@1 | Median Wall Time | Sandbox | Failures | Cost / Tokens |",
-            "|---|---:|---:|---|---:|---|",
+            "| Agent | Engine | pass@1 | Median Wall Time | Sandbox | Failures | Cost / Tokens |",
+            "|---|---|---:|---:|---|---:|---|",
         ]
     )
-    lines.extend(agent or ["| _No agent records_ | | | | | |"])
+    lines.extend(agent or ["| _No agent records_ | | | | | | |"])
     content = "\n".join(lines) + "\n"
     output_path.write_text(content, encoding="utf-8")
     return content
 
 
 def _endpoint_rows(records: list[dict[str, object]]) -> list[str]:
-    grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
+    grouped: dict[tuple[str, object], list[dict[str, object]]] = defaultdict(list)
     for record in records:
         if record.get("run_mode") == "endpoint" and isinstance(record.get("model"), str):
-            grouped[str(record["model"])].append(record)
+            grouped[(str(record["model"]), engine_fingerprint(record.get("engine")))].append(record)
     rows = []
-    for model, items in grouped.items():
+    for (model, _engine), items in grouped.items():
         attempts = len(items)
         passed = sum(1 for item in items if item.get("passed") is True)
         latencies = [_metric(item, "latency_seconds") for item in items]
@@ -58,7 +59,8 @@ def _endpoint_rows(records: list[dict[str, object]]) -> list[str]:
                 passed / attempts if attempts else 0.0,
                 _median(latencies),
                 sum(costs) / attempts if attempts else 0.0,
-                f"| {model} | {passed}/{attempts} | {_fmt(_median(latencies))} | "
+                f"| {model} | {engine_label(items[0].get('engine'))} | {passed}/{attempts} | "
+                f"{_fmt(_median(latencies))} | "
                 f"{_fmt(_median(prefill))} | {_fmt(_median(decode))} | "
                 f"{sum(costs) / attempts if attempts else 0.0:.6f} | {infra} |",
             )
@@ -67,20 +69,21 @@ def _endpoint_rows(records: list[dict[str, object]]) -> list[str]:
 
 
 def _agent_rows(records: list[dict[str, object]]) -> list[str]:
-    grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
+    grouped: dict[tuple[str, object], list[dict[str, object]]] = defaultdict(list)
     for record in records:
         if record.get("run_mode") == "agent" and isinstance(record.get("agent"), str):
-            grouped[str(record["agent"])].append(record)
+            grouped[(str(record["agent"]), engine_fingerprint(record.get("engine")))].append(record)
     rows = []
-    for agent, items in grouped.items():
+    for (agent, _engine), items in grouped.items():
         attempts = len(items)
         passed = sum(1 for item in items if item.get("passed") is True)
         walls = [float(item["wall_time_seconds"]) for item in items if isinstance(item.get("wall_time_seconds"), int | float)]
         sandbox = str(items[0].get("sandbox_mode", "unknown"))
         failures = attempts - passed
         rows.append(
-            f"| {agent} | {passed}/{attempts} | {_fmt(_median(walls))} | "
-            f"{sandbox} | {failures} | {_agent_cost_or_tokens(items)} |"
+            f"| {agent} | {engine_label(items[0].get('engine'))} | {passed}/{attempts} | "
+            f"{_fmt(_median(walls))} | {sandbox} | {failures} | "
+            f"{_agent_cost_or_tokens(items)} |"
         )
     return rows
 
@@ -117,14 +120,28 @@ def _fmt_int(value: float) -> str:
 
 
 def _dedupe_latest(records: list[dict[str, object]]) -> list[dict[str, object]]:
-    latest: dict[tuple[str, str, str], dict[str, object]] = {}
+    latest: dict[tuple[str, str, object, str], dict[str, object]] = {}
     passthrough: list[dict[str, object]] = []
     for record in records:
         run_mode = record.get("run_mode")
         if run_mode == "endpoint" and isinstance(record.get("model"), str) and isinstance(record.get("task_id"), str):
-            latest[("endpoint", str(record["model"]), str(record["task_id"]))] = record
+            latest[
+                (
+                    "endpoint",
+                    str(record["model"]),
+                    engine_fingerprint(record.get("engine")),
+                    str(record["task_id"]),
+                )
+            ] = record
         elif run_mode == "agent" and isinstance(record.get("agent"), str) and isinstance(record.get("task_id"), str):
-            latest[("agent", str(record["agent"]), str(record["task_id"]))] = record
+            latest[
+                (
+                    "agent",
+                    str(record["agent"]),
+                    engine_fingerprint(record.get("engine")),
+                    str(record["task_id"]),
+                )
+            ] = record
         elif record.get("record_type") != "metadata":
             passthrough.append(record)
     return [*latest.values(), *passthrough]

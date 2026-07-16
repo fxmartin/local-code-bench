@@ -79,7 +79,7 @@ def cost_quality_points(
     points: list[ChartPoint] = []
     omitted: list[OmittedPoint] = []
     for model in models:
-        label = _label(model.model, model.suite)
+        label = _label(model.model, model.suite, model.engine_label)
         if model.attempts <= 0:
             omitted.append(OmittedPoint(label, "no attempts recorded"))
             continue
@@ -95,7 +95,7 @@ def quality_speed_points(
     points: list[ChartPoint] = []
     omitted: list[OmittedPoint] = []
     for model in models:
-        label = _label(model.model, model.suite)
+        label = _label(model.model, model.suite, model.engine_label)
         speed = model.median_prefill_tokens_per_second
         if model.attempts <= 0 or speed is None:
             omitted.append(OmittedPoint(label, "missing prefill throughput"))
@@ -112,11 +112,12 @@ def sweep_series(
     series: dict[str, list[ChartPoint]] = {}
     omitted: list[OmittedPoint] = []
     for point in points:
-        label = f"{point.model} @ {point.context_tokens:,}"
+        series_label = _label(point.model, None, point.engine_label)
+        label = f"{series_label} @ {point.context_tokens:,}"
         if point.prefill_tokens_per_second is None:
             omitted.append(OmittedPoint(label, "missing prefill throughput"))
             continue
-        series.setdefault(point.model, []).append(
+        series.setdefault(series_label, []).append(
             ChartPoint(label, float(point.context_tokens), point.prefill_tokens_per_second)
         )
     for plotted in series.values():
@@ -311,8 +312,9 @@ def _omitted_note(omitted: list[OmittedPoint]) -> str:
 # --------------------------------------------------------------------------- #
 
 
-def _label(model: str, suite: str | None) -> str:
-    return f"{model} · {suite}" if suite else model
+def _label(model: str, suite: str | None, engine: str) -> str:
+    label = f"{model} · {suite}" if suite else model
+    return f"{label} · {engine}" if engine != "unknown (legacy)" else label
 
 
 def _bounds(values: list[float]) -> tuple[float, float]:
