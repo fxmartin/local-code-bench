@@ -22,6 +22,17 @@ def test_run_in_sandbox_blocks_outside_write(tmp_path) -> None:
     assert not (tmp_path / "escape.txt").exists()
 
 
+def test_run_in_sandbox_allows_write_inside_workspace() -> None:
+    result = run_in_sandbox(
+        "with open('output.txt', 'w', encoding='utf-8') as handle:\n"
+        "    handle.write('safe')",
+        "with open('output.txt', encoding='utf-8') as handle:\n"
+        "    assert handle.read() == 'safe'",
+    )
+
+    assert result.passed is True
+
+
 def test_run_in_sandbox_blocks_network_socket() -> None:
     result = run_in_sandbox(
         "import socket\nsocket.socket()",
