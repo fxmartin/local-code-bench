@@ -200,31 +200,45 @@ def test_run_endpoint_suite_defaults_max_tokens_cap(tmp_path, monkeypatch) -> No
     assert provider.max_tokens == [1024]
 
 
-def test_run_endpoint_suite_warmup_sends_discarded_request(tmp_path, monkeypatch) -> None:
-    provider = RecordingProvider()
-    monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: provider)
+def test_run_endpoint_suite_warmup_only_sends_discarded_request_to_local_models(
+    tmp_path, monkeypatch
+) -> None:
+    providers = {"cloud": RecordingProvider(), "local": RecordingProvider()}
+    monkeypatch.setattr(
+        "local_code_bench.runner.provider_for_model", lambda selected: providers[selected.name]
+    )
+    local_provenance = EngineProvenance(
+        name="ollama",
+        versions={"ollama": "0.32.0"},
+        capture_method="live-api",
+    )
 
-    summary = run_endpoint_suite(
-        models=[model("a")],
+    run_endpoint_suite(
+        models=[model("cloud"), model("local", inferencer="ollama")],
         tasks=[task()],
         result_path=tmp_path / "run.jsonl",
         warmup=True,
+        engine_provenance={"local": local_provenance},
     )
 
-    # First call is the discarded warmup (max_tokens=1), then the real task.
-    assert provider.max_tokens == [1, 1024]
-    # The warmup is not scored: still exactly one task recorded.
-    assert summary["passed"] == 1
+    assert providers["cloud"].max_tokens == [1024]
+    assert providers["local"].max_tokens == [1, 1024]
 
 
 def test_run_endpoint_suite_warmup_errors_do_not_abort(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: FailingProvider())
+    local_provenance = EngineProvenance(
+        name="ollama",
+        versions={"ollama": "0.32.0"},
+        capture_method="live-api",
+    )
 
     summary = run_endpoint_suite(
-        models=[model("a")],
+        models=[model("local", inferencer="ollama")],
         tasks=[task()],
         result_path=tmp_path / "run.jsonl",
         warmup=True,
+        engine_provenance={"local": local_provenance},
     )
 
     # Warmup failure is swallowed; the real task still runs and is recorded.

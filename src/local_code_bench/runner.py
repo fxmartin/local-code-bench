@@ -104,7 +104,11 @@ def run_endpoint_suite(
                 state.emit(model.name, task.task_id, "infra-failed")
             continue
 
-        if warmup and any((model.name, task.task_id) not in done for task in task_list):
+        if (
+            warmup
+            and model.inferencer is not None
+            and any((model.name, task.task_id) not in done for task in task_list)
+        ):
             _warmup_provider(provider, model.name, progress)
 
         concurrency = _resolve_concurrency(model, concurrency_override)
