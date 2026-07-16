@@ -162,16 +162,24 @@ reference on every base and plus input, with float tolerance from each task's
 calls. A candidate that is right on the base inputs but wrong on a plus input
 fails, which is the entire point of the plus sets.
 
-The release file is not auto-downloaded, because the URL and version move and the
-file is large. Place `HumanEvalPlus.jsonl(.gz)` or `MbppPlus.jsonl(.gz)` in the
-cache dir (the names in `EVALPLUS_FILENAMES`), for example by exporting from the
-`evalplus` package:
+The release files are not auto-downloaded because their URLs and versions move. Place
+`HumanEvalPlus.jsonl(.gz)` and `MbppPlus.jsonl(.gz)` in the cache dir (the names in
+`EVALPLUS_FILENAMES`). Download pinned raw releases so benchmark provenance is stable:
 
 ```bash
-pip install evalplus
-python -c "from evalplus.data import get_human_eval_plus, write_jsonl; \
-write_jsonl('.cache/benchmarks/HumanEvalPlus.jsonl', list(get_human_eval_plus().values()))"
+mkdir -p .cache/benchmarks
+curl -fL --retry 3 \
+  https://github.com/evalplus/humanevalplus_release/releases/download/v0.1.10/HumanEvalPlus.jsonl.gz \
+  -o .cache/benchmarks/HumanEvalPlus.jsonl.gz
+curl -fL --retry 3 \
+  https://github.com/evalplus/mbppplus_release/releases/download/v0.2.0/MbppPlus.jsonl.gz \
+  -o .cache/benchmarks/MbppPlus.jsonl.gz
 ```
+
+Do not load and re-export `get_mbpp_plus()`. EvalPlus restores JSON-encoded tuples,
+sets, and complex numbers in memory, after which its generic JSON writer cannot
+serialize the dataset. The harness applies the same type restoration when it loads
+the official raw MBPP+ release.
 
 Plus-input sets are large, so the per-task sandbox timeout is tunable with
 `--timeout` (default 5s). Raise it if tasks start timing out.
@@ -207,11 +215,10 @@ costlier, occasionally flaky runs that come with it.
 
 What was validated offline: the differential engine itself, against synthetic
 records run through the real sandbox, confirming it passes a correct solution,
-fails one that is wrong only on a plus input, and honors float tolerance. What
-still needs live verification on FX's machine: that the fields in the downloaded
-EvalPlus release match the loader's expected names (`task_id`, `entry_point`,
-`prompt`, `canonical_solution`, `base_input`, `plus_input`, `atol`) for the
-installed version, and that full-scale runs complete within the chosen timeout.
+fails one that is wrong only on a plus input, honors float tolerance, and restores
+the tuple, set/dict, and complex input types encoded by the official MBPP+ release.
+Full-scale runtime within the chosen timeout still needs live verification on FX's
+machine.
 
 ## Keeping Quality Runs Small: Anchor Subsets
 

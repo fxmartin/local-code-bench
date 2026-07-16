@@ -67,10 +67,12 @@ models:
     concurrency: 1
     # Declares the engine `--manage-inferencers` auto-starts (port 8080 = mlx-lm).
     inferencer: mlx-lm
-    # Qwen3.6 reasons inline (in code comments) and can overrun the 1024 default,
-    # truncating the solution. 2048 gives it room. To go faster instead, try
-    # disabling thinking via extra_body if the MLX server honors it.
+    # Keep endpoint scoring focused on the submitted code. In thinking mode this
+    # model spends the full budget narrating drafts and may truncate the final block.
     max_tokens: 2048
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
     price_per_1k_tokens:
       input: 0.0
       output: 0.0

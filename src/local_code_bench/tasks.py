@@ -28,6 +28,39 @@ EVALPLUS_FILENAMES: dict[str, tuple[str, ...]] = {
     "mbpp-plus": ("MbppPlus.jsonl.gz", "MbppPlus.jsonl"),
 }
 
+_MBPP_TUPLE_EACH_ARGUMENT = frozenset(
+    {
+        2,
+        116,
+        132,
+        143,
+        222,
+        261,
+        273,
+        394,
+        399,
+        421,
+        424,
+        429,
+        470,
+        560,
+        579,
+        596,
+        616,
+        630,
+        726,
+        740,
+        744,
+        809,
+    }
+)
+_MBPP_NESTED_TUPLES = frozenset(
+    {63, 64, 70, 94, 120, 237, 272, 299, 400, 409, 417, 438, 473, 614, 780}
+)
+_MBPP_TUPLE_FIRST_ARGUMENT = frozenset({250, 405, 446, 617, 720, 763, 808})
+_MBPP_DEEPLY_NESTED_TUPLES = frozenset({259, 401, 445})
+_MBPP_RECURSIVE_TUPLES = frozenset({580, 615, 791})
+
 
 # Hand-curated anchor subset: a fixed, deterministic spread of HumanEval tasks
 # used by the `canary` suite for a fast "still usable?" quality signal instead of
@@ -142,6 +175,8 @@ def _parse_evalplus(row: Any, name: str, index: int, max_inputs: int | None) -> 
     if not isinstance(base_inputs, list) or not isinstance(plus_inputs, list):
         raise TaskLoadError(f"{name} task {task_id} base_input/plus_input must be lists")
     inputs = [*base_inputs, *plus_inputs]
+    if name == "mbpp-plus":
+        inputs = _deserialize_mbpp_inputs(task_id, inputs)
     if max_inputs is not None:
         inputs = inputs[:max_inputs]
     if not inputs:
@@ -157,6 +192,66 @@ def _parse_evalplus(row: Any, name: str, index: int, max_inputs: int | None) -> 
         inputs=inputs,
         atol=atol,
     )
+
+
+def _deserialize_mbpp_inputs(task_id: str, inputs: list[Any]) -> list[Any]:
+    """Restore the non-JSON input types encoded by the official MBPP+ release."""
+
+    try:
+        number = int(task_id.rsplit("/", 1)[-1])
+    except ValueError as exc:
+        raise TaskLoadError(f"mbpp-plus task has invalid task_id {task_id!r}") from exc
+
+    if number in _MBPP_TUPLE_EACH_ARGUMENT:
+        return [[tuple(value) for value in arguments] for arguments in inputs]
+    if number in _MBPP_NESTED_TUPLES:
+        return [
+            [[tuple(value) for value in nested] for nested in arguments]
+            for arguments in inputs
+        ]
+    if number in {75, 413, 444, 753}:
+        return [[[tuple(value) for value in arguments[0]], arguments[1]] for arguments in inputs]
+    if number in {106, 750}:
+        return [[arguments[0], tuple(arguments[1])] for arguments in inputs]
+    if number == 115:
+        return [
+            [[set(value) if isinstance(value, list) and value else {} for value in arguments[0]]]
+            for arguments in inputs
+        ]
+    if number == 124:
+        return [(float(arguments[0]), complex(arguments[1])) for arguments in inputs]
+    if number in _MBPP_TUPLE_FIRST_ARGUMENT:
+        return [[tuple(arguments[0]), arguments[1]] for arguments in inputs]
+    if number in _MBPP_DEEPLY_NESTED_TUPLES:
+        nested = [
+            [[tuple(value) for value in group] for group in arguments]
+            for arguments in inputs
+        ]
+        return [[tuple(value) for value in arguments] for arguments in nested]
+    if number == 278:
+        nested = [
+            [[tuple(value) if isinstance(value, list) else value for value in arguments[0]]]
+            for arguments in inputs
+        ]
+        return [[tuple(value) for value in arguments] for arguments in nested]
+    if number == 307:
+        return [[tuple(arguments[0]), arguments[1], arguments[2]] for arguments in inputs]
+    if number == 722:
+        return [
+            [{key: tuple(value) for key, value in arguments[0].items()}, *arguments[1:]]
+            for arguments in inputs
+        ]
+    if number == 252:
+        return [[complex(arguments[0])] for arguments in inputs]
+    if number in _MBPP_RECURSIVE_TUPLES:
+        return [_lists_to_tuples(arguments) for arguments in inputs]
+    return inputs
+
+
+def _lists_to_tuples(value: Any) -> Any:
+    if isinstance(value, list):
+        return tuple(_lists_to_tuples(item) for item in value)
+    return value
 
 
 def build_evalplus_task(

@@ -64,6 +64,53 @@ def test_extract_code_supports_unlabeled_fence_with_function() -> None:
     )
 
 
+def test_extract_code_prefers_last_python_fence() -> None:
+    response = """Draft:
+```python
+def answer():
+    return "draft"
+```
+
+Final:
+```python
+def answer():
+    return "final"
+```
+"""
+
+    assert extract_code(response) == 'def answer():\n    return "final"'
+
+
+def test_extract_code_dedents_markdown_nested_fence() -> None:
+    response = """1. Final implementation:
+   ```python
+   from typing import List
+
+   def first(values: List[int]) -> int:
+       return values[0]
+   ```
+"""
+
+    assert extract_code(response) == (
+        "from typing import List\n\ndef first(values: List[int]) -> int:\n    return values[0]"
+    )
+
+
+def test_extract_code_ignores_truncated_final_fence() -> None:
+    response = """Complete implementation:
+```python
+def answer():
+    return 42
+```
+
+Repeated but truncated:
+```python
+def answer(
+"""
+
+    assert extract_code(response) == "def answer():\n    return 42"
+
+
 def test_extract_code_returns_empty_when_no_code_block_matches() -> None:
     assert extract_code("```text\nnot code\n```") == ""
 

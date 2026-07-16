@@ -104,15 +104,23 @@ For a stronger quality signal, the EvalPlus suites (`humaneval-plus`, `mbpp-plus
 score each task by differential testing: the candidate is run against the EvalPlus
 canonical solution across the union of base and plus inputs, which catches
 wrong-but-passing solutions that the vanilla suites accept. The EvalPlus release
-file is not auto-downloaded; place it in the cache dir first:
+files are not auto-downloaded; place the pinned raw releases in the cache dir first:
 
 ```bash
-pip install evalplus
-python -c "from evalplus.data import get_human_eval_plus, write_jsonl; \
-write_jsonl('.cache/benchmarks/HumanEvalPlus.jsonl', list(get_human_eval_plus().values()))"
+mkdir -p .cache/benchmarks
+curl -fL --retry 3 \
+  https://github.com/evalplus/humanevalplus_release/releases/download/v0.1.10/HumanEvalPlus.jsonl.gz \
+  -o .cache/benchmarks/HumanEvalPlus.jsonl.gz
+curl -fL --retry 3 \
+  https://github.com/evalplus/mbppplus_release/releases/download/v0.2.0/MbppPlus.jsonl.gz \
+  -o .cache/benchmarks/MbppPlus.jsonl.gz
 
 uv run bench --suite humaneval-plus --model openrouter-glm-4.6 --timeout 30
 ```
+
+Use the raw MBPP+ release rather than re-exporting `get_mbpp_plus()`: EvalPlus restores
+tuples, sets, and complex numbers in memory, and those values are not JSON-serializable.
+The harness performs the same restoration while loading the raw release.
 
 Plus-input sets are large, so raise `--timeout` (per-task sandbox scoring timeout,
 default 5s) if tasks start timing out.
