@@ -87,6 +87,8 @@ models:
     # Declares the engine `--manage-inferencers` auto-starts (port 11434 = ollama).
     inferencer: ollama
     max_tokens: 2048
+    extra_body:
+      reasoning_effort: none
     price_per_1k_tokens:
       input: 0.0
       output: 0.0
