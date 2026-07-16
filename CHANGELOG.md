@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.52.2 (2026-07-16)
+
+### Bug Fixes
+
+- Serve local shelf models and repair macOS sandbox
+  ([#69](https://github.com/fxmartin/local-code-bench/pull/69),
+  [`261b776`](https://github.com/fxmartin/local-code-bench/commit/261b77621f6d6f2ec7854e8a367f1ebfc6993547))
+
+
 ## v0.52.1 (2026-07-16)
 
 ### Bug Fixes
