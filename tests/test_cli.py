@@ -365,6 +365,7 @@ def test_unified_dashboard_command_invokes_server(monkeypatch) -> None:
         host,
         port,
         progress,
+        dashboard_state_file,
     ) -> None:
         captured.update(
             config=config,
@@ -375,6 +376,7 @@ def test_unified_dashboard_command_invokes_server(monkeypatch) -> None:
             suites_path=suites_path,
             host=host,
             port=port,
+            dashboard_state_file=dashboard_state_file,
         )
 
     monkeypatch.setattr("local_code_bench.unified_dashboard.serve_dashboard", fake_serve)
@@ -392,6 +394,7 @@ def test_unified_dashboard_command_invokes_server(monkeypatch) -> None:
     assert captured["models_path"] == "custom/models.yaml"
     assert captured["host"] == "127.0.0.1"
     assert captured["result_paths"] == [Path("results/a.jsonl")]
+    assert captured["dashboard_state_file"] == Path(".runtime/dashboard.json")
     # the Run launcher's suite catalog falls back to the default registry; the live
     # monitor + auto-refresh read the results dir
     assert captured["suites_path"] == "configs/suites.yaml"
@@ -405,7 +408,8 @@ def test_unified_dashboard_discovers_results_dir(monkeypatch, tmp_path) -> None:
     captured: dict = {}
 
     def fake_serve(
-        config, state_dir, result_paths, *, models_path, results_dir, suites_path, host, port, progress
+        config, state_dir, result_paths, *, models_path, results_dir, suites_path, host, port,
+        progress, dashboard_state_file
     ) -> None:
         captured["result_paths"] = result_paths
 
@@ -421,7 +425,8 @@ def test_unified_dashboard_missing_results_dir_yields_no_inputs(monkeypatch, tmp
     captured: dict = {}
 
     def fake_serve(
-        config, state_dir, result_paths, *, models_path, results_dir, suites_path, host, port, progress
+        config, state_dir, result_paths, *, models_path, results_dir, suites_path, host, port,
+        progress, dashboard_state_file
     ) -> None:
         captured["result_paths"] = result_paths
 
@@ -445,6 +450,39 @@ def test_unified_dashboard_config_error_exits_2(monkeypatch, capsys) -> None:
 
     assert exit_code == 2
     assert "bench: error:" in capsys.readouterr().err
+
+
+def test_unified_dashboard_stop_uses_state_file(monkeypatch, tmp_path, capsys) -> None:
+    state_file = tmp_path / "dashboard.json"
+    seen: list[Path] = []
+    monkeypatch.setattr(
+        "local_code_bench.dashboard_lifecycle.stop_dashboard",
+        lambda path: seen.append(Path(path))
+        or type("Status", (), {"pid": 42, "detail": "dashboard stopped"})(),
+    )
+
+    exit_code = main(["dashboard", "--stop", "--state-file", str(state_file)])
+
+    assert exit_code == 0
+    assert seen == [state_file]
+    assert "dashboard stopped pid=42" in capsys.readouterr().out
+
+
+def test_unified_dashboard_status_reports_url(monkeypatch, tmp_path, capsys) -> None:
+    state_file = tmp_path / "dashboard.json"
+    monkeypatch.setattr(
+        "local_code_bench.dashboard_lifecycle.dashboard_status",
+        lambda path: type(
+            "Status",
+            (),
+            {"running": True, "pid": 42, "url": "http://127.0.0.1:8765", "detail": "running"},
+        )(),
+    )
+
+    exit_code = main(["dashboard", "--status", "--state-file", str(state_file)])
+
+    assert exit_code == 0
+    assert "dashboard running pid=42 url=http://127.0.0.1:8765" in capsys.readouterr().out
 
 
 # --- dashboard mode ----------------------------------------------------------

@@ -26,13 +26,15 @@ import json
 import re
 import shutil
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from . import chat
+from . import dashboard_lifecycle
 from . import dashboard_server as results_panel
 from . import launch
 from .config import (
@@ -874,6 +876,7 @@ def serve_dashboard(
     host: str = "127.0.0.1",
     port: int = 8765,
     progress: Callable[[str], None] | None = None,
+    dashboard_state_file: str | Path | None = None,
 ) -> None:
     """Load the inferencer + model registries and serve the unified dashboard.
 
@@ -885,37 +888,52 @@ def serve_dashboard(
     taking the rest of the dashboard down.
     """
 
-    configs = load_inferencers(config_path)
-    models = _load_models_safe(models_path, progress)
-    external_cfg, autotier_cfg = _load_tier_configs_safe(config_path, progress)
-    orchestrator = launch.RunOrchestrator(
-        models=models,
-        inferencers=configs,
-        state_dir=state_dir,
-        results_dir=results_dir,
-        cache_dir=cache_dir,
+    lifecycle = (
+        dashboard_lifecycle.dashboard_process(
+            dashboard_state_file,
+            host=host,
+            port=port,
+        )
+        if dashboard_state_file is not None
+        else _null_dashboard_process()
     )
-    ctx = DashboardContext(
-        configs=configs,
-        state_dir=state_dir,
-        result_paths=list(result_paths),
-        models=models,
-        orchestrator=orchestrator,
-        cache_dir=cache_dir,
-        suites_path=suites_path,
-        results_dir=results_dir,
-        external_cfg=external_cfg,
-        autotier_cfg=autotier_cfg,
-    )
-    server = make_server(ctx, host=host, port=port)
-    if progress is not None:
-        progress(f"unified dashboard on http://{host}:{port} (Ctrl-C to stop)")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
+    with lifecycle:
+        configs = load_inferencers(config_path)
+        models = _load_models_safe(models_path, progress)
+        external_cfg, autotier_cfg = _load_tier_configs_safe(config_path, progress)
+        orchestrator = launch.RunOrchestrator(
+            models=models,
+            inferencers=configs,
+            state_dir=state_dir,
+            results_dir=results_dir,
+            cache_dir=cache_dir,
+        )
+        ctx = DashboardContext(
+            configs=configs,
+            state_dir=state_dir,
+            result_paths=list(result_paths),
+            models=models,
+            orchestrator=orchestrator,
+            cache_dir=cache_dir,
+            suites_path=suites_path,
+            results_dir=results_dir,
+            external_cfg=external_cfg,
+            autotier_cfg=autotier_cfg,
+        )
+        server = make_server(ctx, host=host, port=port)
+        if progress is not None:
+            progress(f"unified dashboard on http://{host}:{port} (Ctrl-C to stop)")
+        try:
+            server.serve_forever()
+        except (KeyboardInterrupt, dashboard_lifecycle.DashboardTermination):
+            pass
+        finally:
+            server.server_close()
+
+
+@contextmanager
+def _null_dashboard_process() -> Iterator[None]:
+    yield
 
 
 def _load_models_safe(

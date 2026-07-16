@@ -338,6 +338,23 @@ def build_parser() -> argparse.ArgumentParser:
         default=8765,
         help="dashboard bind port",
     )
+    lifecycle = dashboard.add_mutually_exclusive_group()
+    lifecycle.add_argument(
+        "--stop",
+        action="store_true",
+        help="gracefully stop the recorded dashboard process",
+    )
+    lifecycle.add_argument(
+        "--status",
+        action="store_true",
+        help="report whether the dashboard is running",
+    )
+    dashboard.add_argument(
+        "--state-file",
+        type=Path,
+        default=Path(".runtime/dashboard.json"),
+        help="dashboard PID/state file",
+    )
 
     opencode = subparsers.add_parser(
         "opencode",
@@ -666,9 +683,24 @@ def run_unified_dashboard_command(args: argparse.Namespace) -> int:
     surface as ``bench: error: ...`` on stderr with exit 2, like the rest of the CLI.
     """
 
+    from local_code_bench import dashboard_lifecycle
     from local_code_bench.unified_dashboard import serve_dashboard
 
     try:
+        if args.stop:
+            status = dashboard_lifecycle.stop_dashboard(args.state_file)
+            if status.detail == "dashboard stopped":
+                print(f"dashboard stopped pid={status.pid}")
+            else:
+                print(f"dashboard not running ({status.detail})")
+            return 0
+        if args.status:
+            status = dashboard_lifecycle.dashboard_status(args.state_file)
+            if status.running:
+                print(f"dashboard running pid={status.pid} url={status.url}")
+            else:
+                print(f"dashboard not running ({status.detail})")
+            return 0
         serve_dashboard(
             args.config,
             args.state_dir,
@@ -679,8 +711,13 @@ def run_unified_dashboard_command(args: argparse.Namespace) -> int:
             host=args.host,
             port=args.port,
             progress=lambda message: print(message, flush=True),
+            dashboard_state_file=args.state_file,
         )
-    except (ConfigError, InferencerError) as exc:
+    except (
+        ConfigError,
+        InferencerError,
+        dashboard_lifecycle.DashboardLifecycleError,
+    ) as exc:
         print(f"bench: error: {exc}", file=sys.stderr)
         return 2
     return 0
