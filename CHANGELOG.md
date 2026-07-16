@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.53.0 (2026-07-16)
+
+### Features
+
+- Record inference engine provenance
+  ([`0c6e5b9`](https://github.com/fxmartin/local-code-bench/commit/0c6e5b9c1d96ac361e2e5f66b069878a6643fccd))
+
+
 ## v0.52.3 (2026-07-16)
 
 ### Bug Fixes
