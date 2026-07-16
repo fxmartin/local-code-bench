@@ -9,9 +9,10 @@ from pathlib import Path
 from local_code_bench.config import ModelConfig
 from local_code_bench.engine_provenance import (
     EngineProvenance,
-    engine_fingerprint,
-    engine_label,
+    backend_fingerprint,
+    backend_label,
 )
+from local_code_bench.endpoint_provenance import endpoint_provider_name
 from local_code_bench.metrics import estimate_tokens
 from local_code_bench.metrics import capture_stream_metrics
 from local_code_bench.provider import ChatRequest, provider_for_model
@@ -72,6 +73,9 @@ def run_sweep(
             }
             if provenance is not None:
                 record["engine"] = provenance.as_dict()
+            provider_name = endpoint_provider_name(model)
+            if provider_name is not None:
+                record["endpoint_provider"] = provider_name
             append_jsonl(result_path, record)
             count += 1
     return {"sweeps": count}
@@ -87,8 +91,10 @@ def summarize_sweep(records: list[dict[str, object]]) -> str:
             grouped[
                 (
                     model,
-                    engine_fingerprint(record.get("engine")),
-                    engine_label(record.get("engine")),
+                    backend_fingerprint(
+                        record.get("engine"), record.get("endpoint_provider")
+                    ),
+                    backend_label(record.get("engine"), record.get("endpoint_provider")),
                 )
             ].append(
                 (

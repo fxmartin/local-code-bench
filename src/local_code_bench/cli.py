@@ -27,6 +27,7 @@ from local_code_bench.engine_provenance import (
     EngineProvenanceError,
     capture_engine_provenance,
 )
+from local_code_bench.endpoint_provenance import endpoint_provider_name
 from local_code_bench.inferencers import autotier, detect, manager
 from local_code_bench.inferencers.external import check_availability
 from local_code_bench.inferencers.inventory import (
@@ -132,7 +133,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--warmup",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="send a discarded warmup request per model before timing (avoids cold-start skew)",
+        help="send a discarded warmup request per local model before timing",
     )
     parser.add_argument(
         "--power",
@@ -1482,6 +1483,9 @@ def run_single_prompt(
     }
     if engine_provenance is not None:
         record["engine"] = engine_provenance.as_dict()
+    provider_name = endpoint_provider_name(model)
+    if provider_name is not None:
+        record["endpoint_provider"] = provider_name
     append_jsonl(result_path, record)
     return result_path, measurement
 

@@ -24,9 +24,9 @@ from statistics import median
 
 from local_code_bench.engine_provenance import (
     EngineFingerprint,
+    backend_fingerprint,
+    backend_label,
     engine_capture_method,
-    engine_fingerprint,
-    engine_label,
 )
 
 RAW_RESPONSE_PREVIEW_LIMIT = 512
@@ -306,7 +306,7 @@ def build_run_summary(source: str, records: Sequence[object]) -> RunSummary:
                 str(mode),
                 actor,
                 suite_value,
-                engine_fingerprint(record.get("engine")),
+                backend_fingerprint(record.get("engine"), record.get("endpoint_provider")),
                 task_id,
             )
         ] = record
@@ -314,7 +314,12 @@ def build_run_summary(source: str, records: Sequence[object]) -> RunSummary:
     items = list(deduped.values())
     models = sorted({str(item["model"]) for item in items if item.get("run_mode") == "endpoint"})
     agents = sorted({str(item["agent"]) for item in items if item.get("run_mode") == "agent"})
-    engines = sorted({engine_label(item.get("engine")) for item in items})
+    engines = sorted(
+        {
+            backend_label(item.get("engine"), item.get("endpoint_provider"))
+            for item in items
+        }
+    )
     suites = sorted({str(item["suite"]) for item in items if isinstance(item.get("suite"), str)})
     task_count = len(items)
     passed = sum(1 for item in items if item.get("passed") is True)
@@ -368,7 +373,13 @@ def _ingest_keyed(
     suite = record.get("suite")
     suite_value = suite if isinstance(suite, str) else None
     # Latest record per (actor, suite, engine, task_id) wins.
-    target[(actor, suite_value, engine_fingerprint(record.get("engine")))][task_id] = record
+    target[
+        (
+            actor,
+            suite_value,
+            backend_fingerprint(record.get("engine"), record.get("endpoint_provider")),
+        )
+    ][task_id] = record
 
 
 def _ingest_sweep(
@@ -386,7 +397,13 @@ def _ingest_sweep(
             )
         )
         return
-    target[(model, engine_fingerprint(record.get("engine")), context)] = record
+    target[
+        (
+            model,
+            backend_fingerprint(record.get("engine"), record.get("endpoint_provider")),
+            context,
+        )
+    ] = record
 
 
 def _endpoint_aggregate(
@@ -406,7 +423,9 @@ def _endpoint_aggregate(
     tasks = tuple(_endpoint_task(item) for item in items)
     return EndpointModelAggregate(
         model=model,
-        engine_label=engine_label(items[0].get("engine")),
+        engine_label=backend_label(
+            items[0].get("engine"), items[0].get("endpoint_provider")
+        ),
         engine_capture_method=engine_capture_method(items[0].get("engine")),
         suite=suite,
         run_mode="endpoint",
@@ -465,7 +484,9 @@ def _agent_aggregate(
     tasks = tuple(_agent_task(item) for item in items)
     return AgentAggregate(
         agent=name,
-        engine_label=engine_label(items[0].get("engine")),
+        engine_label=backend_label(
+            items[0].get("engine"), items[0].get("endpoint_provider")
+        ),
         engine_capture_method=engine_capture_method(items[0].get("engine")),
         suite=suite,
         run_mode="agent",
@@ -497,7 +518,7 @@ def _sweep_point(record: dict[str, object]) -> SweepPoint:
     context = record.get("context_tokens")
     return SweepPoint(
         model=str(record.get("model")),
-        engine_label=engine_label(record.get("engine")),
+        engine_label=backend_label(record.get("engine"), record.get("endpoint_provider")),
         engine_capture_method=engine_capture_method(record.get("engine")),
         context_tokens=context if isinstance(context, int) else 0,  # validated during ingest
         ttft_seconds=_metric(record, "ttft_seconds"),

@@ -48,6 +48,22 @@ models:
     price_per_1k_tokens:
       input: 0.00057
       output: 0.00230
+  - name: openrouter-qwen3.6-27b
+    type: openai
+    base_url: https://openrouter.ai/api/v1
+    model_id: qwen/qwen3.6-27b
+    # Canonical OpenRouter snapshot and catalog prices verified 2026-07-16.
+    pinned_revision: qwen/qwen3.6-27b-20260422
+    api_key_env: OPENROUTER_API_KEY
+    concurrency: 10
+    max_tokens: 2048
+    # Keep the cloud baseline aligned with the non-thinking local Qwen runs.
+    extra_body:
+      reasoning:
+        enabled: false
+    price_per_1k_tokens:
+      input: 0.00045
+      output: 0.00270
   - name: anthropic-claude-baseline
     type: anthropic
     base_url: https://api.anthropic.com/v1

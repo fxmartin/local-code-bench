@@ -6,7 +6,7 @@ from collections import defaultdict
 from pathlib import Path
 from statistics import median
 
-from local_code_bench.engine_provenance import engine_fingerprint, engine_label
+from local_code_bench.engine_provenance import backend_fingerprint, backend_label
 from local_code_bench.results import read_jsonl
 
 
@@ -44,7 +44,14 @@ def _endpoint_rows(records: list[dict[str, object]]) -> list[str]:
     grouped: dict[tuple[str, object], list[dict[str, object]]] = defaultdict(list)
     for record in records:
         if record.get("run_mode") == "endpoint" and isinstance(record.get("model"), str):
-            grouped[(str(record["model"]), engine_fingerprint(record.get("engine")))].append(record)
+            grouped[
+                (
+                    str(record["model"]),
+                    backend_fingerprint(
+                        record.get("engine"), record.get("endpoint_provider")
+                    ),
+                )
+            ].append(record)
     rows = []
     for (model, _engine), items in grouped.items():
         attempts = len(items)
@@ -59,7 +66,7 @@ def _endpoint_rows(records: list[dict[str, object]]) -> list[str]:
                 passed / attempts if attempts else 0.0,
                 _median(latencies),
                 sum(costs) / attempts if attempts else 0.0,
-                f"| {model} | {engine_label(items[0].get('engine'))} | {passed}/{attempts} | "
+                f"| {model} | {backend_label(items[0].get('engine'), items[0].get('endpoint_provider'))} | {passed}/{attempts} | "
                 f"{_fmt(_median(latencies))} | "
                 f"{_fmt(_median(prefill))} | {_fmt(_median(decode))} | "
                 f"{sum(costs) / attempts if attempts else 0.0:.6f} | {infra} |",
@@ -72,7 +79,14 @@ def _agent_rows(records: list[dict[str, object]]) -> list[str]:
     grouped: dict[tuple[str, object], list[dict[str, object]]] = defaultdict(list)
     for record in records:
         if record.get("run_mode") == "agent" and isinstance(record.get("agent"), str):
-            grouped[(str(record["agent"]), engine_fingerprint(record.get("engine")))].append(record)
+            grouped[
+                (
+                    str(record["agent"]),
+                    backend_fingerprint(
+                        record.get("engine"), record.get("endpoint_provider")
+                    ),
+                )
+            ].append(record)
     rows = []
     for (agent, _engine), items in grouped.items():
         attempts = len(items)
@@ -81,7 +95,7 @@ def _agent_rows(records: list[dict[str, object]]) -> list[str]:
         sandbox = str(items[0].get("sandbox_mode", "unknown"))
         failures = attempts - passed
         rows.append(
-            f"| {agent} | {engine_label(items[0].get('engine'))} | {passed}/{attempts} | "
+            f"| {agent} | {backend_label(items[0].get('engine'), items[0].get('endpoint_provider'))} | {passed}/{attempts} | "
             f"{_fmt(_median(walls))} | {sandbox} | {failures} | "
             f"{_agent_cost_or_tokens(items)} |"
         )
@@ -129,7 +143,9 @@ def _dedupe_latest(records: list[dict[str, object]]) -> list[dict[str, object]]:
                 (
                     "endpoint",
                     str(record["model"]),
-                    engine_fingerprint(record.get("engine")),
+                    backend_fingerprint(
+                        record.get("engine"), record.get("endpoint_provider")
+                    ),
                     str(record["task_id"]),
                 )
             ] = record
@@ -138,7 +154,9 @@ def _dedupe_latest(records: list[dict[str, object]]) -> list[dict[str, object]]:
                 (
                     "agent",
                     str(record["agent"]),
-                    engine_fingerprint(record.get("engine")),
+                    backend_fingerprint(
+                        record.get("engine"), record.get("endpoint_provider")
+                    ),
                     str(record["task_id"]),
                 )
             ] = record

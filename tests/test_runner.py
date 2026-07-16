@@ -8,6 +8,7 @@ from local_code_bench.config import ModelConfig, TokenPrices
 from local_code_bench.engine_provenance import EngineProvenance
 from local_code_bench.metrics import StreamEvent
 from local_code_bench.provider import ProviderError
+from local_code_bench.results import read_jsonl
 from local_code_bench.runner import completed_pairs, run_endpoint_suite, select_models
 from local_code_bench.tasks import BenchmarkTask
 
@@ -203,12 +204,19 @@ def test_run_endpoint_suite_defaults_max_tokens_cap(tmp_path, monkeypatch) -> No
 def test_run_endpoint_suite_warmup_sends_discarded_request(tmp_path, monkeypatch) -> None:
     provider = RecordingProvider()
     monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: provider)
+    local_model = model("local", inferencer="ollama")
+    provenance = EngineProvenance(
+        name="ollama",
+        versions={"ollama": "0.32.0"},
+        capture_method="live-api",
+    )
 
     summary = run_endpoint_suite(
-        models=[model("a")],
+        models=[local_model],
         tasks=[task()],
         result_path=tmp_path / "run.jsonl",
         warmup=True,
+        engine_provenance={"local": provenance},
     )
 
     # First call is the discarded warmup (max_tokens=1), then the real task.
@@ -217,14 +225,80 @@ def test_run_endpoint_suite_warmup_sends_discarded_request(tmp_path, monkeypatch
     assert summary["passed"] == 1
 
 
-def test_run_endpoint_suite_warmup_errors_do_not_abort(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: FailingProvider())
+def test_run_endpoint_suite_does_not_warm_up_cloud_model(tmp_path, monkeypatch) -> None:
+    provider = RecordingProvider()
+    monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: provider)
 
-    summary = run_endpoint_suite(
-        models=[model("a")],
+    run_endpoint_suite(
+        models=[model("cloud")],
         tasks=[task()],
         result_path=tmp_path / "run.jsonl",
         warmup=True,
+    )
+
+    assert provider.max_tokens == [1024]
+
+
+def test_run_endpoint_suite_warms_only_local_model_in_mixed_run(tmp_path, monkeypatch) -> None:
+    providers = {"cloud": RecordingProvider(), "local": RecordingProvider()}
+    monkeypatch.setattr(
+        "local_code_bench.runner.provider_for_model",
+        lambda selected: providers[selected.name],
+    )
+    provenance = EngineProvenance(
+        name="ollama",
+        versions={"ollama": "0.32.0"},
+        capture_method="live-api",
+    )
+
+    run_endpoint_suite(
+        models=[model("cloud"), model("local", inferencer="ollama")],
+        tasks=[task()],
+        result_path=tmp_path / "run.jsonl",
+        warmup=True,
+        engine_provenance={"local": provenance},
+    )
+
+    assert providers["cloud"].max_tokens == [1024]
+    assert providers["local"].max_tokens == [1, 1024]
+
+
+def test_run_endpoint_suite_no_warmup_skips_local_warmup(tmp_path, monkeypatch) -> None:
+    provider = RecordingProvider()
+    monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: provider)
+    local_model = model("local", inferencer="ollama")
+    provenance = EngineProvenance(
+        name="ollama",
+        versions={"ollama": "0.32.0"},
+        capture_method="live-api",
+    )
+
+    run_endpoint_suite(
+        models=[local_model],
+        tasks=[task()],
+        result_path=tmp_path / "run.jsonl",
+        warmup=False,
+        engine_provenance={"local": provenance},
+    )
+
+    assert provider.max_tokens == [1024]
+
+
+def test_run_endpoint_suite_warmup_errors_do_not_abort(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: FailingProvider())
+    local_model = model("local", inferencer="ollama")
+    provenance = EngineProvenance(
+        name="ollama",
+        versions={"ollama": "0.32.0"},
+        capture_method="live-api",
+    )
+
+    summary = run_endpoint_suite(
+        models=[local_model],
+        tasks=[task()],
+        result_path=tmp_path / "run.jsonl",
+        warmup=True,
+        engine_provenance={"local": provenance},
     )
 
     # Warmup failure is swallowed; the real task still runs and is recorded.
@@ -274,6 +348,75 @@ def test_local_endpoint_suite_records_engine_on_metadata_and_task(tmp_path, monk
     records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert records[0]["models"]["local"]["engine"] == provenance.as_dict()
     assert records[1]["engine"] == provenance.as_dict()
+
+
+def test_cloud_endpoint_suite_records_provider_on_metadata_and_task(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: FakeProvider())
+    cloud_model = ModelConfig(
+        name="qwen",
+        type="openai",
+        base_url="https://openrouter.ai/api/v1",
+        model_id="qwen/qwen3.6-27b",
+        pinned_revision="test",
+        price_per_1k_tokens=TokenPrices(input=1.0, output=2.0),
+    )
+    path = tmp_path / "run.jsonl"
+
+    run_endpoint_suite(models=[cloud_model], tasks=[task()], result_path=path)
+
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert records[0]["models"]["qwen"]["endpoint_provider"] == "openrouter.ai"
+    assert records[1]["endpoint_provider"] == "openrouter.ai"
+
+
+def test_cloud_endpoint_failure_records_provider(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: FailingProvider())
+    cloud_model = ModelConfig(
+        name="qwen",
+        type="openai",
+        base_url="https://openrouter.ai/api/v1",
+        model_id="qwen/qwen3.6-27b",
+        pinned_revision="test",
+        price_per_1k_tokens=TokenPrices(input=1.0, output=2.0),
+    )
+    path = tmp_path / "run.jsonl"
+
+    run_endpoint_suite(models=[cloud_model], tasks=[task()], result_path=path)
+
+    assert read_jsonl(path)[1]["endpoint_provider"] == "openrouter.ai"
+
+
+def test_resume_rejects_changed_cloud_endpoint_provider(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("local_code_bench.runner.provider_for_model", lambda _model: FakeProvider())
+    openrouter_model = ModelConfig(
+        name="qwen",
+        type="openai",
+        base_url="https://openrouter.ai/api/v1",
+        model_id="qwen/qwen3.6-27b",
+        pinned_revision="test",
+        price_per_1k_tokens=TokenPrices(input=1.0, output=2.0),
+    )
+    gateway_model = ModelConfig(
+        name="qwen",
+        type="openai",
+        base_url="https://gateway.example.test/v1",
+        model_id="qwen/qwen3.6-27b",
+        pinned_revision="test",
+        price_per_1k_tokens=TokenPrices(input=1.0, output=2.0),
+    )
+    path = tmp_path / "run.jsonl"
+    run_endpoint_suite(models=[openrouter_model], tasks=[task()], result_path=path)
+    original = path.read_text(encoding="utf-8")
+
+    with pytest.raises(ValueError, match="endpoint provider does not match"):
+        run_endpoint_suite(
+            models=[gateway_model],
+            tasks=[task()],
+            result_path=path,
+            resume=True,
+        )
+
+    assert path.read_text(encoding="utf-8") == original
 
 
 def test_local_endpoint_suite_requires_engine_before_writing(tmp_path) -> None:

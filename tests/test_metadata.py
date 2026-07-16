@@ -54,3 +54,18 @@ def test_run_metadata_includes_engine_provenance_per_model() -> None:
     )
 
     assert meta["models"]["qwen"]["engine"] == provenance.as_dict()  # type: ignore[index]
+
+
+def test_run_metadata_records_anthropic_endpoint_provider() -> None:
+    model = ModelConfig(
+        name="claude",
+        type="anthropic",
+        base_url="https://api.anthropic.com/v1",
+        model_id="claude-sonnet-4-6",
+        pinned_revision="test",
+        price_per_1k_tokens=TokenPrices(input=1.0, output=2.0),
+    )
+
+    meta = run_metadata(models=[model], suite="canary")
+
+    assert meta["models"]["claude"]["endpoint_provider"] == "anthropic"  # type: ignore[index]

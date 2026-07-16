@@ -190,8 +190,9 @@ A serial, uncapped cloud run of full HumanEval can take hours; the same run at
 scoring. See [`docs/EVALUATION-METHODOLOGY.md`](docs/EVALUATION-METHODOLOGY.md)
 for the full fast-evaluation strategy across speed, quality, and contamination.
 
-Before timing a model, the runner sends one discarded warmup request so a local
-server's cold-start weight load is not billed to the first measured task. It is on
+Before timing a local model with a declared `inferencer`, the runner sends one
+discarded warmup request so the server's cold-start weight load is not billed to
+the first measured task. Cloud API models are never warmed up. Local warmup is on
 by default; pass `--no-warmup` to skip it.
 
 ### Power And Energy (macOS)
@@ -394,6 +395,18 @@ installation history use `manual-backfill`; the reusable migration command is
 refuses to append if the current engine fingerprint differs from the existing run.
 Leaderboards, sweeps, dashboards, and run history group identical model names by
 engine fingerprint so results from different runtime versions are never merged.
+
+Cloud endpoint records use a separate stable provider identity instead of
+fabricating a versioned local engine object:
+
+```json
+{"endpoint_provider": "openrouter.ai"}
+```
+
+Direct Anthropic records use `anthropic`; other OpenAI-compatible endpoints use
+their normalized hostname. Comparison surfaces prefer exact local `engine`
+provenance, then `endpoint_provider`, and show `unknown (legacy)` only when neither
+identity is available.
 
 ## Leaderboard And Sweep
 

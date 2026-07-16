@@ -1189,6 +1189,35 @@ def test_run_single_prompt_unknown_model_raises_config_error(tmp_path, monkeypat
         )
 
 
+def test_run_single_prompt_records_cloud_endpoint_provider(tmp_path, monkeypatch) -> None:
+    model = ModelConfig(
+        name="qwen",
+        type="openai",
+        base_url="https://openrouter.ai/api/v1",
+        model_id="qwen/qwen3.6-27b",
+        pinned_revision="test",
+        price_per_1k_tokens=TokenPrices(input=0, output=0),
+    )
+
+    class FakeProvider:
+        def stream_chat(self, request):
+            yield StreamEvent(content="OLLAMA_OK", prompt_tokens=3, completion_tokens=2)
+
+    monkeypatch.setattr("local_code_bench.cli.load_models", lambda _path: {"qwen": model})
+    monkeypatch.setattr(
+        "local_code_bench.cli.provider_for_model", lambda _model: FakeProvider()
+    )
+
+    result_path, _measurement = run_single_prompt(
+        config_path=tmp_path / "models.yaml",
+        model_name="qwen",
+        prompt="reply",
+        results_dir=tmp_path,
+    )
+
+    assert read_jsonl(result_path)[0]["endpoint_provider"] == "openrouter.ai"
+
+
 def test_single_prompt_mode_config_error_exits_2(monkeypatch, capsys) -> None:
     def boom(**_kwargs) -> None:
         raise ConfigError("unknown model 'ghost'. Available models: m")

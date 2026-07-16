@@ -94,6 +94,32 @@ def test_capture_mlx_provenance_queries_launcher_interpreter(tmp_path: Path) -> 
     assert provenance.capture_method == "managed-process"
 
 
+def test_capture_mlx_provenance_preserves_virtualenv_interpreter(tmp_path: Path) -> None:
+    base_interpreter = tmp_path / "base-python3"
+    base_interpreter.write_text("", encoding="utf-8")
+    virtualenv_interpreter = tmp_path / "venv-python"
+    virtualenv_interpreter.symlink_to(base_interpreter)
+    launcher = tmp_path / "mlx_lm.server"
+    launcher.write_text(f"#!{virtualenv_interpreter}\n", encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    def run(command, **_kwargs):
+        seen["command"] = command
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"mlx-lm": "0.31.3", "mlx": "0.32.0"}),
+            stderr="",
+        )
+
+    capture_mlx_provenance(
+        ["mlx_lm.server"],
+        which=lambda _executable: str(launcher),
+        run=run,
+    )
+
+    assert seen["command"][0] == str(virtualenv_interpreter)  # type: ignore[index]
+
+
 def test_capture_mlx_provenance_rejects_missing_component(tmp_path: Path) -> None:
     launcher = tmp_path / "mlx_lm.server"
     launcher.write_text("#!/usr/bin/python3\n", encoding="utf-8")

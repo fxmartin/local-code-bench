@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 from local_code_bench.config import ModelConfig
 from local_code_bench.engine_provenance import EngineProvenance
+from local_code_bench.endpoint_provenance import endpoint_provider_name
 
 
 def run_metadata(
@@ -39,6 +40,9 @@ def run_metadata(
         }
         if model.name in engines:
             details["engine"] = engines[model.name].as_dict()
+        provider_name = endpoint_provider_name(model)
+        if provider_name is not None:
+            details["endpoint_provider"] = provider_name
         model_metadata[model.name] = details
 
     metadata: dict[str, object] = {
