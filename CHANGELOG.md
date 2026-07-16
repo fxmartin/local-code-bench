@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.54.0 (2026-07-16)
+
+### Features
+
+- Add dashboard lifecycle commands
+  ([`4efbd74`](https://github.com/fxmartin/local-code-bench/commit/4efbd74e4ac26357865a5fee097b362e43dbf510))
+
+
 ## v0.53.0 (2026-07-16)
 
 ### Features
