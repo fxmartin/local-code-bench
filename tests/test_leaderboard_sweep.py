@@ -78,6 +78,24 @@ def test_leaderboard_keeps_engine_versions_separate(tmp_path) -> None:
     assert "| qwen | ollama 0.32.0 | 1/1 |" in content
 
 
+def test_leaderboard_displays_cloud_endpoint_provider(tmp_path) -> None:
+    path = tmp_path / "run.jsonl"
+    append_jsonl(
+        path,
+        {
+            "run_mode": "endpoint",
+            "model": "qwen",
+            "task_id": "HumanEval/0",
+            "passed": True,
+            "endpoint_provider": "openrouter.ai",
+        },
+    )
+
+    content = generate_leaderboard([path], tmp_path / "LEADERBOARD.md")
+
+    assert "| qwen | openrouter.ai | 1/1 |" in content
+
+
 def test_sweep_prompt_and_summary() -> None:
     prompt = padded_prompt("question", 20)
     summary = summarize_sweep(
@@ -115,6 +133,21 @@ def test_sweep_summary_keeps_engine_versions_separate() -> None:
     assert "| Model | Engine |" in summary
     assert "| m | ollama 0.31.0 | 2000 | 1.000 |" in summary
     assert "| m | ollama 0.32.0 | 2000 | 0.500 |" in summary
+
+
+def test_sweep_summary_displays_cloud_endpoint_provider() -> None:
+    summary = summarize_sweep(
+        [
+            {
+                "model": "m",
+                "endpoint_provider": "openrouter.ai",
+                "context_tokens": 2000,
+                "metrics": {"ttft_seconds": 1.0, "prefill_tokens_per_second": 100.0},
+            }
+        ]
+    )
+
+    assert "| m | openrouter.ai | 2000 | 1.000 | 100.000 |" in summary
 
 
 def test_summarize_sweep_includes_power_rows_when_present() -> None:
@@ -165,7 +198,7 @@ def test_run_sweep_executes_provider_and_writes_records(tmp_path, monkeypatch) -
     model = ModelConfig(
         name="m",
         type="openai",
-        base_url="http://example.test/v1",
+        base_url="https://openrouter.ai/api/v1",
         model_id="m",
         pinned_revision="test",
         price_per_1k_tokens=TokenPrices(input=0, output=0),
@@ -178,6 +211,7 @@ def test_run_sweep_executes_provider_and_writes_records(tmp_path, monkeypatch) -
     assert summary == {"sweeps": 1}
     assert records[0]["run_mode"] == "sweep"
     assert records[0]["context_tokens"] == 20
+    assert records[0]["endpoint_provider"] == "openrouter.ai"
 
 
 def test_run_sweep_records_local_engine_provenance(tmp_path, monkeypatch) -> None:

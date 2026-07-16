@@ -10,6 +10,7 @@ from pathlib import Path
 from local_code_bench.config import ModelConfig
 from local_code_bench.cost import calculate_cost_usd
 from local_code_bench.engine_provenance import EngineProvenance, EngineProvenanceError
+from local_code_bench.endpoint_provenance import endpoint_provider_name
 from local_code_bench.metadata import run_metadata
 from local_code_bench.metrics import CompletionMeasurement, capture_stream_metrics
 from local_code_bench.provider import ChatRequest, ProviderError, provider_for_model
@@ -104,7 +105,11 @@ def run_endpoint_suite(
                 state.emit(model.name, task.task_id, "infra-failed")
             continue
 
-        if warmup and any((model.name, task.task_id) not in done for task in task_list):
+        if (
+            warmup
+            and model.inferencer is not None
+            and any((model.name, task.task_id) not in done for task in task_list)
+        ):
             _warmup_provider(provider, model.name, progress)
 
         concurrency = _resolve_concurrency(model, concurrency_override)
@@ -312,6 +317,9 @@ def endpoint_record(
     }
     if engine_provenance is not None:
         record["engine"] = engine_provenance.as_dict()
+    provider_name = endpoint_provider_name(model)
+    if provider_name is not None:
+        record["endpoint_provider"] = provider_name
     return record
 
 
@@ -337,6 +345,9 @@ def failure_record(
     }
     if engine_provenance is not None:
         record["engine"] = engine_provenance.as_dict()
+    provider_name = endpoint_provider_name(model)
+    if provider_name is not None:
+        record["endpoint_provider"] = provider_name
     return record
 
 
@@ -372,9 +383,21 @@ def _validate_resume_provenance(
     stored_models = metadata.get("models") if isinstance(metadata, dict) else None
     for model in models:
         expected = engines.get(model.name)
-        if expected is None:
-            continue
         stored_model = stored_models.get(model.name) if isinstance(stored_models, dict) else None
+        if expected is None:
+            expected_provider = endpoint_provider_name(model)
+            if expected_provider is None:
+                continue
+            stored_provider = (
+                stored_model.get("endpoint_provider") if isinstance(stored_model, dict) else None
+            )
+            if stored_provider != expected_provider:
+                raise ValueError(
+                    f"cannot resume {result_path}: endpoint provider does not match "
+                    f"model '{model.name}' ({stored_provider or 'missing'} != "
+                    f"{expected_provider})"
+                )
+            continue
         stored_engine = stored_model.get("engine") if isinstance(stored_model, dict) else None
         try:
             actual = EngineProvenance.from_dict(stored_engine)

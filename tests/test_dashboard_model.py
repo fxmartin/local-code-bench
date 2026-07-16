@@ -152,6 +152,66 @@ def test_endpoint_groups_and_dedupes_by_engine_identity() -> None:
     assert by_engine["ollama 0.32.0"].engine_capture_method == "manual-backfill"
 
 
+def test_endpoint_groups_and_labels_cloud_provider_identity() -> None:
+    records = [
+        _endpoint_record(
+            model="openrouter-qwen",
+            endpoint_provider="openrouter.ai",
+            task_id="HumanEval/0",
+        ),
+        _endpoint_record(
+            model="anthropic-claude",
+            endpoint_provider="anthropic",
+            task_id="HumanEval/1",
+        ),
+        _endpoint_record(
+            model="compatible",
+            endpoint_provider="gateway.example.test",
+            task_id="HumanEval/2",
+        ),
+    ]
+
+    data = build_dashboard_data(records)
+
+    assert {(row.model, row.engine_label) for row in data.endpoint_models} == {
+        ("openrouter-qwen", "openrouter.ai"),
+        ("anthropic-claude", "anthropic"),
+        ("compatible", "gateway.example.test"),
+    }
+
+
+def test_endpoint_provider_identity_splits_grouping_and_run_history() -> None:
+    records = [
+        _endpoint_record(endpoint_provider="openrouter.ai", passed=False),
+        _endpoint_record(endpoint_provider="gateway.example.test", passed=True),
+    ]
+
+    data = build_dashboard_data(records)
+    summary = build_run_summary("run.jsonl", records)
+
+    assert len(data.endpoint_models) == 2
+    assert summary.engines == ("gateway.example.test", "openrouter.ai")
+
+
+def test_endpoint_without_engine_or_provider_remains_legacy() -> None:
+    aggregate = build_dashboard_data([_endpoint_record()]).endpoint_models[0]
+
+    assert aggregate.engine_label == "unknown (legacy)"
+
+
+def test_exact_engine_provenance_takes_priority_over_endpoint_provider() -> None:
+    aggregate = build_dashboard_data(
+        [
+            _endpoint_record(
+                engine=_engine("0.32.0"),
+                endpoint_provider="gateway.example.test",
+            )
+        ]
+    ).endpoint_models[0]
+
+    assert aggregate.engine_label == "ollama 0.32.0"
+
+
 def test_agent_rows_expose_wall_time_without_throughput_mixing() -> None:
     records = [
         {

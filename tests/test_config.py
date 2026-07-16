@@ -60,6 +60,15 @@ def test_default_models_config_loads() -> None:
     models = load_models("configs/models.yaml")
 
     assert "openrouter-glm-4.6" in models
+    qwen = models["openrouter-qwen3.6-27b"]
+    assert qwen.model_id == "qwen/qwen3.6-27b"
+    assert qwen.pinned_revision == "qwen/qwen3.6-27b-20260422"
+    assert qwen.api_key_env == "OPENROUTER_API_KEY"
+    assert qwen.concurrency == 10
+    assert qwen.max_tokens == 2048
+    assert qwen.extra_body == {"reasoning": {"enabled": False}}
+    assert qwen.price_per_1k_tokens.input == 0.00045
+    assert qwen.price_per_1k_tokens.output == 0.00270
     assert models["anthropic-claude-baseline"].pinned_revision == "claude-sonnet-4-6"
 
 

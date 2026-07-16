@@ -51,7 +51,9 @@ runs first. Two guards keep that out of the measurements. The runner sends a
 discarded warmup request per model before timing (default on, `--no-warmup` to
 skip), and `scripts/bring-up-local.sh` gates readiness on a real completion that
 blocks through the load, so "warm" means the weights are resident. Without these,
-the first measured task silently absorbs the cold start and skews its TTFT.
+the first measured task silently absorbs the cold start and skews its TTFT. The
+discarded request applies only to models with a declared local `inferencer`;
+cloud API calls are never used for warmup.
 
 ### Power, Energy, And The 48 GB Ceiling
 

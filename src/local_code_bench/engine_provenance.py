@@ -135,6 +135,31 @@ def engine_capture_method(value: object) -> str | None:
         return None
 
 
+def backend_fingerprint(engine: object, endpoint_provider: object) -> EngineFingerprint:
+    """Group by exact local engine, then cloud endpoint provider, then legacy."""
+
+    try:
+        return EngineProvenance.from_dict(engine).fingerprint
+    except EngineProvenanceError:
+        provider = _valid_endpoint_provider(endpoint_provider)
+        return (provider, ()) if provider is not None else ("unknown (legacy)", ())
+
+
+def backend_label(engine: object, endpoint_provider: object) -> str:
+    """Display exact local engine provenance or a normalized cloud provider."""
+
+    try:
+        return EngineProvenance.from_dict(engine).label
+    except EngineProvenanceError:
+        return _valid_endpoint_provider(endpoint_provider) or "unknown (legacy)"
+
+
+def _valid_endpoint_provider(value: object) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value.strip()
+
+
 def capture_ollama_provenance(
     base_url: str,
     *,
@@ -257,23 +282,23 @@ def _launcher_interpreter(
     launcher: Path,
     which: Callable[[str], str | None],
 ) -> Path:
-    resolved_launcher = launcher.resolve()
-    if resolved_launcher.name.startswith("python"):
-        return resolved_launcher
+    launcher = launcher.absolute()
+    if launcher.name.startswith("python"):
+        return launcher
     try:
-        first_line = resolved_launcher.read_text(encoding="utf-8").splitlines()[0]
+        first_line = launcher.read_text(encoding="utf-8").splitlines()[0]
     except (OSError, UnicodeDecodeError, IndexError) as exc:
         raise EngineProvenanceError(
-            f"could not read MLX-LM launcher shebang: {resolved_launcher}"
+            f"could not read MLX-LM launcher shebang: {launcher}"
         ) from exc
     if not first_line.startswith("#!"):
         raise EngineProvenanceError(
-            f"MLX-LM launcher has no Python shebang: {resolved_launcher}"
+            f"MLX-LM launcher has no Python shebang: {launcher}"
         )
     parts = shlex.split(first_line[2:].strip())
     if not parts:
         raise EngineProvenanceError(
-            f"MLX-LM launcher has an empty shebang: {resolved_launcher}"
+            f"MLX-LM launcher has an empty shebang: {launcher}"
         )
     if Path(parts[0]).name == "env":
         executable = next((part for part in parts[1:] if not part.startswith("-")), None)
@@ -282,5 +307,7 @@ def _launcher_interpreter(
             raise EngineProvenanceError(
                 f"could not resolve MLX-LM shebang interpreter: {first_line}"
             )
-        return Path(resolved).resolve()
-    return Path(parts[0]).resolve()
+        return Path(resolved)
+    # Preserve virtual-environment interpreter symlinks: resolving them switches
+    # package metadata lookups to the base Python and hides venv-only packages.
+    return Path(parts[0])
