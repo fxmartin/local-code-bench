@@ -94,6 +94,12 @@ models:
   # Five candidates to compare against the Qwen3.6-27B dense baseline on the
   # M3 Max 48 GB: four are ~3B-active MoE (tests whether MoE savings move the
   # prefill-bound numbers, not just decode) plus one dense SWE-agent specialist.
+  # Each model has an mlx-lm and an ollama entry (same pairing as the Qwen3.6
+  # baseline) so runs answer both questions: best model AND best engine.
+  # Caveat for the engine comparison: MLX and GGUF artifacts are different
+  # quantizations of the same weights, so engine deltas include quant effects —
+  # except gpt-oss, where both engines run the identical native MXFP4 weights,
+  # making it the cleanest pure engine A/B in the matrix.
   - name: local-mlx-qwen3-coder-30b
     type: openai
     base_url: http://localhost:8080/v1
@@ -107,13 +113,37 @@ models:
     price_per_1k_tokens:
       input: 0.0
       output: 0.0
+  - name: local-ollama-qwen3-coder-30b
+    type: openai
+    base_url: http://localhost:11434/v1
+    # GGUF counterpart (Q4_K_M, ~19 GB). Pull with `ollama pull qwen3-coder:30b`.
+    model_id: qwen3-coder:30b
+    pinned_revision: manual-2026-07-16
+    concurrency: 1
+    inferencer: ollama
+    max_tokens: 2048
+    price_per_1k_tokens:
+      input: 0.0
+      output: 0.0
+  - name: local-mlx-devstral-24b
+    type: openai
+    base_url: http://localhost:8080/v1
+    # Dense 24B SWE-agent specialist (Mistral x All Hands), ~14 GB at 4-bit.
+    # Early reports of gibberish from this quant traced to an LM Studio MLX
+    # runtime tokenization bug (GGUF unaffected), since fixed — but spot-check
+    # the first completion for 'Ġ'/'Ċ' artifacts before trusting a full run.
+    model_id: mlx-community/Devstral-Small-2-24B-Instruct-2512-4bit
+    pinned_revision: manual-2026-07-16
+    concurrency: 1
+    inferencer: mlx-lm
+    max_tokens: 2048
+    price_per_1k_tokens:
+      input: 0.0
+      output: 0.0
   - name: local-ollama-devstral-24b
     type: openai
     base_url: http://localhost:11434/v1
-    # Dense 24B SWE-agent specialist (Mistral x All Hands). Served via Ollama:
-    # the mlx-community Devstral-Small-2-24B-Instruct-2512-4bit quant has an open
-    # tokenizer-bug report (gibberish output) as of 2026-07, so the GGUF path is
-    # the reliable one. Pull with `ollama pull devstral:24b`.
+    # GGUF counterpart. Pull with `ollama pull devstral:24b`.
     model_id: devstral:24b
     pinned_revision: manual-2026-07-16
     concurrency: 1
@@ -137,14 +167,40 @@ models:
     price_per_1k_tokens:
       input: 0.0
       output: 0.0
+  - name: local-ollama-gpt-oss-20b
+    type: openai
+    base_url: http://localhost:11434/v1
+    # Same native MXFP4 weights as the MLX entry (Ollama supports MXFP4 without
+    # re-quantizing) — the cleanest engine A/B pair. `ollama pull gpt-oss:20b`.
+    model_id: gpt-oss:20b
+    pinned_revision: manual-2026-07-16
+    concurrency: 1
+    inferencer: ollama
+    max_tokens: 4096
+    price_per_1k_tokens:
+      input: 0.0
+      output: 0.0
+  - name: local-mlx-ornith-35b
+    type: openai
+    base_url: http://localhost:8080/v1
+    # Ornith 1.0 (DeepReinforce, 2026-06-25): 35B MoE / ~3B active, MIT, trained
+    # to self-scaffold agentic runs. mlx-community only publishes 8-bit (~37 GB)
+    # and bf16 as of 2026-07, so this is a third-party community 4-bit (~20 GB) —
+    # sanity-check output quality before trusting scores. Watch endpoint-mode
+    # output for scaffold preamble around the code block; the higher cap keeps
+    # it from truncating the actual solution.
+    model_id: AtomicChat/ornith-35b-MLX-4bit
+    pinned_revision: manual-2026-07-16
+    concurrency: 1
+    inferencer: mlx-lm
+    max_tokens: 4096
+    price_per_1k_tokens:
+      input: 0.0
+      output: 0.0
   - name: local-ollama-ornith-35b
     type: openai
     base_url: http://localhost:11434/v1
-    # Ornith 1.0 (DeepReinforce, 2026-06-25): 35B MoE / ~3B active, MIT, trained
-    # to self-scaffold agentic runs. Served via Ollama because mlx-community only
-    # publishes 8-bit (~37 GB) and bf16 quants as of 2026-07 — no 4-bit yet.
-    # Watch endpoint-mode output for scaffold preamble around the code block;
-    # the higher cap keeps it from truncating the actual solution.
+    # GGUF counterpart. Pull with `ollama pull ornith:35b`.
     model_id: ornith:35b
     pinned_revision: manual-2026-07-16
     concurrency: 1
@@ -165,6 +221,21 @@ models:
     pinned_revision: manual-2026-07-16
     concurrency: 1
     inferencer: mlx-lm
+    max_tokens: 2048
+    price_per_1k_tokens:
+      input: 0.0
+      output: 0.0
+  - name: local-ollama-qwen3-coder-next-3bit
+    type: openai
+    base_url: http://localhost:11434/v1
+    # GGUF counterpart at matching ~3-bit footprint. The Ollama library default
+    # tag is a 4-bit (~45 GB — too big for 48 GB), so pull a Q3 quant straight
+    # from Unsloth's HF repo and set model_id to the exact tag `ollama list`
+    # shows, e.g.: `ollama pull hf.co/unsloth/Qwen3-Coder-Next-GGUF:Q3_K_M`.
+    model_id: hf.co/unsloth/Qwen3-Coder-Next-GGUF:Q3_K_M
+    pinned_revision: manual-2026-07-16
+    concurrency: 1
+    inferencer: ollama
     max_tokens: 2048
     price_per_1k_tokens:
       input: 0.0
