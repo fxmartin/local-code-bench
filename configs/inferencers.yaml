@@ -59,8 +59,11 @@ inferencers:
     health_url: http://127.0.0.1:{port}/v1/models
     start: ["mlx_lm.server", "--port", "8080"]
     url: https://github.com/ml-explore/mlx-lm
-    # MLX engines read pre-quantized repos from the shared HuggingFace hub cache.
-    model_store: ~/.cache/huggingface/hub
+    # MLX engines read pre-quantized repos from the shared HuggingFace hub cache
+    # and from the local-dir model shelf used for manually resumed downloads.
+    model_store:
+      - ~/.cache/huggingface/hub
+      - ~/.cache/model-shelf/models/mlx
     format: hf-safetensors
   - name: ollama
     lifecycle: server

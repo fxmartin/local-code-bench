@@ -27,7 +27,7 @@ import re
 import shutil
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -237,11 +237,16 @@ def chat_catalog_action(ctx: DashboardContext) -> tuple[int, dict]:
 def _chat_model_from_inventory(
     local_model: inventory.LocalModel, inferencer_cfg: InferencerConfig
 ) -> ModelConfig:
+    model_id = (
+        "default_model"
+        if local_model.store_format == "hf-safetensors" and local_model.path
+        else local_model.name
+    )
     return ModelConfig(
         name=local_model.name,
         type="openai",
         base_url=f"http://127.0.0.1:{inferencer_cfg.port}/v1",
-        model_id=local_model.name,
+        model_id=model_id,
         pinned_revision="inventory",
         concurrency=1,
         max_tokens=chat.DEFAULT_MAX_TOKENS,
@@ -281,6 +286,54 @@ def _chat_models_for_request(
         return 400, {"error": f"select an inferencer for {name!r}: {names}"}
 
     return {name: _chat_model_from_inventory(chosen, ctx.configs[chosen.inferencer])}
+
+
+def _configs_for_chat_model_start(
+    ctx: DashboardContext, inferencer_name: str, model_name: str
+) -> dict[str, InferencerConfig]:
+    cfg = ctx.configs.get(inferencer_name)
+    if cfg is None or cfg.start is None:
+        return ctx.configs
+
+    local_model = next(
+        (
+            model
+            for model in _inventory_chat_models(ctx)
+            if model.name == model_name
+            and model.inferencer == inferencer_name
+            and model.store_format == "hf-safetensors"
+            and model.path
+        ),
+        None,
+    )
+    if local_model is None or not cfg.start or cfg.start[0] != "mlx_lm.server":
+        return ctx.configs
+
+    patched = dict(ctx.configs)
+    patched[inferencer_name] = replace(
+        cfg,
+        start=_command_with_option(cfg.start, "--model", local_model.path),
+    )
+    return patched
+
+
+def _command_with_option(command: tuple[str, ...], option: str, value: str) -> tuple[str, ...]:
+    updated: list[str] = []
+    skip_next = False
+    replaced = False
+    for item in command:
+        if skip_next:
+            skip_next = False
+            continue
+        if item == option:
+            updated.extend((option, value))
+            skip_next = True
+            replaced = True
+        else:
+            updated.append(item)
+    if not replaced:
+        updated.extend((option, value))
+    return tuple(updated)
 
 
 
@@ -660,9 +713,15 @@ def handle_request(
     if method == "POST" and route == "/api/start":
         confirm = _is_truthy(query.get("confirm", []))
         force = _is_truthy(query.get("force", []))
+        model_name = query.get("model", [""])[0]
+        configs = (
+            _configs_for_chat_model_start(ctx, name, model_name)
+            if model_name
+            else ctx.configs
+        )
         return _json(
             *inferencer_panel.start_action(
-                name, ctx.configs, ctx.state_dir, confirm=confirm, force=force
+                name, configs, ctx.state_dir, confirm=confirm, force=force
             )
         )
     if method == "POST" and route == "/api/stop":
@@ -1284,16 +1343,17 @@ _PAGE = """<!DOCTYPE html>
     return { status: res.status, body };
   }
 
-  async function startEngine(name, confirm, afterStart) {
+  async function startEngine(name, confirm, afterStart, model) {
     setError("");
     STARTING.add(name);
     refresh();
-    const url = "/api/start?name=" + encodeURIComponent(name) + (confirm ? "&confirm=1" : "");
+    let url = "/api/start?name=" + encodeURIComponent(name) + (confirm ? "&confirm=1" : "");
+    if (model) url += "&model=" + encodeURIComponent(model);
     const { status, body } = await post(url);
     if (status === 409 && body.needs_confirmation) {
       STARTING.delete(name);
       refresh();
-      openModal(name, body, afterStart);
+      openModal(name, body, afterStart, model);
       return;
     }
     if (status >= 400) {
@@ -1304,8 +1364,8 @@ _PAGE = """<!DOCTYPE html>
     if (status < 400 && afterStart) afterStart();
   }
 
-  function openModal(name, body, afterStart) {
-    pending = { name, afterStart };
+  function openModal(name, body, afterStart, model) {
+    pending = { name, afterStart, model };
     document.getElementById("modal-msg").textContent = body.message || "Confirm exclusive start.";
     const list = document.getElementById("modal-list");
     list.innerHTML = "";
@@ -1321,12 +1381,12 @@ _PAGE = """<!DOCTYPE html>
 
   document.getElementById("modal-confirm").onclick = () => {
     const item = pending; closeModal();
-    if (item) startEngine(item.name, true, item.afterStart);
+    if (item) startEngine(item.name, true, item.afterStart, item.model);
   };
   document.getElementById("modal-cancel").onclick = closeModal;
 
-  window.startInferencer = function (name, afterStart) {
-    return startEngine(name, false, afterStart);
+  window.startInferencer = function (name, afterStart, model) {
+    return startEngine(name, false, afterStart, model);
   };
 
   rows.addEventListener("click", (ev) => {
@@ -2057,7 +2117,7 @@ _PAGE = """<!DOCTYPE html>
     const it = selectedInferencer();
     if (!it || !window.startInferencer) return;
     startBtn.disabled = true;
-    window.startInferencer(it.name, load);
+    window.startInferencer(it.name, load, modelSel.value);
   });
   infSel.addEventListener("change", () => {
     renderModels();
