@@ -155,6 +155,12 @@ def test_default_models_inferencers_line_up_with_ports() -> None:
         assert urlparse(models[model_name].base_url).port == inferencers[declared].port
 
 
+def test_default_ollama_model_disables_reasoning() -> None:
+    models = load_models("configs/models.yaml")
+
+    assert models["local-ollama-qwen"].extra_body == {"reasoning_effort": "none"}
+
+
 def test_load_models_parses_extra_body(tmp_path) -> None:
     config_path = tmp_path / "models.yaml"
     config_path.write_text(
