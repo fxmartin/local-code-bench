@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.55.0 (2026-07-16)
+
+### Features
+
+- Add resumable Qwen benchmark sequence
+  ([#75](https://github.com/fxmartin/local-code-bench/pull/75),
+  [`e36b732`](https://github.com/fxmartin/local-code-bench/commit/e36b73260ad0593a636dfc5a79946fbd8878a570))
+
+
 ## v0.54.0 (2026-07-16)
 
 ### Features
