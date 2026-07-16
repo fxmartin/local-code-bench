@@ -2,6 +2,23 @@
 
 <!-- version list -->
 
+## v0.52.3 (2026-07-16)
+
+### Bug Fixes
+
+- Disable Ollama reasoning for endpoint benchmarks
+  ([#71](https://github.com/fxmartin/local-code-bench/pull/71),
+  [`24f32b7`](https://github.com/fxmartin/local-code-bench/commit/24f32b77c74540a7838c13143daaa7c7787a0a0a))
+
+### Chores
+
+- **configs**: Add five agentic-coding model candidates for M3 Max 48 GB
+  ([`275a624`](https://github.com/fxmartin/local-code-bench/commit/275a624a7fb8ce11d6be632974563a6f29a8b1fa))
+
+- **configs**: Pair each candidate model across mlx-lm and ollama
+  ([`9355545`](https://github.com/fxmartin/local-code-bench/commit/93555452d295d98d18e476a4858d3514ed7351ce))
+
+
 ## v0.52.2 (2026-07-16)
 
 ### Bug Fixes
