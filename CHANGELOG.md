@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.52.1 (2026-07-16)
+
+### Bug Fixes
+
+- Preserve benchmark evaluation fidelity
+  ([#68](https://github.com/fxmartin/local-code-bench/pull/68),
+  [`815cf58`](https://github.com/fxmartin/local-code-bench/commit/815cf584467d992dd415a699810682091c2c771a))
+
+
 ## v0.52.0 (2026-07-14)
 
 ### Features
