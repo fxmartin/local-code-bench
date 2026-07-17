@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.63.0 (2026-07-17)
+
+### Features
+
+- **benchmark-comparison-dashboard**: Comparison-axis (#17.1-002)
+  ([`772420c`](https://github.com/fxmartin/local-code-bench/commit/772420c29271596cbeb8f61a4aad0caa2aad1677))
+
+
 ## v0.62.0 (2026-07-17)
 
 ### Features
