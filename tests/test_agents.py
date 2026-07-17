@@ -460,6 +460,29 @@ def test_run_agent_task_uses_registered_codex_adapter(tmp_path) -> None:
     assert record["cost_status"] == "unavailable"
 
 
+def test_run_agent_task_merges_record_extra_into_persisted_record(tmp_path) -> None:
+    fake = tmp_path / "codex"
+    fake.write_text(
+        "#!/usr/bin/env python3\n"
+        "from pathlib import Path\n"
+        "Path('solution.py').write_text('def add(a, b):\\n    return a + b\\n')\n"
+        "args = __import__('sys').argv\n"
+        "Path(args[args.index('--output-last-message') + 1]).write_text('done')\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    task = BenchmarkTask("suite/1", "humaneval", "prompt", "assert add(1, 2) == 3", "add", "v")
+    agent = AgentConfig("codex", "codex", str(fake), "workspace-write", 10)
+    result_path = tmp_path / "agent.jsonl"
+    extra = {"optimization": {"condition": "bare", "proxy_in_path": False}}
+
+    record = run_agent_task(agent=agent, task=task, result_path=result_path, record_extra=extra)
+
+    assert record["optimization"] == extra["optimization"]
+    persisted = read_jsonl(result_path)
+    assert persisted[0]["optimization"] == extra["optimization"]
+
+
 def test_qwen_code_adapter_builds_headless_json_command(tmp_path) -> None:
     task = BenchmarkTask("suite/1", "humaneval", "prompt", "assert True", "solution", "v")
     workspace = materialize_task_workspace(task, parent=tmp_path)

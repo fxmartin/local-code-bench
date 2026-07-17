@@ -59,6 +59,7 @@ class Settings:
     cache_dir: str = ".cache/benchmarks"
     results_dir: str = "results"
     inferencer_state_dir: str = ".runtime/inferencers"
+    optimizer_state_dir: str = ".runtime/optimizers"
     inferencer_start_timeout_seconds: float = 30.0
     inferencer_health_timeout_seconds: float = 1.0
     opencode_build_timeout_seconds: float = 60.0
@@ -82,6 +83,7 @@ _KEY_MAP: dict[tuple[str, str], str] = {
     ("paths", "cache_dir"): "cache_dir",
     ("paths", "results_dir"): "results_dir",
     ("paths", "inferencer_state_dir"): "inferencer_state_dir",
+    ("paths", "optimizer_state_dir"): "optimizer_state_dir",
     ("inferencer", "start_timeout_seconds"): "inferencer_start_timeout_seconds",
     ("inferencer", "health_timeout_seconds"): "inferencer_health_timeout_seconds",
     ("opencode", "build_timeout_seconds"): "opencode_build_timeout_seconds",

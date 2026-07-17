@@ -305,6 +305,31 @@ For Qwen runs the harness sets `OPENAI_BASE_URL`, `OPENAI_MODEL`, and, when
 `api_key_env` is configured and present, `OPENAI_API_KEY` only in the subprocess
 environment. Secrets are not written into JSONL results.
 
+### Bare-vs-proxied A/B runs (Epic-13)
+
+`--ab-proxy <name>` runs each agent task twice under identical config — **bare**
+(agent → engine) and **proxied** (agent → optimizer proxy → engine) — by swapping
+only the agent's configured base URL to the proxy's listen port. The proxy must be
+registered in `configs/optimizers.yaml` and already running and healthy (see
+`--optimizer-state-dir`, default `.runtime/optimizers`); the upstream engine it
+fronts is captured from its 13.2 lifecycle state:
+
+```bash
+uv run bench --mode agent --agent qwen-code --suite humaneval --limit 3 \
+  --ab-proxy headroom
+```
+
+Both conditions land in the same JSONL run file, each record tagged with an
+`optimization` block (`condition`, `proxy_in_path`, and — for proxied records —
+the proxy's name, port, upstream, and start command), so a proxied run is never
+silently compared as if it were bare and the raw file stays re-scorable offline.
+The printed report shows, side by side, tokens prefilled (with the measured
+reduction %), end-to-end latency, and task success with their deltas — a token
+saving is never shown without its correctness delta, and a condition whose
+correctness signal is missing is reported `unverified` rather than implying
+parity. Agents without a configurable base URL (e.g. a `codex` entry routed via
+its own profile) are refused, and `--resume` is not supported with `--ab-proxy`.
+
 ## OpenCode Benchmark
 
 The `opencode` subcommand drives the Epic-10 local-model benchmark: it sends two

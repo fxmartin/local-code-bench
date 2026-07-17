@@ -8,7 +8,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -325,6 +325,7 @@ def run_agent_task(
     retain_workspace: bool = False,
     progress: Callable[[str], None] | None = None,
     engine_provenance: EngineProvenance | None = None,
+    record_extra: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     if agent.inferencer is not None and engine_provenance is None:
         raise EngineProvenanceError(
@@ -410,6 +411,8 @@ def run_agent_task(
             shutil.rmtree(workspace.root, ignore_errors=True)
     if engine_provenance is not None:
         record["engine"] = engine_provenance.as_dict()
+    if record_extra:
+        record.update(record_extra)
     append_jsonl(result_path, record)
     if progress is not None:
         status = "passed" if record.get("passed") is True else "failed"
