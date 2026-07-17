@@ -14,12 +14,12 @@
 - **No Mac App Store.** The harness spawns inference servers and executes untrusted generated code — fundamentally incompatible with Apple's App Sandbox. Distribution is **Developer ID signing + notarization**, direct download.
 - **Detect-only externals preserved.** The app bundles CPython + the harness wheel and nothing else; Ollama, mlx-lm, and Codex are detected and linked, never installed — same philosophy as the inferencer registry.
 
-## Decisions To Confirm With FX
-- **Apple Developer account**: signing + notarization require the $99/yr Developer ID. Without it, everything still builds and runs locally (ad-hoc signed), but 18.3-002's distribution AC cannot be met — confirm the account exists or is acceptable to create before that story starts.
-- **App identity**: proposed name **"Local Code Bench"**, bundle id `me.fxmartin.local-code-bench` — confirm both.
-- **Shape**: proposal is a regular windowed app *plus* a menu-bar extra (window closable while runs continue in the background); alternative is menu-bar-only. Confirm.
-- **Minimum macOS**: proposal macOS 14 (Sonoma) — matches the M3 Max fleet and keeps SwiftUI menu-bar APIs simple.
-- **Auto-update**: deferred from v1 (manual download of new versions); adopting Sparkle later is compatible with the packaging pipeline. Confirm deferral is acceptable.
+## Decisions Locked With FX (confirmed 2026-07-17)
+- **Apple Developer account: none for now — local-only.** The app is **ad-hoc signed** for local use; story 18.3-002's notarized-distribution AC is **deferred** (not built) until a Developer ID exists. Everything else in 18.3-002 (signing/packaging pipeline) still completes.
+- **App identity**: name **"Local Code Bench"**, bundle id `me.fxmartin.local-code-bench`.
+- **Shape**: a regular **windowed app plus a menu-bar extra** — the window is closable while benchmark runs continue in the background. (Menu-bar-only was rejected.)
+- **Minimum macOS**: **macOS 14 (Sonoma)** — matches the M3 Max fleet and keeps SwiftUI menu-bar APIs simple.
+- **Auto-update**: **deferred from v1** (manual download of new versions); adopting Sparkle later is compatible with the packaging pipeline.
 
 ## Scope Boundaries (explicitly NOT building)
 - **No native re-implementation of dashboard views** — no SwiftUI tables/charts duplicating the web UI (that is Option B, a separate future epic if ever).
