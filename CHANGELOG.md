@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## v0.65.0 (2026-07-17)
+
+### Features
+
+- **macos-native-app**: Swiftui shell hosting the dashboard (#18.1-001)
+  ([`99b39a6`](https://github.com/fxmartin/local-code-bench/commit/99b39a64ab4946df6fbacb1d688ab4756cfbadbd))
+
+- **ui-theme-revamp**: Evaluate and (maybe) vendor a (#16.3-001)
+  ([`d8fb6de`](https://github.com/fxmartin/local-code-bench/commit/d8fb6dedcbffc9a9c0dcecd71a5dd52c545a217b))
+
+### Testing
+
+- **macos-native-app**: Swiftui shell hosting the dashboard (#18.1-001)
+  ([`f0d3ebd`](https://github.com/fxmartin/local-code-bench/commit/f0d3ebdcc1831a9899f801dd3f81be8988f60e60))
+
+
 ## v0.64.0 (2026-07-17)
 
 ### Features
