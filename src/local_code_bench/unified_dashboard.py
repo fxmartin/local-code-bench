@@ -58,6 +58,7 @@ from .inferencers import tiered, tiering
 from .inferencers.external import check_availability
 from .settings import get_settings
 from .suite_catalog import catalog_payload
+from .theme import THEME_CSS
 
 DEFAULT_HOST = get_settings().dashboard_host
 DEFAULT_PORT = get_settings().unified_dashboard_port
@@ -1226,79 +1227,59 @@ _PAGE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>local-code-bench Dashboard</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { font-family: -apple-system, system-ui, sans-serif; margin: 0; }
-  header { padding: 1.2rem 2rem 0; border-bottom: 1px solid #8884; }
-  h1 { font-size: 1.3rem; margin: 0 0 0.8rem; }
-  h2 { font-size: 1.05rem; margin-top: 1.6rem; }
-  h3 { font-size: 0.95rem; margin: 0.8rem 0 0.2rem; }
-  nav { display: flex; gap: 0.4rem; }
-  nav button { font: inherit; padding: 0.4rem 0.9rem; cursor: pointer; border: 1px solid #8884;
-    border-bottom: none; border-radius: 0.4rem 0.4rem 0 0; background: transparent; }
-  nav button.active { font-weight: 600; background: #8881; }
-  main { margin: 1.4rem 2rem 3rem; }
-  table { border-collapse: collapse; width: 100%; max-width: 80rem; margin-top: 0.4rem; }
-  th, td { text-align: left; padding: 0.35rem 0.6rem; border-bottom: 1px solid #8884; }
-  th { font-weight: 600; }
+/*__THEME_CSS__*/
+  header { padding: var(--space-4) var(--space-6) 0; border-bottom: 1px solid var(--border); }
+  h1 { margin: 0 0 var(--space-3); }
+  nav { display: flex; gap: var(--space-1); }
+  nav button { border: 1px solid var(--border); border-bottom: none;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0; background: transparent;
+    padding: var(--space-1) var(--space-3); }
+  nav button.active { font-weight: 600; background: var(--surface-hover); }
+  main { margin: var(--space-5) var(--space-6) var(--space-7); }
+  table { max-width: 80rem; margin-top: var(--space-2); }
   th[data-sort-key] { cursor: pointer; user-select: none; }
   th[data-sort-key]:hover { text-decoration: underline; }
-  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   tr.row-clickable { cursor: pointer; }
-  tr.row-clickable:hover { background: #8881; }
-  button.act { font: inherit; padding: 0.25rem 0.7rem; cursor: pointer; }
-  button.act:disabled { opacity: 0.4; cursor: default; }
-  .dot { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 50%; }
-  .up { background: #2e9e44; } .down { background: #999; } .warn { background: #b9770e; }
-  #inf-err { color: #c0392b; min-height: 1.2rem; }
-  #modal { position: fixed; inset: 0; background: #0008; display: none;
-           align-items: center; justify-content: center; }
-  #modal.show { display: flex; }
-  .card { background: Canvas; color: CanvasText; padding: 1.2rem 1.4rem; border-radius: 0.6rem;
-          max-width: 26rem; box-shadow: 0 0.5rem 2rem #0006; }
-  .card ul { margin: 0.5rem 0 1rem; }
-  #leaderboard-filter { margin-top: 0.6rem; padding: 0.3rem 0.5rem; width: 22rem; max-width: 100%; }
-  #drilldown { margin-top: 0.8rem; }
+  tr.row-clickable:hover { background: var(--surface-hover); }
+  #inf-err { color: var(--err-fg); font-weight: 600; min-height: 1.2rem; }
+  #leaderboard-filter { margin-top: var(--space-2); width: 22rem; max-width: 100%; }
+  #drilldown { margin-top: var(--space-3); }
   #drilldown table { max-width: 100%; }
-  #drilldown .preview { font-family: ui-monospace, monospace; font-size: 0.8rem;
+  #drilldown .preview { font-family: var(--font-mono); font-size: var(--text-xs);
     white-space: pre-wrap; max-width: 28rem; }
-  .pass { color: #1e8449; } .fail { color: #c0392b; }
-  #warnings { color: #c0392b; }
-  #warnings li { font-family: ui-monospace, monospace; font-size: 0.85rem; }
-  .empty { color: #888; }
-  .note { color: #888; max-width: 44rem; line-height: 1.5; }
-  .err { color: #c0392b; min-height: 1.2rem; }
-  .warn { color: #b9770e; min-height: 1.2rem; }
-  .run-grid { display: flex; gap: 2rem; flex-wrap: wrap; }
-  .run-grid select { font: inherit; min-width: 18rem; padding: 0.3rem 0.4rem; }
-  #run-suites { border: 1px solid #8884; border-radius: 0.4rem; padding: 0.6rem 0.9rem;
-    max-width: 40rem; display: flex; flex-direction: column; gap: 0.3rem; }
-  #run-suites label { display: flex; gap: 0.5rem; align-items: baseline; }
-  #run-suites label.disabled { color: #888; }
-  #run-suites .reason { color: #888; font-size: 0.85rem; }
-  .run-actions { margin-top: 1rem; }
-  #run-msg.ok { color: #1e8449; }
-  #run-msg.bad { color: #c0392b; }
-  .chat-grid { display: flex; gap: 2rem; flex-wrap: wrap; align-items: flex-end; }
-  .chat-grid select, .chat-grid input { font: inherit; padding: 0.3rem 0.4rem; }
+  #warnings { color: var(--err-fg); font-weight: 600; }
+  #warnings li { font-family: var(--font-mono); font-size: var(--text-sm); }
+  .run-grid { display: flex; gap: var(--space-6); flex-wrap: wrap; }
+  .run-grid select { min-width: 18rem; }
+  #run-suites { border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: var(--space-2) var(--space-3); max-width: 40rem;
+    display: flex; flex-direction: column; gap: var(--space-1); }
+  #run-suites label { display: flex; gap: var(--space-2); align-items: baseline; }
+  #run-suites label.disabled { color: var(--text-muted); }
+  #run-suites .reason { color: var(--text-muted); font-size: var(--text-sm); }
+  .run-actions { margin-top: var(--space-4); }
+  .chat-grid { display: flex; gap: var(--space-6); flex-wrap: wrap; align-items: flex-end; }
   .chat-grid select { min-width: 16rem; }
   .chat-grid input[type="number"] { width: 6rem; }
-  #chat-system { font: inherit; width: 100%; max-width: 46rem; box-sizing: border-box;
-    padding: 0.4rem 0.5rem; margin-top: 0.4rem; }
-  #chat-messages { border: 1px solid #8884; border-radius: 0.4rem; padding: 0.8rem;
-    max-width: 46rem; height: 24rem; overflow-y: auto; margin-top: 0.8rem;
-    display: flex; flex-direction: column; gap: 0.6rem; }
-  .chat-msg { padding: 0.5rem 0.7rem; border-radius: 0.5rem; max-width: 90%;
-    white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.4; }
-  .chat-msg.user { align-self: flex-end; background: #2e9e4422; }
-  .chat-msg.assistant { align-self: flex-start; background: #8881; }
-  .chat-msg .role { font-size: 0.75rem; color: #888; display: block; margin-bottom: 0.15rem; }
-  .chat-metrics { margin-top: 0.45rem; padding-top: 0.4rem; border-top: 1px solid #8883;
-    color: #666; font-family: ui-monospace, monospace; font-size: 0.78rem;
-    white-space: normal; display: grid; grid-template-columns: auto auto; column-gap: 1rem; row-gap: 0.15rem; }
-  .chat-metrics span:nth-child(odd) { color: #888; }
-  .chat-compose { display: flex; gap: 0.5rem; margin-top: 0.8rem; max-width: 46rem; }
-  #chat-input { font: inherit; flex: 1; padding: 0.4rem 0.5rem; resize: vertical; min-height: 2.4rem; }
-  #chat-err { color: #c0392b; min-height: 1.2rem; }
+  #chat-system { width: 100%; max-width: 46rem; margin-top: var(--space-2); }
+  #chat-messages { border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: var(--space-3); max-width: 46rem; height: 24rem; overflow-y: auto;
+    margin-top: var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); }
+  .chat-msg { padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
+    max-width: 90%; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.4; }
+  .chat-msg.user { align-self: flex-end; background: var(--accent-soft); }
+  .chat-msg.assistant { align-self: flex-start; background: var(--surface-hover); }
+  .chat-msg .role { font-size: var(--text-xs); color: var(--text-muted); display: block;
+    margin-bottom: 0.15rem; }
+  .chat-metrics { margin-top: var(--space-2); padding-top: var(--space-2);
+    border-top: 1px solid var(--border); font-family: var(--font-mono);
+    font-size: var(--text-xs); white-space: normal; display: grid;
+    grid-template-columns: auto auto; column-gap: var(--space-4); row-gap: 0.15rem; }
+  .chat-metrics span:nth-child(odd) { color: var(--text-muted); }
+  .chat-compose { display: flex; gap: var(--space-2); margin-top: var(--space-3);
+    max-width: 46rem; }
+  #chat-input { flex: 1; resize: vertical; min-height: 2.4rem; }
+  #chat-err { color: var(--err-fg); font-weight: 600; min-height: 1.2rem; }
 </style>
 </head>
 <body>
@@ -2725,3 +2706,6 @@ _PAGE = """<!DOCTYPE html>
 </body>
 </html>
 """
+
+# Inject the shared token layer + base styles (story 16.1-001) into the page.
+_PAGE = _PAGE.replace("/*__THEME_CSS__*/", THEME_CSS)
