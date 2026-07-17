@@ -91,6 +91,16 @@ var passes = 0
     } else {
         expect(false, "process exit after ready -> failed")
     }
+
+    var failedStaysFailed = StartupTracker(timeout: 1)
+    failedStaysFailed.begin()
+    failedStaysFailed.pollFailed(elapsed: 2)
+    failedStaysFailed.pollSucceeded()
+    if case .failed = failedStaysFailed.state {
+        expect(true, "successful poll after failure does not resurrect")
+    } else {
+        expect(false, "successful poll after failure does not resurrect")
+    }
 }
 
 // MARK: - LogTail
@@ -146,6 +156,10 @@ var passes = 0
 
     defaults.set("garbage".data(using: .utf8), forKey: DataLocationStore.key)
     expectEqual(store.recorded, nil, "corrupt stored value falls back to first run")
+
+    expectEqual(
+        defaultAppSupportDirectory().lastPathComponent, "LocalCodeBench",
+        "default app-support directory is named after the app")
 }
 
 @MainActor func checkCheckoutValidation() throws {
@@ -178,6 +192,22 @@ var passes = 0
     expectEqual(decide("http://127.0.0.1:9999/"), .openExternally, "other port opens in browser")
     expectEqual(decide("https://github.com/fxmartin"), .openExternally, "external site opens in browser")
     expectEqual(decide("mailto:mail@fxmartin.me"), .openExternally, "mailto opens externally")
+    expectEqual(decide("http://127.0.0.1/x"), .openExternally, "portless http defaults to 80, not the dashboard port")
+
+    let base80 = URL(string: "http://example.com/")!
+    expectEqual(
+        NavigationPolicy.decide(url: URL(string: "http://example.com:80/x")!, dashboardBaseURL: base80),
+        .allow, "explicit :80 matches portless http base")
+
+    let base443 = URL(string: "https://example.com/")!
+    expectEqual(
+        NavigationPolicy.decide(url: URL(string: "https://example.com:443/x")!, dashboardBaseURL: base443),
+        .allow, "explicit :443 matches portless https base")
+
+    let custom = URL(string: "bench://example.com/")!
+    expectEqual(
+        NavigationPolicy.decide(url: URL(string: "bench://example.com/x")!, dashboardBaseURL: custom),
+        .allow, "portless non-http scheme matches itself")
 }
 
 // MARK: - ServiceLaunchPlan
@@ -206,6 +236,159 @@ var passes = 0
     expectEqual(defaultPlan.workingDirectory, appSupport, "app-support plan cwd is app support")
 }
 
+// MARK: - ServiceController
+
+/// Asks the kernel for a free localhost port so controller checks don't
+/// collide with a real dashboard or with each other.
+@MainActor func freePort() -> Int {
+    let sock = socket(AF_INET, SOCK_STREAM, 0)
+    defer { close(sock) }
+    var addr = sockaddr_in()
+    addr.sin_family = sa_family_t(AF_INET)
+    addr.sin_port = 0
+    addr.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+    var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+    _ = withUnsafeMutablePointer(to: &addr) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(sock, $0, len) }
+    }
+    _ = withUnsafeMutablePointer(to: &addr) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(sock, $0, &len) }
+    }
+    return Int(UInt16(bigEndian: addr.sin_port))
+}
+
+@MainActor func waitFor(
+    timeout: TimeInterval = 20, _ condition: () -> Bool
+) async -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if condition() { return true }
+        try? await Task.sleep(for: .milliseconds(100))
+    }
+    return condition()
+}
+
+/// A service process that prints and dies immediately: the controller must
+/// surface the exit code and expose the captured log for the failure view.
+@MainActor func checkServiceControllerProcessDeath() async throws {
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    let port = freePort()
+    let plan = ServiceLaunchPlan(
+        executable: "/bin/sh",
+        arguments: ["-c", "echo boom; exit 7"],
+        workingDirectory: dir,
+        logFile: dir.appendingPathComponent("logs/service.log"))
+    let controller = ServiceController(plan: plan, host: "127.0.0.1", port: port, timeout: 15)
+
+    expectEqual(
+        controller.baseURL.absoluteString, "http://127.0.0.1:\(port)/",
+        "controller derives base url from host/port")
+    expect(
+        controller.healthURL.path.hasSuffix("api/status"),
+        "controller polls the dashboard status endpoint")
+    expectEqual(controller.logFile, plan.logFile, "controller exposes the plan's log file")
+
+    controller.start()
+    controller.start() // second call while startup is in flight is a no-op
+    let failed = await waitFor {
+        if case .failed = controller.state { return true }
+        return false
+    }
+    expect(failed, "dead service process -> failed state")
+    if case let .failed(reason) = controller.state {
+        expect(reason.contains("7"), "failure reason carries the exit code")
+    }
+    expect(controller.logTail().contains("boom"), "failure view can tail the captured log")
+
+    // Retry resets the tracker and relaunches; the same doomed plan fails again.
+    controller.retry()
+    let failedAgain = await waitFor {
+        if case .failed = controller.state { return true }
+        return false
+    }
+    expect(failedAgain, "retry relaunches and reaches a settled state")
+    controller.shutdown()
+}
+
+/// A stub HTTP service (python http.server over a dir containing api/status)
+/// stands in for `bench dashboard`: the controller must reach .ready, and a
+/// second controller on the same port must reuse the running service instead
+/// of launching its own.
+@MainActor func checkServiceControllerReadyAndReuse() async throws {
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try FileManager.default.createDirectory(
+        at: dir.appendingPathComponent("api"), withIntermediateDirectories: true)
+    try "ok".write(
+        to: dir.appendingPathComponent("api/status"), atomically: true, encoding: .utf8)
+
+    let port = freePort()
+    let plan = ServiceLaunchPlan(
+        executable: "/usr/bin/env",
+        arguments: ["python3", "-m", "http.server", String(port), "--bind", "127.0.0.1"],
+        workingDirectory: dir,
+        logFile: dir.appendingPathComponent("service.log"))
+    let controller = ServiceController(plan: plan, host: "127.0.0.1", port: port, timeout: 15)
+
+    controller.start()
+    let ready = await waitFor {
+        if case .ready = controller.state { return true }
+        return false
+    }
+    expect(ready, "healthy service -> ready state")
+
+    // Closing and reopening the window maps to a fresh controller pointed at
+    // the same port: it must attach to the running service, not relaunch.
+    let doomedIfLaunched = ServiceLaunchPlan(
+        executable: "/nonexistent-local-code-bench",
+        arguments: [],
+        workingDirectory: dir,
+        logFile: dir.appendingPathComponent("reuse.log"))
+    let reattached = ServiceController(
+        plan: doomedIfLaunched, host: "127.0.0.1", port: port, timeout: 15)
+    reattached.start()
+    let reused = await waitFor {
+        if case .ready = reattached.state { return true }
+        return false
+    }
+    expect(reused, "already-running service is reused, not relaunched")
+
+    reattached.shutdown() // never launched a process: shutdown is a no-op
+    controller.shutdown() // terminates the stub service
+}
+
+/// A plan whose executable does not exist: Process.run() throws and the
+/// controller must fail with a launch error, never hang in .starting.
+@MainActor func checkServiceControllerLaunchError() async throws {
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    let plan = ServiceLaunchPlan(
+        executable: "/nonexistent-local-code-bench",
+        arguments: [],
+        workingDirectory: dir,
+        logFile: dir.appendingPathComponent("service.log"))
+    let controller = ServiceController(plan: plan, host: "127.0.0.1", port: freePort(), timeout: 15)
+
+    controller.start()
+    let failed = await waitFor {
+        if case .failed = controller.state { return true }
+        return false
+    }
+    expect(failed, "unlaunchable executable -> failed state")
+    // The immediate state carries "Could not launch…"; once the poll loop
+    // settles the tracker's synthetic exit(-1) message wins. Either way the
+    // reason must name a launch/exit problem, not be blank.
+    if case let .failed(reason) = controller.state {
+        expect(
+            reason.contains("Could not launch") || reason.contains("-1"),
+            "launch error reason names the cause")
+    }
+    controller.shutdown()
+}
+
 // MARK: - Runner
 
 do {
@@ -215,6 +398,9 @@ do {
     try checkCheckoutValidation()
     checkNavigationPolicy()
     try checkServiceLaunchPlan()
+    try await checkServiceControllerProcessDeath()
+    try await checkServiceControllerReadyAndReuse()
+    try await checkServiceControllerLaunchError()
 } catch {
     failures += 1
     print("FAIL: unexpected error thrown: \(error)")

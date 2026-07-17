@@ -9,6 +9,18 @@ public struct ServiceLaunchPlan: Equatable, Sendable {
     public let workingDirectory: URL
     public let logFile: URL
 
+    public init(
+        executable: String,
+        arguments: [String],
+        workingDirectory: URL,
+        logFile: URL
+    ) {
+        self.executable = executable
+        self.arguments = arguments
+        self.workingDirectory = workingDirectory
+        self.logFile = logFile
+    }
+
     public static func plan(
         for location: DataLocation,
         host: String,
