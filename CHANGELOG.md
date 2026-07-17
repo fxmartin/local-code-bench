@@ -2,6 +2,33 @@
 
 <!-- version list -->
 
+## v0.56.0 (2026-07-17)
+
+### Chores
+
+- **configs**: Add Qwen3.6-35B-A3B quant-sensitivity pairs at q4 and q8
+  ([`1b3950e`](https://github.com/fxmartin/local-code-bench/commit/1b3950e87f5919abf83562c64884f4dafd085490))
+
+### Documentation
+
+- **stories**: Add Epic-15 settings management (dashboard Settings tab)
+  ([`66dd743`](https://github.com/fxmartin/local-code-bench/commit/66dd743ee925847bcee57a0cd9d58a250c39833c))
+
+- **stories**: Add Epic-16 dashboard UI revamp (minimalist monochrome theme)
+  ([`b9597c8`](https://github.com/fxmartin/local-code-bench/commit/b9597c84d6ee6e9ad7f49819eef698e419426dd2))
+
+- **stories**: Lock dark blue as the Epic-16 accent color
+  ([`b113b83`](https://github.com/fxmartin/local-code-bench/commit/b113b8307bcf236f17b617cf9bc9c129f4305e65))
+
+- **stories**: Make nothing-hardcoded a first-class principle of Epic-15
+  ([`22547eb`](https://github.com/fxmartin/local-code-bench/commit/22547eb7fe0d5c29799a76baa950bb31b8c3b34e))
+
+### Features
+
+- **dashboard**: Run tier moves in a background worker with live progress
+  ([`b5a7dd1`](https://github.com/fxmartin/local-code-bench/commit/b5a7dd143a1a5e816932b367c170a32eb28095dc))
+
+
 ## v0.55.0 (2026-07-16)
 
 ### Features
