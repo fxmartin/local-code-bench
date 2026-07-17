@@ -18,6 +18,7 @@ import html
 import json
 from pathlib import Path
 
+from local_code_bench import theme
 from local_code_bench.dashboard_charts import render_charts_section
 from local_code_bench.dashboard_model import (
     AgentAggregate,
@@ -171,51 +172,32 @@ def _safe_warning(warning: DataQualityWarning) -> dict[str, object]:
 # Rendering
 # --------------------------------------------------------------------------- #
 
-_CSS = """
-:root { color-scheme: light dark; }
-* { box-sizing: border-box; }
-body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  margin: 0; padding: 2rem; line-height: 1.5; color: #1d1d1f; background: #f5f5f7;
-}
-h1 { margin: 0 0 0.25rem; font-size: 1.6rem; }
-h2 { margin: 2rem 0 0.75rem; font-size: 1.15rem; }
-.subtitle { color: #6e6e73; margin: 0 0 1.5rem; font-size: 0.9rem; }
-section { background: #fff; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
-th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid #e5e5ea; }
-th { font-weight: 600; color: #424245; white-space: nowrap; }
-td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-.empty { color: #6e6e73; font-style: italic; padding: 0.5rem 0; }
+# Layout rules specific to this page; all colors resolve from the shared token
+# layer (theme.THEME_CSS), light and dark alike — no per-page dark-mode block.
+_PAGE_CSS = """
+body { padding: var(--space-6); }
+.subtitle { color: var(--text-muted); margin: 0 0 var(--space-5); font-size: var(--text-sm); }
+section { background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-md); padding: var(--space-5) var(--space-6);
+  margin-bottom: var(--space-5); }
+section h2 { margin-top: 0; }
+th { white-space: nowrap; }
 th.sortable-th { cursor: pointer; user-select: none; }
 th.sortable-th:hover { text-decoration: underline; }
-.filter { margin-bottom: 0.75rem; padding: 0.35rem 0.55rem; width: 22rem; max-width: 100%;
-  border: 1px solid #d2d2d7; border-radius: 8px; font-size: 0.9rem; }
-.warnings { background: #fff8e1; border: 1px solid #f0d98c; }
-.warnings li { color: #6b5900; }
+.filter { margin-bottom: var(--space-3); width: 22rem; max-width: 100%; }
+.warnings { border-color: var(--border-strong); }
+.warnings li { color: var(--warn-fg); }
 .chart-svg { width: 100%; max-width: 520px; height: auto; display: block; }
-.chart-svg .axis { stroke: #c7c7cc; stroke-width: 1; }
-.chart-svg .tick { fill: #6e6e73; font-size: 10px; }
-.chart-svg .axis-title { fill: #424245; font-size: 11px; }
-.chart-note { color: #6b5900; font-size: 0.85rem; margin: 0.5rem 0 0; }
-.legend { list-style: none; padding: 0; margin: 0.5rem 0 0; display: flex; flex-wrap: wrap;
-  gap: 0.25rem 1rem; font-size: 0.85rem; }
-.legend .swatch { margin-right: 0.35rem; }
-@media (prefers-color-scheme: dark) {
-  body { color: #f5f5f7; background: #1d1d1f; }
-  section { background: #2c2c2e; box-shadow: none; }
-  th { color: #aeaeb2; }
-  th, td { border-bottom-color: #3a3a3c; }
-  .warnings { background: #3a3320; border-color: #6b5900; }
-  .warnings li { color: #f0d98c; }
-  .chart-svg .axis { stroke: #48484a; }
-  .chart-svg .tick { fill: #aeaeb2; }
-  .chart-svg .axis-title { fill: #d1d1d6; }
-  .chart-note { color: #f0d98c; }
-  .filter { background: #1c1c1e; border-color: #48484a; color: #f5f5f7; }
-}
+.chart-svg .axis { stroke: var(--border-strong); stroke-width: 1; }
+.chart-svg .tick { fill: var(--text-muted); font-size: 10px; }
+.chart-svg .axis-title { fill: var(--text-muted); font-size: 11px; }
+.chart-note { color: var(--warn-fg); font-size: var(--text-sm); margin: var(--space-2) 0 0; }
+.legend { list-style: none; padding: 0; margin: var(--space-2) 0 0; display: flex;
+  flex-wrap: wrap; gap: var(--space-1) var(--space-4); font-size: var(--text-sm); }
+.legend .swatch { margin-right: var(--space-1); }
 """.strip()
+
+_CSS = theme.THEME_CSS + "\n" + _PAGE_CSS
 
 
 # Progressive enhancement: the server-rendered tables are fully readable without

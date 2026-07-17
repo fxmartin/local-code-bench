@@ -30,6 +30,7 @@ from urllib.parse import urlsplit
 
 from .dashboard_model import DashboardData, load_dashboard_data
 from .settings import get_settings
+from .theme import THEME_CSS
 
 DEFAULT_HOST = get_settings().dashboard_host
 DEFAULT_PORT = get_settings().dashboard_port
@@ -149,28 +150,20 @@ _PAGE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Live Results</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { font-family: -apple-system, system-ui, sans-serif; margin: 2rem; }
-  h1 { font-size: 1.3rem; }
-  h2 { font-size: 1.05rem; margin-top: 1.6rem; }
-  h3 { font-size: 0.95rem; margin: 0.8rem 0 0.2rem; }
-  table { border-collapse: collapse; width: 100%; max-width: 80rem; margin-top: 0.4rem; }
-  th, td { text-align: left; padding: 0.35rem 0.6rem; border-bottom: 1px solid #8884; }
-  th { font-weight: 600; }
+/*__THEME_CSS__*/
+  body { margin: var(--space-6); }
+  table { max-width: 80rem; margin-top: var(--space-2); }
   th[data-sort-key] { cursor: pointer; user-select: none; }
   th[data-sort-key]:hover { text-decoration: underline; }
-  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   tr.row-clickable { cursor: pointer; }
-  tr.row-clickable:hover { background: #8881; }
-  #leaderboard-filter { margin-top: 0.6rem; padding: 0.3rem 0.5rem; width: 22rem; max-width: 100%; }
-  #drilldown { margin-top: 0.8rem; }
+  tr.row-clickable:hover { background: var(--surface-hover); }
+  #leaderboard-filter { margin-top: var(--space-2); width: 22rem; max-width: 100%; }
+  #drilldown { margin-top: var(--space-3); }
   #drilldown table { max-width: 100%; }
-  #drilldown .preview { font-family: ui-monospace, monospace; font-size: 0.8rem; white-space: pre-wrap;
-    max-width: 28rem; }
-  .pass { color: #1e8449; } .fail { color: #c0392b; }
-  #warnings { color: #c0392b; }
-  #warnings li { font-family: ui-monospace, monospace; font-size: 0.85rem; }
-  .empty { color: #888; }
+  #drilldown .preview { font-family: var(--font-mono); font-size: var(--text-xs);
+    white-space: pre-wrap; max-width: 28rem; }
+  #warnings { color: var(--err-fg); font-weight: 600; }
+  #warnings li { font-family: var(--font-mono); font-size: var(--text-sm); }
 </style>
 </head>
 <body>
@@ -462,3 +455,6 @@ setInterval(refresh, 3000);
 </body>
 </html>
 """
+
+# Inject the shared token layer + base styles (story 16.1-001) into the page.
+_PAGE = _PAGE.replace("/*__THEME_CSS__*/", THEME_CSS)

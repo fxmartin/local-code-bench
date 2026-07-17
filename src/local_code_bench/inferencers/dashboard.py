@@ -24,6 +24,7 @@ from urllib.parse import parse_qs, urlsplit
 from ..config import InferencerConfig, load_inferencers
 from ..engine_provenance import EngineProvenanceError, capture_engine_provenance
 from ..settings import get_settings
+from ..theme import THEME_CSS
 from . import manager
 from .manager import InferencerError, InferencerStatus
 
@@ -278,24 +279,10 @@ _PAGE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Inferencer Control</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { font-family: -apple-system, system-ui, sans-serif; margin: 2rem; }
-  h1 { font-size: 1.3rem; }
-  table { border-collapse: collapse; width: 100%; max-width: 56rem; }
-  th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #8884; }
-  th { font-weight: 600; }
-  .dot { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 50%; }
-  .up { background: #2e9e44; }
-  .down { background: #999; }
-  button { font: inherit; padding: 0.25rem 0.7rem; cursor: pointer; }
-  button:disabled { opacity: 0.4; cursor: default; }
-  #err { color: #c0392b; min-height: 1.2rem; }
-  #modal { position: fixed; inset: 0; background: #0008; display: none;
-           align-items: center; justify-content: center; }
-  #modal.show { display: flex; }
-  .card { background: Canvas; color: CanvasText; padding: 1.2rem 1.4rem; border-radius: 0.6rem;
-          max-width: 26rem; box-shadow: 0 0.5rem 2rem #0006; }
-  .card ul { margin: 0.5rem 0 1rem; }
+/*__THEME_CSS__*/
+  body { margin: var(--space-6); }
+  table { max-width: 56rem; }
+  #err { color: var(--err-fg); font-weight: 600; min-height: 1.2rem; }
 </style>
 </head>
 <body>
@@ -409,3 +396,6 @@ setInterval(refresh, 2000);
 </body>
 </html>
 """
+
+# Inject the shared token layer + base styles (story 16.1-001) into the page.
+_PAGE = _PAGE.replace("/*__THEME_CSS__*/", THEME_CSS)

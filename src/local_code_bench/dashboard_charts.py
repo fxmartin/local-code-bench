@@ -21,18 +21,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from local_code_bench.dashboard_model import EndpointModelAggregate, SweepPoint
+from local_code_bench.theme import CHART_SERIES
 
-# Palette is inlined (no external CSS/CDN) and cycles per sweep series.
-_PALETTE = (
-    "#0a84ff",
-    "#ff9f0a",
-    "#30d158",
-    "#bf5af2",
-    "#ff375f",
-    "#64d2ff",
-    "#ffd60a",
-    "#a2845e",
-)
+# Series colors come from the shared token layer (story 16.1-001); values are
+# inlined into the SVG (no external CSS/CDN) and cycle per sweep series.
+_PALETTE = CHART_SERIES
 _POINT_COLOR = _PALETTE[0]
 
 # SVG geometry (viewBox units). Plot area is the canvas minus margins.
