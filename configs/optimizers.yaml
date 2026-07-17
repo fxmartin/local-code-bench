@@ -1,0 +1,27 @@
+# Context-optimization proxies the harness can detect and drive (Epic-13).
+#
+# A proxy sits between the harness and an inference engine: it listens on `port`
+# and forwards to the active inferencer's base URL, substituted into `start` as
+# `{upstream}` at launch time — so the proxy is always wired to a real engine.
+#
+#   detect     exactly one of binary / module / app (same kinds as
+#              configs/inferencers.yaml):
+#                binary -> resolved with `shutil.which`
+#                module -> resolved with `importlib.util.find_spec`
+#                app    -> a macOS `.app` bundle under /Applications or ~/Applications
+#   port       the TCP port the proxy listens on.
+#   health_url liveness probe; `{port}` is substituted at load time.
+#   start      argv template; `{port}` (the proxy's own listen port) and
+#              `{upstream}` (the active inferencer's base URL) are substituted
+#              at launch time.
+#   url        optional reference link. The harness NEVER installs a proxy —
+#              when one is not installed it points you to this URL to install
+#              it manually. See docs/INFERENCER-INSTALLATION.md.
+optimizers:
+  - name: headroom
+    detect:
+      binary: headroom
+    port: 8787
+    health_url: http://127.0.0.1:{port}/v1/models
+    start: ["headroom", "proxy", "--port", "8787", "{upstream}"]
+    url: https://headroom-docs.vercel.app/docs

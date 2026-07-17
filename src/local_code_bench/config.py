@@ -135,10 +135,42 @@ class InferencerConfig:
     store_format: StoreFormat | None = None
 
 
-def resolve_health_url(cfg: InferencerConfig) -> str:
-    """Substitute `{port}` in an inferencer's health URL template."""
+@dataclass(frozen=True)
+class OptimizerConfig:
+    """A context-optimization proxy the harness can detect and drive (Epic-13).
+
+    The proxy sits between the harness and an inference engine: ``start`` is an
+    argv template whose ``{port}`` (the proxy's own listen port) and
+    ``{upstream}`` (the active inferencer's base URL) are substituted at launch
+    time, so the proxy is always wired to a real engine. Detection is read-only —
+    the harness never installs a proxy; ``url`` is the manual-install reference
+    surfaced when one is missing.
+    """
+
+    name: str
+    detect_kind: DetectKind
+    detect_target: str
+    port: int
+    health_url: str
+    start: tuple[str, ...]
+    url: str | None = None
+
+
+def resolve_health_url(cfg: InferencerConfig | OptimizerConfig) -> str:
+    """Substitute `{port}` in an inferencer's or optimizer's health URL template."""
 
     return cfg.health_url.format(port=cfg.port)
+
+
+def resolve_optimizer_start(cfg: OptimizerConfig, upstream: str) -> tuple[str, ...]:
+    """Substitute `{port}` and `{upstream}` in an optimizer's start template.
+
+    ``upstream`` is the active inferencer's base URL, kept distinct from
+    ``{port}`` (the proxy's own listen port) so the chained lifecycle can fill
+    it from whichever engine is running.
+    """
+
+    return tuple(arg.format(port=cfg.port, upstream=upstream) for arg in cfg.start)
 
 
 def load_models(path: str | Path) -> dict[str, ModelConfig]:
@@ -207,6 +239,27 @@ def load_inferencers(path: str | Path) -> dict[str, InferencerConfig]:
             raise ConfigError(f"inferencers[{index}].name duplicates '{inferencer.name}'")
         inferencers[inferencer.name] = inferencer
     return inferencers
+
+
+def load_optimizers(path: str | Path) -> dict[str, OptimizerConfig]:
+    """Load and validate context-optimization proxy configs from YAML."""
+
+    config_path = Path(path)
+    try:
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ConfigError(f"optimizer config not found: {config_path}") from exc
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"invalid YAML in {config_path}: {exc}") from exc
+    if not isinstance(raw, dict) or not isinstance(raw.get("optimizers"), list):
+        raise ConfigError("optimizers.yaml field 'optimizers' must be a list")
+    optimizers: dict[str, OptimizerConfig] = {}
+    for index, entry in enumerate(raw["optimizers"]):
+        optimizer = _parse_optimizer(entry, index)
+        if optimizer.name in optimizers:
+            raise ConfigError(f"optimizers[{index}].name duplicates '{optimizer.name}'")
+        optimizers[optimizer.name] = optimizer
+    return optimizers
 
 
 def load_external_repo(path: str | Path) -> ExternalRepoConfig | None:
@@ -342,18 +395,8 @@ def _parse_inferencer(entry: Any, index: int) -> InferencerConfig:
     if lifecycle not in {"server", "app"}:
         raise ConfigError(f"inferencers[{index}].lifecycle must be 'server' or 'app'")
 
-    detect = entry.get("detect")
-    if not isinstance(detect, dict):
-        raise ConfigError(f"inferencers[{index}].detect must be a mapping")
-    kinds = [kind for kind in ("binary", "module", "app") if kind in detect]
-    if len(kinds) != 1:
-        raise ConfigError(f"inferencers[{index}].detect must have exactly one of binary/module/app")
-    detect_kind = kinds[0]
-    detect_target = _required_str(detect, detect_kind, index, root="inferencers")
-
-    port = entry.get("port")
-    if isinstance(port, bool) or not isinstance(port, int) or port < 1:
-        raise ConfigError(f"inferencers[{index}].port must be a positive integer")
+    detect_kind, detect_target = _parse_detect(entry, index, root="inferencers")
+    port = _required_port(entry, index, root="inferencers")
 
     start = _optional_command(entry, "start", index)
     stop = _optional_command(entry, "stop", index)
@@ -380,6 +423,48 @@ def _parse_inferencer(entry: Any, index: int) -> InferencerConfig:
         model_store=model_store,
         store_format=store_format,  # type: ignore[arg-type]
     )
+
+
+def _parse_optimizer(entry: Any, index: int) -> OptimizerConfig:
+    if not isinstance(entry, dict):
+        raise ConfigError(f"optimizers[{index}] must be a mapping")
+
+    detect_kind, detect_target = _parse_detect(entry, index, root="optimizers")
+    port = _required_port(entry, index, root="optimizers")
+
+    start = _optional_command(entry, "start", index, root="optimizers")
+    if start is None:
+        raise ConfigError(f"optimizers[{index}] requires a 'start' command")
+
+    return OptimizerConfig(
+        name=_required_str(entry, "name", index, root="optimizers"),
+        detect_kind=detect_kind,  # type: ignore[arg-type]
+        detect_target=detect_target,
+        port=port,
+        health_url=_required_str(entry, "health_url", index, root="optimizers"),
+        start=start,
+        url=_optional_str(entry, "url", index, root="optimizers"),
+    )
+
+
+def _parse_detect(entry: dict[str, Any], index: int, *, root: str) -> tuple[str, str]:
+    """Parse a `detect` mapping with exactly one of binary/module/app."""
+
+    detect = entry.get("detect")
+    if not isinstance(detect, dict):
+        raise ConfigError(f"{root}[{index}].detect must be a mapping")
+    kinds = [kind for kind in ("binary", "module", "app") if kind in detect]
+    if len(kinds) != 1:
+        raise ConfigError(f"{root}[{index}].detect must have exactly one of binary/module/app")
+    detect_kind = kinds[0]
+    return detect_kind, _required_str(detect, detect_kind, index, root=root)
+
+
+def _required_port(entry: dict[str, Any], index: int, *, root: str) -> int:
+    port = entry.get("port")
+    if isinstance(port, bool) or not isinstance(port, int) or port < 1:
+        raise ConfigError(f"{root}[{index}].port must be a positive integer")
+    return port
 
 
 def _optional_store_paths(
@@ -419,18 +504,16 @@ def _optional_command(
     entry: dict[str, Any],
     field: str,
     index: int,
+    *,
+    root: str = "inferencers",
 ) -> tuple[str, ...] | None:
     value = entry.get(field)
     if value is None:
         return None
     if not isinstance(value, list) or not value:
-        raise ConfigError(
-            f"inferencers[{index}].{field} must be a non-empty list of strings when set"
-        )
+        raise ConfigError(f"{root}[{index}].{field} must be a non-empty list of strings when set")
     if not all(isinstance(arg, str) and arg.strip() for arg in value):
-        raise ConfigError(
-            f"inferencers[{index}].{field} must be a non-empty list of strings when set"
-        )
+        raise ConfigError(f"{root}[{index}].{field} must be a non-empty list of strings when set")
     return tuple(value)
 
 

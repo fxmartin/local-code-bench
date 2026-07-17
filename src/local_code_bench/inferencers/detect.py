@@ -11,9 +11,10 @@ from __future__ import annotations
 import importlib.util
 import shutil
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
-from ..config import InferencerConfig
+from ..config import InferencerConfig, OptimizerConfig
 
 
 def _app_dirs() -> list[Path]:
@@ -22,8 +23,12 @@ def _app_dirs() -> list[Path]:
     return [Path("/Applications"), Path.home() / "Applications"]
 
 
-def is_installed(cfg: InferencerConfig) -> bool:
-    """Report whether the engine `cfg` describes is installed on this machine."""
+def is_installed(cfg: InferencerConfig | OptimizerConfig) -> bool:
+    """Report whether the engine or proxy `cfg` describes is installed on this machine.
+
+    Optimizer proxies (Epic-13) share the same detect kinds as inferencers, so
+    the same read-only checks apply — nothing is ever installed on a miss.
+    """
 
     if cfg.detect_kind == "binary":
         return shutil.which(cfg.detect_target) is not None
@@ -40,7 +45,7 @@ def is_installed(cfg: InferencerConfig) -> bool:
     return False
 
 
-def detect_all(configs: dict[str, InferencerConfig]) -> dict[str, bool]:
-    """Map each inferencer name to its installed state."""
+def detect_all(configs: Mapping[str, InferencerConfig | OptimizerConfig]) -> dict[str, bool]:
+    """Map each inferencer or optimizer name to its installed state."""
 
     return {name: is_installed(cfg) for name, cfg in configs.items()}
