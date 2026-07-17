@@ -6,7 +6,11 @@ import ast
 import textwrap
 from dataclasses import dataclass
 
-from local_code_bench.sandbox import SandboxResult, run_in_sandbox
+from local_code_bench.sandbox import (
+    DEFAULT_SANDBOX_TIMEOUT_SECONDS,
+    SandboxResult,
+    run_in_sandbox,
+)
 from local_code_bench.tasks import BenchmarkTask
 
 
@@ -48,7 +52,7 @@ def score_completion(
     task: BenchmarkTask,
     completion: str,
     *,
-    timeout_seconds: float = 5.0,
+    timeout_seconds: float = DEFAULT_SANDBOX_TIMEOUT_SECONDS,
 ) -> ScoreResult:
     code = extract_code(completion)
     if not code:

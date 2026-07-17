@@ -46,6 +46,11 @@ from .inferencers.dashboard import (
     _serialize,
 )
 from .inferencers.manager import InferencerError
+from .settings import get_settings
+
+DEFAULT_HOST = get_settings().dashboard_host
+DEFAULT_PORT = get_settings().unified_dashboard_port
+DEFAULT_CACHE_DIR = get_settings().cache_dir
 
 # Suite ids accepted by :func:`tasks.load_suite`. The full availability-aware
 # catalog (built-ins + config-registered custom suites) is story 09.5-001; this
@@ -123,7 +128,7 @@ class RunOrchestrator:
         inferencers: dict[str, InferencerConfig],
         state_dir: str | Path,
         results_dir: str | Path,
-        cache_dir: str | Path = ".cache/benchmarks",
+        cache_dir: str | Path = DEFAULT_CACHE_DIR,
     ) -> None:
         self._models = models
         self._inferencers = inferencers
@@ -449,8 +454,8 @@ def make_handler(orchestrator: RunOrchestrator) -> type[BaseHTTPRequestHandler]:
 def make_server(
     orchestrator: RunOrchestrator,
     *,
-    host: str = "127.0.0.1",
-    port: int = 8765,
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
 ) -> HTTPServer:
     """Create an ``HTTPServer`` bound to localhost only."""
 

@@ -11,7 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from local_code_bench.settings import get_settings
+
 SuiteName = Literal["humaneval", "mbpp", "humaneval-plus", "mbpp-plus"]
+
+DEFAULT_CACHE_DIR = get_settings().cache_dir
 
 BUILTIN_SUITES: tuple[str, ...] = ("humaneval", "mbpp", "canary", "humaneval-plus", "mbpp-plus")
 
@@ -115,7 +119,7 @@ class BenchmarkTask:
 def load_suite(
     name: str,
     *,
-    cache_dir: str | Path = ".cache/benchmarks",
+    cache_dir: str | Path = DEFAULT_CACHE_DIR,
     suites_path: str | Path = DEFAULT_SUITES_PATH,
 ) -> list[BenchmarkTask]:
     if name == "humaneval":
@@ -204,7 +208,7 @@ def _parse_custom_row(row: Any, suite_id: str, index: int) -> BenchmarkTask:
     )
 
 
-def load_canary(*, cache_dir: str | Path = ".cache/benchmarks") -> list[BenchmarkTask]:
+def load_canary(*, cache_dir: str | Path = DEFAULT_CACHE_DIR) -> list[BenchmarkTask]:
     """Return the curated HumanEval anchor subset, in its fixed canonical order."""
 
     by_id = {task.task_id: task for task in load_humaneval(cache_dir=cache_dir)}
@@ -217,7 +221,7 @@ def load_canary(*, cache_dir: str | Path = ".cache/benchmarks") -> list[Benchmar
 def load_evalplus(
     name: str,
     *,
-    cache_dir: str | Path = ".cache/benchmarks",
+    cache_dir: str | Path = DEFAULT_CACHE_DIR,
     max_inputs: int | None = None,
 ) -> list[BenchmarkTask]:
     """Load an EvalPlus suite (HumanEval+ / MBPP+) from a cached release jsonl.
@@ -400,7 +404,7 @@ def build_evalplus_task(
     )
 
 
-def load_humaneval(*, cache_dir: str | Path = ".cache/benchmarks") -> list[BenchmarkTask]:
+def load_humaneval(*, cache_dir: str | Path = DEFAULT_CACHE_DIR) -> list[BenchmarkTask]:
     path = _ensure_cached(Path(cache_dir), "HumanEval.jsonl.gz", HUMANEVAL_URL)
     rows = _read_jsonl_gz(path)
     tasks = [
@@ -419,7 +423,7 @@ def load_humaneval(*, cache_dir: str | Path = ".cache/benchmarks") -> list[Bench
     return tasks
 
 
-def load_mbpp(*, cache_dir: str | Path = ".cache/benchmarks") -> list[BenchmarkTask]:
+def load_mbpp(*, cache_dir: str | Path = DEFAULT_CACHE_DIR) -> list[BenchmarkTask]:
     path = _ensure_cached(Path(cache_dir), "sanitized-mbpp.json", MBPP_URL)
     raw = json.loads(path.read_text(encoding="utf-8"))
     rows = raw if isinstance(raw, list) else raw.get("data")

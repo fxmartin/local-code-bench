@@ -30,11 +30,12 @@ from time import perf_counter
 from .config import ModelConfig
 from .metrics import StreamEvent
 from .provider import ChatRequest, Message, ProviderError, provider_for_model
+from .settings import get_settings
 
 # Sensible interactive defaults: a little sampling for a smoke test, and a cap that
 # keeps a chatty local model from running away (mirrors the suite-run default).
-DEFAULT_TEMPERATURE = 0.7
-DEFAULT_MAX_TOKENS = 1024
+DEFAULT_TEMPERATURE = get_settings().chat_temperature
+DEFAULT_MAX_TOKENS = get_settings().chat_max_tokens
 
 _VALID_ROLES = frozenset({"system", "user", "assistant"})
 

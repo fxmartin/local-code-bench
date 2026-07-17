@@ -1,0 +1,60 @@
+# Operational defaults for local-code-bench (story 15.5-001).
+#
+# Resolution order per key: CLI flag > env var > this file > built-in fallback.
+# The shipped values below intentionally equal the built-in fallbacks, so
+# deleting this file (or any key) changes nothing. Full key inventory and the
+# audit of every hardcoded default: docs/SETTINGS.md.
+
+endpoint:
+  # Generation cap for endpoint suite runs when a model config sets no
+  # max_tokens of its own (CLI: --max-tokens).
+  max_tokens: 1024
+  # HTTP timeout for provider requests (env: BENCH_PROVIDER_TIMEOUT_SECONDS).
+  provider_timeout_seconds: 120.0
+
+chat:
+  # Interactive dashboard-chat defaults (not the benchmark protocol).
+  temperature: 0.7
+  max_tokens: 1024
+
+sandbox:
+  # Per-task scoring timeout for generated code (CLI: --timeout).
+  timeout_seconds: 5.0
+
+dashboard:
+  host: 127.0.0.1
+  # `bench --mode dashboard --serve` results dashboard.
+  port: 8770
+  # `bench dashboard` unified dashboard (also `bench inferencer dashboard`).
+  unified_port: 8765
+  state_file: .runtime/dashboard.json
+
+paths:
+  cache_dir: .cache/benchmarks
+  results_dir: results
+  inferencer_state_dir: .runtime/inferencers
+
+inferencer:
+  # How long `bench inferencer start` waits for a healthy server.
+  start_timeout_seconds: 30.0
+  # Per-probe budget for the health endpoint.
+  health_timeout_seconds: 1.0
+
+opencode:
+  # Task A behavioural scoring: Go build and per-check run budgets.
+  build_timeout_seconds: 60.0
+  run_timeout_seconds: 10.0
+
+settings_backup:
+  # Reserved for story 15.2-001 (validated, atomic settings writes).
+  dir: .runtime/settings-backups
+  retention: 10
+
+# READ-ONLY — measurement protocol. The loader refuses any value that differs
+# from these locked constants; edit the source (and the methodology docs) to
+# change the protocol, not this file. The canary anchor set
+# (tasks.CANARY_HUMANEVAL_IDS) is protocol-locked too and has no key here.
+protocol:
+  benchmark_temperature: 0.0
+  benchmark_seed: 0
+  local_concurrency: 1

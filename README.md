@@ -68,6 +68,16 @@ Show the current benchmark CLI stub:
 uv run bench --help
 ```
 
+### Operational Settings
+
+Operational defaults (timeouts, ports, cache/results/state directories, token
+caps) live in `configs/settings.yaml` and resolve through one loader with a
+fixed precedence: CLI flag > env var > `configs/settings.yaml` > built-in
+fallback. The file is additive — delete it (or any key) and behaviour is
+unchanged. Measurement-protocol values (benchmark temperature/seed, local-model
+concurrency) sit in a read-only `protocol:` section the loader refuses to
+override. Full key reference and the audit inventory: `docs/SETTINGS.md`.
+
 ## Endpoint Mode
 
 Endpoint models are configured in `configs/models.yaml`. Add a new OpenAI-compatible

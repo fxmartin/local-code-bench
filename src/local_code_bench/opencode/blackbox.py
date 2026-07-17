@@ -21,8 +21,12 @@ from shutil import which
 
 from local_code_bench.opencode import fixtures
 from local_code_bench.opencode.extract import extract_go_code
+from local_code_bench.settings import get_settings
 
 BUILD_FAIL = "BUILD_FAIL"
+
+DEFAULT_BUILD_TIMEOUT_SECONDS = get_settings().opencode_build_timeout_seconds
+DEFAULT_RUN_TIMEOUT_SECONDS = get_settings().opencode_run_timeout_seconds
 
 # Module name used for the throwaway build (kept offline; stdlib-only).
 _GO_MODULE = "classifier"
@@ -223,8 +227,8 @@ def score_task_a(
     response: str,
     *,
     fixture_path: Path | None = None,
-    build_timeout_seconds: float = 60.0,
-    run_timeout_seconds: float = 10.0,
+    build_timeout_seconds: float = DEFAULT_BUILD_TIMEOUT_SECONDS,
+    run_timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
 ) -> TaskAResult:
     """Extract, compile, and behaviourally test the Go in ``response``.
 

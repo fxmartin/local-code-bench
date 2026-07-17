@@ -31,7 +31,11 @@ from ..engine_provenance import (
     EngineProvenanceError,
     capture_mlx_provenance,
 )
+from ..settings import get_settings
 from . import detect
+
+DEFAULT_START_TIMEOUT_SECONDS = get_settings().inferencer_start_timeout_seconds
+DEFAULT_HEALTH_TIMEOUT_SECONDS = get_settings().inferencer_health_timeout_seconds
 
 _LOG_TAIL_LINES = 20
 _GUI_REFUSAL = "{name} is a GUI app — start and stop it from its own UI, not the harness."
@@ -53,7 +57,7 @@ class InferencerStatus:
     detail: str
 
 
-def health_check(url: str, timeout: float = 1.0) -> bool:
+def health_check(url: str, timeout: float = DEFAULT_HEALTH_TIMEOUT_SECONDS) -> bool:
     """Return True if `url` answers with a 2xx, swallowing connection errors."""
 
     try:
@@ -115,9 +119,9 @@ def start(
     cfg: InferencerConfig,
     state_dir: str | Path,
     *,
-    timeout: float = 30.0,
+    timeout: float = DEFAULT_START_TIMEOUT_SECONDS,
     poll_interval: float = 0.5,
-    health_timeout: float = 1.0,
+    health_timeout: float = DEFAULT_HEALTH_TIMEOUT_SECONDS,
     grace_period: float = 5.0,
     progress: Callable[[str], None] | None = None,
 ) -> InferencerStatus:
