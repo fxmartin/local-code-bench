@@ -39,6 +39,7 @@
 | Epic-14 | Additional Coding-Agent Harnesses | Generalize the Codex-only runner into a pluggable adapter and add Claude Code (cloud baseline) + Qwen Code (drives local models) | 3 | 11 | Should Have (v1.x) |
 | Epic-15 | Settings Management | Dashboard Settings tab to visualise and safely edit all harness configuration — models, inferencers, storage paths/tiering, suites, agents — plus nothing-hardcoded: every operational default externalized to YAML | 8 | 34 | Should Have (v1.x) |
 | Epic-16 | Dashboard UI Revamp | Modern minimalist theme — black/white/grey + one configurable accent, designed light & dark modes, design tokens across every surface, vendored-only tooling | 6 | 22 | Should Have (v1.x) |
+| Epic-17 | Benchmark Comparison Dashboard | Report-style Benchmarks tab: declared comparison axes (engine, architecture, size, quant, context, specialization, local-vs-cloud), deterministic conclusions with provenance, and one-click PDF export | 6 | 24 | Should Have (v1.x) |
 | NFR | Non-Functional Requirements | Accuracy, security, quality, portability, hardware fit | 5 | 12 | Mixed (SEC/QUAL = MVP) |
 
 ## Epic Navigation
@@ -59,6 +60,7 @@
 - **[Epic-14: Additional Coding-Agent Harnesses](./stories/epic-14-additional-agent-harnesses.md)** — generalize the Codex-only agent runner into a pluggable harness-adapter registry (command builder + output parser + read-only detection, reusing Epic-06's workspace + scoring + agent JSONL), then add Claude Code (frontier/cloud baseline; cannot natively target local OpenAI endpoints) and Qwen Code (OpenAI-compatible, drives the project's local models directly). Manual-install / link-only.
 - **[Epic-15: Settings Management](./stories/epic-15-settings-management.md)** — dashboard Settings tab aggregating every config surface (`models.yaml`, `inferencers.yaml` incl. `external_repo`/`auto_tier`, `suites.yaml`, `agents.yaml`, plus a new `configs/settings.yaml` for harness defaults) into one grouped, provenance-labelled view, with validated editors over a single safe write pipeline: loader-backed validation, atomic comment-preserving writes with timestamped backups, external-edit conflict detection, live reload of affected panels, and secrets shown by env-var reference only (never values). Enforces the nothing-hardcoded principle: every operational default (timeouts, ports, token caps, directories, canary set) is externalized to YAML with fixed precedence (flag > env > yaml > fallback) and surfaced in the tab with per-key source provenance.
 - **[Epic-16: Dashboard UI Revamp](./stories/epic-16-ui-theme-revamp.md)** — one design-token layer (black/white/grey ramp + a single accent) replacing ~60 scattered hex literals across all dashboard surfaces; fully designed light and dark modes (OS-following default, persistent no-flash toggle, WCAG AA in both); every section and chart restyled onto the tokens; a time-boxed evaluation of vendorable tooling (Open Props, Pico.css, uPlot — offline, no build step); and the accent/default-mode as validated `settings.yaml` values editable from the Epic-15 Settings tab.
+- **[Epic-17: Benchmark Comparison Dashboard](./stories/epic-17-benchmark-comparison-dashboard.md)** — a Benchmarks tab rendering declared comparison axes (`configs/comparisons.yaml`: mlx-lm vs Ollama, dense vs MoE vs sparse-MoE, size ladder, q4 vs q8, context scaling, specialized vs general, local vs cloud) as oMLX-style reports: two-sided hero, methodology chips, paired stat panels, Pareto frontier, and deterministic conclusion callouts with run-ID provenance; plus a Download-PDF button (print stylesheet + detect-only headless Chrome, browser-print fallback) archiving to `results/reports/`.
 - **[Non-Functional Requirements](./stories/non-functional-requirements.md)** — performance, security, quality, integration, infrastructure.
 
 ## MVP Summary
@@ -81,8 +83,8 @@ v1 is "done" (per `REQUIREMENTS.md` §6) when one command runs the full HumanEva
 
 ## Project Metrics
 
-- **Total Stories**: 96
-- **Total Story Points**: 348
+- **Total Stories**: 102
+- **Total Story Points**: 372
 - **MVP Stories**: ~28 (Epics 01–04 + Epic-06 + NFR-SEC/QUAL)
 - **MVP Points**: ~88
 
@@ -118,6 +120,9 @@ graph TD
     E12 --> E15
     E09 --> E16[Epic-16: Dashboard UI Revamp]
     E15 --> E16
+    E04 --> E17[Epic-17: Benchmark Comparison Dashboard]
+    E09 --> E17
+    E16 --> E17
     NFR[NFR: Security/Sandbox] -.governs.-> E02
     NFR -.governs.-> E03
 ```
