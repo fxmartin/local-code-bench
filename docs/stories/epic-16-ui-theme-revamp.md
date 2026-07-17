@@ -11,12 +11,12 @@
 
 ## Decisions Locked With FX
 - **Palette**: black / white / grey scale + **one single accent color**, nothing else.
+- **Accent color**: **dark blue** (decided 2026-07-17). Shipped default `#1e40af`; still a validated `theme.accent` value in `configs/settings.yaml` per nothing-hardcoded, so it stays adjustable without touching source. Because a dark blue can fall below AA contrast on dark backgrounds, the accent is one *hue* with mode-appropriate lightness: the token layer derives a lighter tint of the same blue for dark mode (`--accent` is dual-valued like every other token) rather than painting `#1e40af` on near-black.
 - **Modes**: both light and dark, fully designed (not browser-default `color-scheme` rendering).
 - **Style direction**: modern and minimalist.
 - **Tooling**: additional libraries/tools are acceptable where they give sharper control.
 
 ## Decisions To Confirm With FX
-- **The accent color itself**: proposal — ship a restrained electric blue as the default and make it a validated `theme.accent` hex in `configs/settings.yaml` (Epic-15), so the "one color" is FX's choice, not the theme's.
 - **Status semantics under a one-accent palette**: today pass/fail/warn are green/red/amber. Proposal: status is conveyed by monochrome weight + iconography/text (✓/✗ glyphs, bold/dim), with the accent reserved for interactive and emphasis states — strict but truest to the brief. Alternative (needs explicit sign-off, since it bends "one single other color"): permit a functional red strictly for failures/destructive actions.
 - **Library shortlist** (evaluated in 16.3-001, all vendorable, no build step): **Open Props** (design-token library, aligns exactly with the token approach), **Pico.css** (classless base for forms/tables), **uPlot** (~40 KB canvas charts if sharper chart control is wanted than the current hand-rolled drawing). Adopting zero of them and staying hand-rolled is an acceptable outcome of the evaluation.
 
@@ -160,7 +160,7 @@
 **Story Points**: 3
 
 **Acceptance Criteria**:
-- **Given** a `theme:` block (`accent: "#RRGGBB"`, `default_mode: light|dark|system`) **When** the dashboard renders **Then** the accent token and initial mode come from it, with the shipped defaults applying when the block is absent (additive, never breaking).
+- **Given** a `theme:` block (`accent: "#RRGGBB"`, `default_mode: light|dark|system`) **When** the dashboard renders **Then** the accent token and initial mode come from it, with the shipped defaults (dark blue `#1e40af`, `system`) applying when the block is absent (additive, never breaking); the dark-mode tint is derived from whatever accent is configured, keeping the one-hue rule under customization.
 - **Given** an invalid value (malformed hex, unknown mode) **When** the config loads **Then** it is rejected with a clear loader error (via the 15.2 pipeline when edited from the tab), never rendered as a broken theme.
 - **Given** the Settings tab's Harness/theme group **When** the accent is changed and saved **Then** the dashboard reflects it on next refresh without a restart, and the value round-trips through the validated write path.
 - **Given** an accent with poor contrast against either mode's background **When** validated **Then** the editor warns (AA check against both `--bg` values) but does not block — FX owns the final call.
