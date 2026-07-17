@@ -30,7 +30,7 @@ from urllib.parse import urlsplit
 
 from .dashboard_model import DashboardData, load_dashboard_data
 from .settings import get_settings
-from .theme import THEME_CSS
+from .theme import THEME_CSS, THEME_HEAD_SNIPPET, THEME_TOGGLE_SNIPPET
 
 DEFAULT_HOST = get_settings().dashboard_host
 DEFAULT_PORT = get_settings().dashboard_port
@@ -149,6 +149,7 @@ _PAGE = """<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Live Results</title>
+<!--__THEME_HEAD__-->
 <style>
 /*__THEME_CSS__*/
   body { margin: var(--space-6); }
@@ -167,6 +168,7 @@ _PAGE = """<!DOCTYPE html>
 </style>
 </head>
 <body>
+<!--__THEME_TOGGLE__-->
 <h1>Live Benchmark Results</h1>
 <p class="empty" id="updated"></p>
 
@@ -456,5 +458,10 @@ setInterval(refresh, 3000);
 </html>
 """
 
-# Inject the shared token layer + base styles (story 16.1-001) into the page.
-_PAGE = _PAGE.replace("/*__THEME_CSS__*/", THEME_CSS)
+# Inject the shared token layer + base styles (story 16.1-001) and the
+# pre-paint script + theme toggle chrome (story 16.1-002) into the page.
+_PAGE = (
+    _PAGE.replace("/*__THEME_CSS__*/", THEME_CSS)
+    .replace("<!--__THEME_HEAD__-->", THEME_HEAD_SNIPPET)
+    .replace("<!--__THEME_TOGGLE__-->", THEME_TOGGLE_SNIPPET)
+)
