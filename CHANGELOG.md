@@ -2,6 +2,30 @@
 
 <!-- version list -->
 
+## v0.57.0 (2026-07-17)
+
+### Bug Fixes
+
+- **inventory**: Count hardlinked blobs once in directory size
+  ([`11aff94`](https://github.com/fxmartin/local-code-bench/commit/11aff94f42e20d2c235482dae985b5327e8280be))
+
+### Documentation
+
+- **stories**: Add Epic-17 benchmark comparison dashboard with PDF export
+  ([`1e558d4`](https://github.com/fxmartin/local-code-bench/commit/1e558d463e55d07082ce8c9480a6724163b63bbf))
+
+- **stories**: Add Epic-18 macOS native app shell
+  ([`663207c`](https://github.com/fxmartin/local-code-bench/commit/663207c20f1dcf08670bb644cc373cefe7da8e97))
+
+- **stories**: Lock functional dark red for failures in Epic-16
+  ([`9cbba87`](https://github.com/fxmartin/local-code-bench/commit/9cbba8704a8224e4dc057f0e8ce27a94f1eba4e4))
+
+### Features
+
+- **models**: Add ornith 9b/35b mlx + ollama benchmark matrix
+  ([`637e4a0`](https://github.com/fxmartin/local-code-bench/commit/637e4a0274d1ad6eb6966c7ae9193fe25345bd1f))
+
+
 ## v0.56.0 (2026-07-17)
 
 ### Chores
