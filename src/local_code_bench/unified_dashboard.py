@@ -58,7 +58,7 @@ from .inferencers import tiered, tiering
 from .inferencers.external import check_availability
 from .settings import get_settings
 from .suite_catalog import catalog_payload
-from .theme import THEME_CSS
+from .theme import THEME_CSS, THEME_HEAD_SNIPPET, THEME_TOGGLE_SNIPPET
 
 DEFAULT_HOST = get_settings().dashboard_host
 DEFAULT_PORT = get_settings().unified_dashboard_port
@@ -1226,6 +1226,7 @@ _PAGE = """<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>local-code-bench Dashboard</title>
+<!--__THEME_HEAD__-->
 <style>
 /*__THEME_CSS__*/
   header { padding: var(--space-4) var(--space-6) 0; border-bottom: 1px solid var(--border); }
@@ -1284,6 +1285,7 @@ _PAGE = """<!DOCTYPE html>
 </head>
 <body>
 <header>
+  <!--__THEME_TOGGLE__-->
   <h1>local-code-bench</h1>
   <nav id="nav">
     <button data-section="inferencers" class="active">Inferencers</button>
@@ -2707,5 +2709,10 @@ _PAGE = """<!DOCTYPE html>
 </html>
 """
 
-# Inject the shared token layer + base styles (story 16.1-001) into the page.
-_PAGE = _PAGE.replace("/*__THEME_CSS__*/", THEME_CSS)
+# Inject the shared token layer + base styles (story 16.1-001) and the
+# pre-paint script + theme toggle chrome (story 16.1-002) into the page.
+_PAGE = (
+    _PAGE.replace("/*__THEME_CSS__*/", THEME_CSS)
+    .replace("<!--__THEME_HEAD__-->", THEME_HEAD_SNIPPET)
+    .replace("<!--__THEME_TOGGLE__-->", THEME_TOGGLE_SNIPPET)
+)

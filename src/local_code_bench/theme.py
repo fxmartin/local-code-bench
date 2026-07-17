@@ -14,9 +14,15 @@ rendered page to enforce it. The layer has two parts:
   headings, tables, buttons, inputs, badges/dots, status lines, modal card):
   system font stack, hairline borders, restrained radii, and no decorative
   gradients or drop shadows.
+* ``MODES_CSS`` + the theme-toggle chrome (story 16.1-002) — a
+  ``[data-theme="light"|"dark"]`` root attribute forces one ``color-scheme``
+  (flipping every ``light-dark()`` token and native controls/scrollbars at
+  once); ``THEME_HEAD_SNIPPET`` applies the ``localStorage`` preference before
+  first paint and ``THEME_TOGGLE_SNIPPET`` is the persistent header toggle.
 
-Pages embed ``THEME_CSS`` (tokens + base) and keep only layout-specific rules
-of their own, expressed exclusively as ``var(...)`` references. Restyling the
+Pages embed ``THEME_CSS`` (tokens + modes + base) plus the two chrome snippets
+and keep only layout-specific rules of their own, expressed exclusively as
+``var(...)`` references. Restyling the
 UI is therefore a token edit here, not a hunt through per-page hex literals.
 """
 
@@ -40,9 +46,11 @@ GREY_RAMP = (
     "#262626",
 )
 
-# Single accent, tuned to hold ~4.5:1 contrast on both the white and the black
-# anchor so one literal serves both color schemes.
+# Accent, tuned per scheme (story 16.1-002): no single blue holds AA 4.5:1
+# against both the white and the near-black anchor, so --accent is dual-valued —
+# the deeper stop for light mode, a lifted stop for dark mode.
 ACCENT = "#3a6df0"
+ACCENT_DARK = "#7aa2ff"
 
 # Categorical data-series colors for the inline SVG charts. These are a
 # data-visualization layer on top of the UI palette (distinguishing up to eight
@@ -78,7 +86,6 @@ TOKENS_CSS = f"""\
   --grey-5: {GREY_RAMP[4]};
   --grey-6: {GREY_RAMP[5]};
   --grey-7: {GREY_RAMP[6]};
-  --accent: {ACCENT};
 
   /* Semantic colors — component rules resolve only through these. */
   --bg: light-dark(var(--white), var(--black));
@@ -88,6 +95,7 @@ TOKENS_CSS = f"""\
   --border-strong: light-dark(var(--grey-3), var(--grey-6));
   --text: light-dark(var(--black), var(--grey-1));
   --text-muted: light-dark(var(--grey-5), var(--grey-4));
+  --accent: light-dark({ACCENT}, {ACCENT_DARK});
   --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
   --scrim: color-mix(in srgb, var(--black) 50%, transparent);
 
@@ -96,8 +104,8 @@ TOKENS_CSS = f"""\
   --err-fg: var(--text);
   --warn-fg: var(--text-muted);
   --status-on: var(--accent);
-  --status-off: var(--border-strong);
-  --status-warn: var(--text-muted);
+  --status-off: var(--text-muted);
+  --status-warn: light-dark(var(--grey-6), var(--grey-3));
 
   /* Type scale. */
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
@@ -128,6 +136,78 @@ TOKENS_CSS = f"""\
   --elevation-2: 0 0 0 1px var(--border-strong);
 }}
 """
+
+
+# --------------------------------------------------------------------------- #
+# Mode overrides + toggle chrome (story 16.1-002). Forcing color-scheme on the
+# root flips every light-dark() token at once and drags native controls and
+# scrollbars along; the OS scheme stays in charge until [data-theme] is set.
+# --------------------------------------------------------------------------- #
+
+MODES_CSS = """\
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+#theme-toggle { position: fixed; top: var(--space-3); right: var(--space-3); z-index: 20;
+  width: 2.1rem; height: 2.1rem; padding: 0; border-radius: var(--radius-full);
+  background: var(--bg); font-size: var(--text-base); line-height: 1; }
+@media (prefers-reduced-motion: no-preference) {
+  body, #theme-toggle { transition: background-color 160ms ease, color 160ms ease; }
+}
+"""
+
+THEME_STORAGE_KEY = "lcb-theme"
+
+# Pre-paint script for <head>: applies the stored mode before the first paint
+# so a page never flashes the wrong theme. Written with a __KEY__ placeholder
+# (not an f-string) so the JS braces stay literal.
+THEME_INIT_JS = """\
+(function () {
+  try {
+    var stored = localStorage.getItem("__KEY__");
+    if (stored === "light" || stored === "dark") {
+      document.documentElement.dataset.theme = stored;
+    }
+  } catch (err) { /* storage unavailable — stay on the OS scheme */ }
+})();
+""".replace("__KEY__", THEME_STORAGE_KEY)
+
+THEME_TOGGLE_HTML = '<button id="theme-toggle" type="button"></button>'
+
+# The toggle flips to the opposite of the *effective* mode (stored preference,
+# else the OS scheme), persists the choice, and keeps its glyph/label in sync —
+# including when the OS scheme changes while no preference is stored.
+THEME_TOGGLE_JS = """\
+(function () {
+  var root = document.documentElement;
+  var button = document.getElementById("theme-toggle");
+  if (!button) { return; }
+  var media = window.matchMedia("(prefers-color-scheme: dark)");
+  function mode() {
+    var forced = root.dataset.theme;
+    if (forced === "light" || forced === "dark") { return forced; }
+    return media.matches ? "dark" : "light";
+  }
+  function render() {
+    var next = mode() === "dark" ? "light" : "dark";
+    button.textContent = next === "light" ? "\\u2600" : "\\u263e";
+    button.setAttribute("aria-label", "Switch to " + next + " theme");
+    button.title = "Switch to " + next + " theme";
+  }
+  button.addEventListener("click", function () {
+    var next = mode() === "dark" ? "light" : "dark";
+    root.dataset.theme = next;
+    try { localStorage.setItem("__KEY__", next); } catch (err) { /* not persisted */ }
+    render();
+  });
+  media.addEventListener("change", render);
+  render();
+})();
+""".replace("__KEY__", THEME_STORAGE_KEY)
+
+# Ready-to-embed snippets for the shared page chrome: the pre-paint script goes
+# in <head>, the toggle (button + behavior) right after <body>.
+THEME_HEAD_SNIPPET = f"<script>\n{THEME_INIT_JS}</script>"
+THEME_TOGGLE_SNIPPET = f"{THEME_TOGGLE_HTML}\n<script>\n{THEME_TOGGLE_JS}</script>"
 
 
 # --------------------------------------------------------------------------- #
@@ -187,5 +267,5 @@ p.warn, span.warn { color: var(--warn-fg); min-height: 1.2rem; }
 .card ul { margin: var(--space-2) 0 var(--space-4); }
 """
 
-THEME_CSS = TOKENS_CSS + "\n" + BASE_CSS
-"""Tokens + base styles, ready to embed in a page's ``<style>`` block."""
+THEME_CSS = TOKENS_CSS + "\n" + MODES_CSS + "\n" + BASE_CSS
+"""Tokens + mode overrides + base styles, ready to embed in a page's ``<style>`` block."""

@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, urlsplit
 from ..config import InferencerConfig, load_inferencers
 from ..engine_provenance import EngineProvenanceError, capture_engine_provenance
 from ..settings import get_settings
-from ..theme import THEME_CSS
+from ..theme import THEME_CSS, THEME_HEAD_SNIPPET, THEME_TOGGLE_SNIPPET
 from . import manager
 from .manager import InferencerError, InferencerStatus
 
@@ -278,6 +278,7 @@ _PAGE = """<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Inferencer Control</title>
+<!--__THEME_HEAD__-->
 <style>
 /*__THEME_CSS__*/
   body { margin: var(--space-6); }
@@ -286,6 +287,7 @@ _PAGE = """<!DOCTYPE html>
 </style>
 </head>
 <body>
+<!--__THEME_TOGGLE__-->
 <h1>Inferencer Control</h1>
 <p id="err"></p>
 <table>
@@ -397,5 +399,10 @@ setInterval(refresh, 2000);
 </html>
 """
 
-# Inject the shared token layer + base styles (story 16.1-001) into the page.
-_PAGE = _PAGE.replace("/*__THEME_CSS__*/", THEME_CSS)
+# Inject the shared token layer + base styles (story 16.1-001) and the
+# pre-paint script + theme toggle chrome (story 16.1-002) into the page.
+_PAGE = (
+    _PAGE.replace("/*__THEME_CSS__*/", THEME_CSS)
+    .replace("<!--__THEME_HEAD__-->", THEME_HEAD_SNIPPET)
+    .replace("<!--__THEME_TOGGLE__-->", THEME_TOGGLE_SNIPPET)
+)

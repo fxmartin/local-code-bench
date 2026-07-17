@@ -516,6 +516,13 @@ server required) and regenerate it with the command above when results change. T
 default empty-state copy renders the dashboard shell until you regenerate it from
 your own runs (results JSONL is gitignored).
 
+Every dashboard surface (the static artifact, the live results server, the
+unified dashboard, and the inferencer panel) ships designed light and dark
+modes. Pages follow the OS `prefers-color-scheme` by default; the round toggle
+in the top-right corner switches instantly and remembers the choice in the
+browser's `localStorage`, applied before first paint so a reload never flashes
+the wrong theme.
+
 ## Inferencer Lifecycle
 
 `bench inferencer` detects, inspects, and controls the local inference engines

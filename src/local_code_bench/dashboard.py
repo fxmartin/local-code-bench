@@ -273,9 +273,11 @@ def _render_html(data: DashboardData) -> str:
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         "<title>local-code-bench — Results Dashboard</title>\n"
+        f"{theme.THEME_HEAD_SNIPPET}\n"
         f"<style>\n{_CSS}\n</style>\n"
         "</head>\n"
         "<body>\n"
+        f"{theme.THEME_TOGGLE_SNIPPET}\n"
         "<h1>local-code-bench — Results Dashboard</h1>\n"
         '<p class="subtitle">Self-contained benchmark dashboard generated from stored '
         "result JSONL. Open directly in a browser — no server required.</p>\n"
