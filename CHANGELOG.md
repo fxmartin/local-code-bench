@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.61.0 (2026-07-17)
+
+### Features
+
+- **context-optimization-proxy**: Start/stop a proxy (#13.2-001)
+  ([`37c039b`](https://github.com/fxmartin/local-code-bench/commit/37c039b2f7cbdced069e8dcb8a4f1e0d0cda8c28))
+
+
 ## v0.60.0 (2026-07-17)
 
 ### Features
