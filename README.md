@@ -616,8 +616,9 @@ reference `url` as the manual-install link (see the proxies section of
 ## Unified Dashboard
 
 `bench dashboard` serves a single localhost page that brings the inferencer control
-panel, the live results view, a benchmark **Run** section, and a **Chat** section
-together — switch between them client-side with no reload and no build step:
+panel, the live results view, a benchmark **Run** section, a **Chat** section, and a
+read-only **Settings** section together — switch between them client-side with no
+reload and no build step:
 
 ```bash
 uv run bench dashboard                       # serve on http://127.0.0.1:8765
@@ -727,6 +728,23 @@ defaults; a rule carrying a `settings_key` (e.g. the quality bar at
 lands. An axis whose cohorts have no runs yet is still declared — the loader exposes
 which configured models would populate each cohort, so the tab can say "no comparable
 runs yet" and list what to run.
+
+The **Settings** section (`GET /api/settings`) aggregates every harness config surface
+into one read-only view, so you can see the whole configuration without opening four
+YAML files: **Models** (`--models`, default `configs/models.yaml`), **Inferencers** and
+**Storage** — local model stores plus the optional `external_repo` / `auto_tier` tier
+blocks — (`--config`, default `configs/inferencers.yaml`), **Suites** (`--suites`,
+default `configs/suites.yaml`), and **Agents** (`--agents`, default
+`configs/agents.yaml`). Each group is labelled with the file it comes from and is
+aggregated server-side (no YAML ever reaches the browser); a missing or unparsable
+file degrades that one group to an inline error naming the file while the others
+render. Model and agent API-key entries show only the environment-variable *name*
+with a set/unset indicator — never a value. Protocol-locked values are marked
+read-only with a one-line rationale: local endpoint `concurrency` (one request at a
+time so shared-GPU contention cannot distort prefill/decode measurements) and the
+benchmark temperature/seed (pass@1 is measured at temperature 0 with a fixed seed).
+This view is read-only — edit the YAML files to change anything; there is no write
+path.
 
 ## macOS App
 

@@ -360,6 +360,7 @@ def test_unified_dashboard_command_invokes_server(monkeypatch) -> None:
         result_paths,
         *,
         models_path,
+        agents_path,
         results_dir,
         suites_path,
         host,
@@ -372,6 +373,7 @@ def test_unified_dashboard_command_invokes_server(monkeypatch) -> None:
             state_dir=state_dir,
             result_paths=result_paths,
             models_path=models_path,
+            agents_path=agents_path,
             results_dir=results_dir,
             suites_path=suites_path,
             host=host,
@@ -399,6 +401,8 @@ def test_unified_dashboard_command_invokes_server(monkeypatch) -> None:
     # monitor + auto-refresh read the results dir
     assert captured["suites_path"] == "configs/suites.yaml"
     assert captured["results_dir"] == "results"
+    # the Settings tab's agents group falls back to the default agent registry
+    assert captured["agents_path"] == "configs/agents.yaml"
 
 
 def test_unified_dashboard_discovers_results_dir(monkeypatch, tmp_path) -> None:
@@ -408,8 +412,8 @@ def test_unified_dashboard_discovers_results_dir(monkeypatch, tmp_path) -> None:
     captured: dict = {}
 
     def fake_serve(
-        config, state_dir, result_paths, *, models_path, results_dir, suites_path, host, port,
-        progress, dashboard_state_file
+        config, state_dir, result_paths, *, models_path, agents_path, results_dir, suites_path,
+        host, port, progress, dashboard_state_file
     ) -> None:
         captured["result_paths"] = result_paths
 
@@ -425,8 +429,8 @@ def test_unified_dashboard_missing_results_dir_yields_no_inputs(monkeypatch, tmp
     captured: dict = {}
 
     def fake_serve(
-        config, state_dir, result_paths, *, models_path, results_dir, suites_path, host, port,
-        progress, dashboard_state_file
+        config, state_dir, result_paths, *, models_path, agents_path, results_dir, suites_path,
+        host, port, progress, dashboard_state_file
     ) -> None:
         captured["result_paths"] = result_paths
 
