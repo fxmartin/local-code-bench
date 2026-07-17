@@ -10,10 +10,10 @@
 ## Epic Scope
 **Total Stories**: 8 | **Total Points**: 34 | **MVP Stories**: 0 (Should Have / v1.x)
 
-## Decisions To Confirm With FX
-- **Comment preservation strategy**: config files carry load-bearing comments (the whole benchmark protocol lives in `models.yaml` comments). The design assumes round-trip YAML editing (`ruamel.yaml` — a new dependency) so edits keep comments; the fallback is targeted line-level patching. Confirm the dependency is acceptable before 15.2-001 starts.
-- **Protocol-locked fields**: which settings are display-only with a rationale instead of editable — proposed: local-model `concurrency` (must stay 1 per the measurement protocol), benchmark temperature/seed (fixed by the reproducibility protocol). Confirm the list.
-- **Prompts in scope?** `prompts/*.md` are configuration-adjacent. Proposed: out of scope for v1 of this epic (they are content, not settings); revisit if editing them from the dashboard proves useful.
+## Decisions Locked With FX (confirmed 2026-07-17)
+- **Comment preservation strategy**: **`ruamel.yaml` round-trip editing** (a new dependency) — edits keep the load-bearing comments in the config files (the whole benchmark protocol lives in `models.yaml` comments). Line-level patching was the rejected fallback.
+- **Protocol-locked fields (display-only, with rationale)**: local-model `concurrency` (must stay 1 per the measurement protocol) and benchmark temperature/seed (fixed by the reproducibility protocol). Model pins (`model_id` / `pinned_revision`) remain **editable**.
+- **Prompts out of scope for v1**: `prompts/*.md` are content, not settings — excluded from the Settings tab for v1; revisit if dashboard editing proves useful.
 
 ## Scope Boundaries (explicitly NOT building)
 - **No secret management** — API keys stay in the shell environment. The tab shows the `api_key_env` *name* and a set/unset indicator; it never displays, stores, or edits a secret value, and no secret ever appears in a settings API response.

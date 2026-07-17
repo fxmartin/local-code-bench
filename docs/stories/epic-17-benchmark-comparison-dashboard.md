@@ -30,10 +30,10 @@ Cross-cutting views available on every axis: the **Pareto frontier** scatter (pa
 - **Download PDF button** is in scope from v1.
 - **Conclusions are deterministic** — rule-based computations over aggregates, never an LLM writing prose; every conclusion shows its numbers and links its run IDs.
 
-## Decisions To Confirm With FX
-- **Catalog v1 cut**: all seven axes above, or a smaller launch set (proposal: 1, 2, 4, 7 first — they have complete data the moment the current matrix finishes one full suite run; 5 needs sweep runs, 3 benefits from adding a 9B, 6 falls out of the same runs as 2).
-- **The quality bar** used by "smallest model clearing the bar" verdicts (proposal: pass@1 within 5 pp of the best local model on the same suite; a `benchmark_dashboard.quality_bar` value in `configs/settings.yaml` per nothing-hardcoded).
-- **Comparison hero colors**: the reference uses one color per side (cyan/pink). Under the locked Epic-16 palette (greys + dark blue + dark red, red reserved for failures), the proposal is side A = accent blue, side B = a mid-grey — strict. Alternative needing sign-off: a second comparison hue used only inside the Benchmarks tab's charts.
+## Decisions Locked With FX (confirmed 2026-07-17)
+- **Catalog v1 cut**: **all seven axes** ship in v1. Axes whose data isn't collected yet render "no comparable runs yet" rather than misleading charts — axis 5 (context scaling) needs Epic-05 sweep runs, and axis 3 (size ladder) is more complete once a 9B rung exists.
+- **The quality bar** used by "smallest model clearing the bar" verdicts: **pass@1 within 5 pp** of the best local model on the same suite, stored as `benchmark_dashboard.quality_bar` in `configs/settings.yaml` (nothing-hardcoded).
+- **Comparison hero colors**: **strict Epic-16 palette** — side A = accent blue, side B = mid-grey. No second comparison hue is introduced.
 
 ## Scope Boundaries (explicitly NOT building)
 - **No new measurements** — the tab visualizes existing `results/*.jsonl`; it never launches runs (the Run section already does that). An axis without data renders as "no comparable runs yet", listing what to run.
