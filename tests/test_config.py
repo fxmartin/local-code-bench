@@ -69,6 +69,14 @@ def test_default_models_config_loads() -> None:
     assert qwen.extra_body == {"reasoning": {"enabled": False}}
     assert qwen.price_per_1k_tokens.input == 0.00045
     assert qwen.price_per_1k_tokens.output == 0.00270
+    assert models["local-mlx-ornith-9b"].model_id == (
+        "mlx-community/Ornith-1.0-9B-4bit"
+    )
+    assert models["local-mlx-ornith-35b"].model_id == (
+        "AtomicChat/ornith-35b-MLX-4bit"
+    )
+    assert models["local-ollama-ornith-9b"].model_id == "ornith:9b"
+    assert models["local-ollama-ornith-35b"].model_id == "ornith:35b"
     assert models["anthropic-claude-baseline"].pinned_revision == "claude-sonnet-4-6"
 
 

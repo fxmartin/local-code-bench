@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -609,9 +610,19 @@ def _file_size(path: Path) -> int:
 
 def _dir_size(base: Path) -> int:
     total = 0
+    seen_files: set[tuple[int, int]] = set()
     for path in base.rglob("*"):
-        if path.is_file() and not path.is_symlink():
-            total += _file_size(path)
+        try:
+            metadata = path.stat()
+        except OSError:
+            continue
+        if not stat.S_ISREG(metadata.st_mode):
+            continue
+        identity = (metadata.st_dev, metadata.st_ino)
+        if identity in seen_files:
+            continue
+        seen_files.add(identity)
+        total += metadata.st_size
     return total
 
 
