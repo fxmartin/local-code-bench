@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.66.0 (2026-07-17)
+
+### Features
+
+- **settings-management**: Read-only settings tab (#15.1-001)
+  ([`e40c757`](https://github.com/fxmartin/local-code-bench/commit/e40c757a02aac545da2aa4c4b50e49583690ad14))
+
+
 ## v0.65.0 (2026-07-17)
 
 ### Features
