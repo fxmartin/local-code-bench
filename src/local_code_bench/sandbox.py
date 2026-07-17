@@ -10,6 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from shutil import which
 
+from local_code_bench.settings import get_settings
+
+DEFAULT_SANDBOX_TIMEOUT_SECONDS = get_settings().sandbox_timeout_seconds
+
 
 @dataclass(frozen=True)
 class SandboxResult:
@@ -21,7 +25,9 @@ class SandboxResult:
     timed_out: bool = False
 
 
-def run_in_sandbox(code: str, test_code: str, *, timeout_seconds: float = 5.0) -> SandboxResult:
+def run_in_sandbox(
+    code: str, test_code: str, *, timeout_seconds: float = DEFAULT_SANDBOX_TIMEOUT_SECONDS
+) -> SandboxResult:
     with tempfile.TemporaryDirectory(prefix="local-code-bench-") as tmp:
         # macOS exposes /var as a symlink to /private/var. sandbox-exec matches
         # canonical paths, so grant access to the resolved temporary directory.

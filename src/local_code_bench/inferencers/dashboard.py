@@ -23,8 +23,12 @@ from urllib.parse import parse_qs, urlsplit
 
 from ..config import InferencerConfig, load_inferencers
 from ..engine_provenance import EngineProvenanceError, capture_engine_provenance
+from ..settings import get_settings
 from . import manager
 from .manager import InferencerError, InferencerStatus
+
+DEFAULT_HOST = get_settings().dashboard_host
+DEFAULT_PORT = get_settings().unified_dashboard_port
 
 _TRUTHY = {"1", "true", "yes", "on"}
 _GUI_START_REFUSAL = "{name} is a GUI app — start it from its own UI, not the dashboard."
@@ -231,8 +235,8 @@ def make_server(
     configs: dict[str, InferencerConfig],
     state_dir: str | Path,
     *,
-    host: str = "127.0.0.1",
-    port: int = 8765,
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
 ) -> HTTPServer:
     """Create an `HTTPServer` bound to localhost only."""
 
@@ -243,8 +247,8 @@ def serve_dashboard(
     config_path: str | Path,
     state_dir: str | Path,
     *,
-    host: str = "127.0.0.1",
-    port: int = 8765,
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
     progress: Callable[[str], None] | None = None,
 ) -> None:
     """Load the registry and serve the dashboard on localhost until interrupted."""

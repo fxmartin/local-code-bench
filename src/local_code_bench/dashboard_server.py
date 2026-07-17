@@ -29,6 +29,10 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .dashboard_model import DashboardData, load_dashboard_data
+from .settings import get_settings
+
+DEFAULT_HOST = get_settings().dashboard_host
+DEFAULT_PORT = get_settings().dashboard_port
 
 
 @dataclass(frozen=True)
@@ -104,8 +108,8 @@ def make_handler(paths: list[str | Path]) -> type[BaseHTTPRequestHandler]:
 def make_server(
     paths: list[str | Path],
     *,
-    host: str = "127.0.0.1",
-    port: int = 8770,
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
 ) -> HTTPServer:
     """Create an ``HTTPServer`` bound to localhost only."""
 
@@ -115,8 +119,8 @@ def make_server(
 def serve_dashboard(
     paths: list[str | Path],
     *,
-    host: str = "127.0.0.1",
-    port: int = 8770,
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
     progress: Callable[[str], None] | None = None,
 ) -> None:
     """Serve the live results dashboard on localhost until interrupted."""

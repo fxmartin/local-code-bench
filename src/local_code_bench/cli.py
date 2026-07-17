@@ -67,11 +67,13 @@ from local_code_bench.provider import ChatRequest, ProviderError, provider_for_m
 from local_code_bench.results import append_jsonl, new_run_path, read_jsonl
 from local_code_bench.rescore import rescore_endpoint_records
 from local_code_bench.runner import run_endpoint_suite, select_models
+from local_code_bench.settings import get_settings
 from local_code_bench.sweep import CONTEXT_SIZES, run_sweep, summarize_sweep, sweep_prompts
 from local_code_bench.tasks import TaskLoadError, limit_tasks, load_suite
 
 
 def build_parser() -> argparse.ArgumentParser:
+    settings = get_settings()
     parser = argparse.ArgumentParser(
         prog="bench",
         description="Run coding-model benchmark tasks.",
@@ -96,7 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--results-dir",
-        default="results",
+        default=settings.results_dir,
         help="directory for raw JSONL run output",
     )
     parser.add_argument(
@@ -149,7 +151,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--resume", action="store_true", help="resume an existing JSONL run")
     parser.add_argument("--run-file", help="explicit JSONL run file for suite/resume modes")
-    parser.add_argument("--cache-dir", default=".cache/benchmarks", help="benchmark dataset cache")
+    parser.add_argument("--cache-dir", default=settings.cache_dir, help="benchmark dataset cache")
     parser.add_argument("--agent", help="configured agent name for agent mode")
     parser.add_argument("--agents-config", default="configs/agents.yaml", help="path to agents YAML")
     parser.add_argument("--input", nargs="*", help="input JSONL files for leaderboard/sweep summaries")
@@ -161,13 +163,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--host",
-        default="127.0.0.1",
+        default=settings.dashboard_host,
         help="dashboard serve bind host (localhost only)",
     )
     parser.add_argument(
         "--port",
         type=int,
-        default=8770,
+        default=settings.dashboard_port,
         help="dashboard serve bind port",
     )
     parser.add_argument(
@@ -182,7 +184,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--inferencer-state-dir",
-        default=".runtime/inferencers",
+        default=settings.inferencer_state_dir,
         help="directory holding inferencer process state files",
     )
     parser.add_argument(
@@ -229,7 +231,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     inferencer.add_argument(
         "--state-dir",
-        default=".runtime/inferencers",
+        default=settings.inferencer_state_dir,
         help="directory holding per-engine PID/state files",
     )
     inferencer.add_argument(
@@ -255,13 +257,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     inferencer.add_argument(
         "--host",
-        default="127.0.0.1",
+        default=settings.dashboard_host,
         help="dashboard bind host (localhost only)",
     )
     inferencer.add_argument(
         "--port",
         type=int,
-        default=8765,
+        default=settings.unified_dashboard_port,
         help="dashboard bind port",
     )
     inferencer.add_argument(
@@ -315,7 +317,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dashboard.add_argument(
         "--state-dir",
-        default=".runtime/inferencers",
+        default=settings.inferencer_state_dir,
         help="directory holding per-engine PID/state files",
     )
     dashboard.add_argument(
@@ -325,18 +327,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dashboard.add_argument(
         "--results-dir",
-        default="results",
+        default=settings.results_dir,
         help="directory scanned for result JSONL when --input is omitted",
     )
     dashboard.add_argument(
         "--host",
-        default="127.0.0.1",
+        default=settings.dashboard_host,
         help="dashboard bind host (localhost only)",
     )
     dashboard.add_argument(
         "--port",
         type=int,
-        default=8765,
+        default=settings.unified_dashboard_port,
         help="dashboard bind port",
     )
     lifecycle = dashboard.add_mutually_exclusive_group()
@@ -353,7 +355,7 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument(
         "--state-file",
         type=Path,
-        default=Path(".runtime/dashboard.json"),
+        default=Path(settings.dashboard_state_file),
         help="dashboard PID/state file",
     )
 

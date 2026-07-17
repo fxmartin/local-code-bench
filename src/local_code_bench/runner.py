@@ -16,11 +16,12 @@ from local_code_bench.metrics import CompletionMeasurement, capture_stream_metri
 from local_code_bench.provider import ChatRequest, ProviderError, provider_for_model
 from local_code_bench.results import append_jsonl, read_jsonl
 from local_code_bench.scoring import score_completion
+from local_code_bench.settings import get_settings
 from local_code_bench.tasks import BenchmarkTask
 
 # Coding-suite solutions are short; cap generation when a model config does not
 # set its own max_tokens so verbose models cannot waste decode time and cost.
-DEFAULT_ENDPOINT_MAX_TOKENS = 1024
+DEFAULT_ENDPOINT_MAX_TOKENS = get_settings().endpoint_max_tokens
 
 
 def select_models(

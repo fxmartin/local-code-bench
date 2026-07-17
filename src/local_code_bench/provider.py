@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 
 from local_code_bench.config import ModelConfig
 from local_code_bench.metrics import StreamEvent
+from local_code_bench.settings import get_settings
 
 
 class ProviderError(RuntimeError):
@@ -267,7 +268,7 @@ def _api_key(model: ModelConfig) -> str | None:
 def _provider_timeout_seconds() -> float:
     value = os.environ.get("BENCH_PROVIDER_TIMEOUT_SECONDS")
     if value is None:
-        return 120.0
+        return get_settings().provider_timeout_seconds
     try:
         timeout_seconds = float(value)
     except ValueError as exc:

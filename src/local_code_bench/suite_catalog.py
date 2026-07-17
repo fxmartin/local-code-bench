@@ -23,6 +23,7 @@ from typing import Any, Literal
 import yaml
 
 from .config import ConfigError
+from .settings import get_settings
 from .tasks import (
     CANARY_HUMANEVAL_IDS,
     EVALPLUS_FILENAMES,
@@ -34,7 +35,7 @@ from .tasks import (
 
 SuiteKind = Literal["builtin", "custom"]
 
-DEFAULT_CACHE_DIR = ".cache/benchmarks"
+DEFAULT_CACHE_DIR = get_settings().cache_dir
 DEFAULT_SUITES_PATH = "configs/suites.yaml"
 
 # Built-in suites in the order the launcher should present them. ``downloadable``

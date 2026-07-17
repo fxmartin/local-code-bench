@@ -56,7 +56,13 @@ from .inferencers import dashboard as inferencer_panel
 from .inferencers import inventory
 from .inferencers import tiered, tiering
 from .inferencers.external import check_availability
+from .settings import get_settings
 from .suite_catalog import catalog_payload
+
+DEFAULT_HOST = get_settings().dashboard_host
+DEFAULT_PORT = get_settings().unified_dashboard_port
+DEFAULT_CACHE_DIR = get_settings().cache_dir
+DEFAULT_RESULTS_DIR = get_settings().results_dir
 
 _TRUTHY = {"1", "true", "yes", "on"}
 
@@ -269,7 +275,7 @@ class DashboardContext:
     result_paths: list[str | Path] = field(default_factory=list)
     models: dict[str, ModelConfig] = field(default_factory=dict)
     orchestrator: launch.RunOrchestrator | None = None
-    cache_dir: str | Path = ".cache/benchmarks"
+    cache_dir: str | Path = DEFAULT_CACHE_DIR
     suites_path: str | Path = "configs/suites.yaml"
     results_dir: str | Path | None = None
     # Epic-12 tiered storage (story 12.6-002): the optional external SSD tier and
@@ -1061,8 +1067,8 @@ def make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
 def make_server(
     ctx: DashboardContext,
     *,
-    host: str = "127.0.0.1",
-    port: int = 8765,
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
 ) -> HTTPServer:
     """Create an ``HTTPServer`` bound to localhost only."""
 
@@ -1102,11 +1108,11 @@ def serve_dashboard(
     result_paths: list[str | Path],
     *,
     models_path: str | Path = "configs/models.yaml",
-    results_dir: str | Path = "results",
-    cache_dir: str | Path = ".cache/benchmarks",
+    results_dir: str | Path = DEFAULT_RESULTS_DIR,
+    cache_dir: str | Path = DEFAULT_CACHE_DIR,
     suites_path: str | Path = "configs/suites.yaml",
-    host: str = "127.0.0.1",
-    port: int = 8765,
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
     progress: Callable[[str], None] | None = None,
     dashboard_state_file: str | Path | None = None,
 ) -> None:
