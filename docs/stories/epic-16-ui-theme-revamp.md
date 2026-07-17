@@ -10,14 +10,12 @@
 **Total Stories**: 6 | **Total Points**: 22 | **MVP Stories**: 0 (Should Have / v1.x)
 
 ## Decisions Locked With FX
-- **Palette**: black / white / grey scale + **one single accent color**, nothing else.
+- **Palette**: black / white / grey scale + **one accent color** (interactive/emphasis) + **one functional danger color** (failures/destructive only), nothing else.
 - **Accent color**: **dark blue** (decided 2026-07-17). Shipped default `#1e40af`; still a validated `theme.accent` value in `configs/settings.yaml` per nothing-hardcoded, so it stays adjustable without touching source. Because a dark blue can fall below AA contrast on dark backgrounds, the accent is one *hue* with mode-appropriate lightness: the token layer derives a lighter tint of the same blue for dark mode (`--accent` is dual-valued like every other token) rather than painting `#1e40af` on near-black.
 - **Modes**: both light and dark, fully designed (not browser-default `color-scheme` rendering).
 - **Style direction**: modern and minimalist.
 - **Tooling**: additional libraries/tools are acceptable where they give sharper control.
-
-## Decisions To Confirm With FX
-- **Status semantics under a one-accent palette**: today pass/fail/warn are green/red/amber. Proposal: status is conveyed by monochrome weight + iconography/text (✓/✗ glyphs, bold/dim), with the accent reserved for interactive and emphasis states — strict but truest to the brief. Alternative (needs explicit sign-off, since it bends "one single other color"): permit a functional red strictly for failures/destructive actions.
+- **Status semantics**: **failures and destructive actions get a functional dark red** (decided 2026-07-17); shipped default `#991b1b`, dual-valued like the accent (a lighter tint of the same red in dark mode for AA contrast) and configurable as `theme.danger` in `configs/settings.yaml`. Everything else stays monochrome: pass/ok and warnings are conveyed by glyph + weight + text (✓ bold / dim), with the dark-blue accent reserved for interactive and emphasis states. The palette is therefore exactly: greys, dark blue (interactive), dark red (failure) — no greens, no ambers.
 - **Library shortlist** (evaluated in 16.3-001, all vendorable, no build step): **Open Props** (design-token library, aligns exactly with the token approach), **Pico.css** (classless base for forms/tables), **uPlot** (~40 KB canvas charts if sharper chart control is wanted than the current hand-rolled drawing). Adopting zero of them and staying hand-rolled is an acceptable outcome of the evaluation.
 
 ## Scope Boundaries (explicitly NOT building)
@@ -27,10 +25,10 @@
 - **No per-user theming profiles** — one theme, two modes, one configurable accent; no theme galleries.
 
 ## Design Reference
-- **Token layer**: one `<style>`/asset block defining semantic CSS custom properties — `--bg`, `--surface`, `--surface-raised`, `--border`, `--text`, `--text-muted`, `--accent`, `--accent-contrast`, plus spacing/type/radius/shadow scales — with dual values via `:root` (light) and `[data-theme="dark"]` overrides. Components reference only semantic tokens, never raw values; the grey scale is defined once and consumed indirectly.
+- **Token layer**: one `<style>`/asset block defining semantic CSS custom properties — `--bg`, `--surface`, `--surface-raised`, `--border`, `--text`, `--text-muted`, `--accent`, `--accent-contrast`, `--danger`, plus spacing/type/radius/shadow scales — with dual values via `:root` (light) and `[data-theme="dark"]` overrides. Components reference only semantic tokens, never raw values; the grey scale is defined once and consumed indirectly.
 - **Mode resolution**: default follows `prefers-color-scheme`; a header toggle stamps `data-theme` on `<html>` and persists to `localStorage`; an inline pre-paint script applies the stored choice before first render (no flash). `color-scheme` is kept in sync so native form controls and scrollbars match.
 - **Accent discipline**: the accent appears only where it means something — primary actions, focus rings, active tab, links, chart highlight series, live-progress fill. Greys carry everything else.
-- **Configurable theme (nothing hardcoded, Epic-15)**: `theme:` block in `configs/settings.yaml` (`accent`, `default_mode`), validated (hex color, `light|dark|system`), injected as the `--accent` token at page render; editable in the Settings tab via the 15.2 write pipeline.
+- **Configurable theme (nothing hardcoded, Epic-15)**: `theme:` block in `configs/settings.yaml` (`accent`, `danger`, `default_mode`), validated (hex colors, `light|dark|system`), injected as the `--accent` / `--danger` tokens at page render; editable in the Settings tab via the 15.2 write pipeline.
 - **Serving**: assets either stay embedded in the rendered page (as today) or move to a couple of local static routes — whichever the 16.3 evaluation favors; both respect the no-network rule.
 
 ## Features in This Epic
@@ -91,8 +89,8 @@
 **Story Points**: 5
 
 **Acceptance Criteria**:
-- **Given** each section **When** rendered **Then** its tables, forms, buttons, badges, tabs, and status/progress lines use only shared primitives and semantic tokens; all per-section ad-hoc color rules (today's `.up`/`.down`/`.pass`/`.fail`/`.warn` greens/reds/ambers) are replaced per the agreed status-semantics decision.
-- **Given** pass/fail/status indicators **When** rendered monochrome **Then** state remains unambiguous without color (glyph + weight + text), verified with a no-color squint test in both modes.
+- **Given** each section **When** rendered **Then** its tables, forms, buttons, badges, tabs, and status/progress lines use only shared primitives and semantic tokens; all per-section ad-hoc color rules (today's `.up`/`.down`/`.pass`/`.fail`/`.warn` greens/reds/ambers) are replaced by the locked status semantics — `--danger` (dark red) for failures/destructive actions only, monochrome glyph + weight for pass/ok/warn.
+- **Given** pass/fail/status indicators **When** rendered **Then** state remains unambiguous without relying on color alone (glyph + weight + text accompany the red), verified with a no-color squint test in both modes.
 - **Given** interactive elements **When** used **Then** hover/active/focus/disabled states are consistent everywhere, with the accent carrying focus and primary emphasis (including the tier-move live progress from 12.6-003).
 - **Given** empty, loading, and error states in any section **When** shown **Then** they use one shared pattern (muted text, consistent placement) rather than per-section improvisation.
 
@@ -160,7 +158,7 @@
 **Story Points**: 3
 
 **Acceptance Criteria**:
-- **Given** a `theme:` block (`accent: "#RRGGBB"`, `default_mode: light|dark|system`) **When** the dashboard renders **Then** the accent token and initial mode come from it, with the shipped defaults (dark blue `#1e40af`, `system`) applying when the block is absent (additive, never breaking); the dark-mode tint is derived from whatever accent is configured, keeping the one-hue rule under customization.
+- **Given** a `theme:` block (`accent: "#RRGGBB"`, `danger: "#RRGGBB"`, `default_mode: light|dark|system`) **When** the dashboard renders **Then** the accent/danger tokens and initial mode come from it, with the shipped defaults (dark blue `#1e40af`, dark red `#991b1b`, `system`) applying when the block is absent (additive, never breaking); dark-mode tints are derived from whatever hues are configured, keeping the one-hue-per-role rule under customization.
 - **Given** an invalid value (malformed hex, unknown mode) **When** the config loads **Then** it is rejected with a clear loader error (via the 15.2 pipeline when edited from the tab), never rendered as a broken theme.
 - **Given** the Settings tab's Harness/theme group **When** the accent is changed and saved **Then** the dashboard reflects it on next refresh without a restart, and the value round-trips through the validated write path.
 - **Given** an accent with poor contrast against either mode's background **When** validated **Then** the editor warns (AA check against both `--bg` values) but does not block — FX owns the final call.
