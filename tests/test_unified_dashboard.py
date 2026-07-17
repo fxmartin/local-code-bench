@@ -1686,7 +1686,12 @@ def _tier_ctx(
     return ud.DashboardContext(
         configs={"dflash": _store_cfg("dflash", 8000, "gguf")},
         state_dir=".runtime",
-        external_cfg=ExternalRepoConfig(root="~/ext", volume_marker=".marker")
+        # The tests' "gguf" store format needs an explicit external subpath so
+        # plan_demotion can resolve a destination (defaults only cover the real
+        # StoreFormat values).
+        external_cfg=ExternalRepoConfig(
+            root="~/ext", volume_marker=".marker", subpaths={"gguf": "gguf"}
+        )
         if external
         else None,
         autotier_cfg=autotier,
@@ -1829,11 +1834,35 @@ def test_post_to_tiers_route_is_404() -> None:
     assert ud.handle_request("POST", "/api/tiers", _tier_ctx()).status == 404
 
 
-# --- /api/promote and /api/demote: verified moves --------------------------
+# --- /api/promote and /api/demote: verified background moves ---------------
 
 
-def test_api_promote_runs_verified_move(monkeypatch) -> None:
-    # AC2: a promote runs the verified move server-side and reports the new tier.
+def _await_move(ctx: ud.DashboardContext) -> dict:
+    """Wait for the background move to finish and return its final job payload."""
+
+    ctx.move_worker.wait()
+    return json.loads(ud.handle_request("GET", "/api/move-status", ctx).body)["job"]
+
+
+def _promote_result(size: int = 100) -> _tiering.PromoteResult:
+    return _tiering.PromoteResult(
+        plan=_tiering.PromotePlan(
+            name="m",
+            store_format="gguf",
+            source=Path("/ext/gguf/m.gguf"),
+            destination=Path("/Users/fxmartin/store/m.gguf"),
+            size_bytes=size,
+        ),
+        destination=Path("/Users/fxmartin/store/m.gguf"),
+        bytes_copied=size,
+        verified=True,
+    )
+
+
+def test_api_promote_runs_verified_move_in_background(monkeypatch) -> None:
+    # AC2 (12.6-002) + 12.6-003: the verified move runs server-side in a
+    # background worker — the POST returns 202 immediately and the result is
+    # reported by /api/move-status.
     _mounted(monkeypatch)
     monkeypatch.setattr(ud.tiered, "scan_external_tier", lambda cfg, infs, **k: [_ext_model("m")])
     captured: dict = {}
@@ -1841,31 +1870,30 @@ def test_api_promote_runs_verified_move(monkeypatch) -> None:
     def fake_promote(source, inferencer, *a, **k):
         captured["source"] = source.name
         captured["inferencer"] = inferencer.name
-        return _tiering.PromoteResult(
-            plan=_tiering.PromotePlan(
-                name="m",
-                store_format="gguf",
-                source=Path("/ext/gguf/m.gguf"),
-                destination=Path("/Users/fxmartin/store/m.gguf"),
-                size_bytes=100,
-            ),
-            destination=Path("/Users/fxmartin/store/m.gguf"),
-            bytes_copied=100,
-            verified=True,
-        )
+        return _promote_result()
 
     monkeypatch.setattr(ud.tiering, "promote_model", fake_promote)
+    ctx = _tier_ctx()
 
-    resp = ud.handle_request("POST", "/api/promote?name=m&format=gguf", _tier_ctx())
+    resp = ud.handle_request("POST", "/api/promote?name=m&format=gguf", ctx)
 
-    assert resp.status == 200
-    body = json.loads(resp.body)
-    assert body["promoted"]["name"] == "m"
-    assert body["promoted"]["tier"] == "local"
-    assert body["promoted"]["bytes_copied"] == 100
+    assert resp.status == 202
+    accepted = json.loads(resp.body)["job"]
+    assert accepted["verb"] == "promote"
+    assert accepted["name"] == "m"
+
+    job = _await_move(ctx)
+    assert job["state"] == "done"
+    assert job["result"]["promoted"]["name"] == "m"
+    assert job["result"]["promoted"]["tier"] == "local"
+    assert job["result"]["promoted"]["bytes_copied"] == 100
+    # Progress is complete and measured against the plan's size.
+    assert job["bytes_total"] == 100
+    assert job["bytes_done"] == 100
     assert captured == {"source": "m", "inferencer": "dflash"}
-    # AC4: no host path from the result leaks into the response.
+    # AC4: no host path from the plan or result leaks into any response.
     assert "/Users/fxmartin" not in resp.body.decode()
+    assert "/Users/fxmartin" not in json.dumps(job)
 
 
 def test_api_promote_offline_is_refused_without_moving(monkeypatch) -> None:
@@ -1885,8 +1913,9 @@ def test_api_promote_offline_is_refused_without_moving(monkeypatch) -> None:
     assert moved["called"] is False
 
 
-def test_api_promote_refusal_maps_to_error(monkeypatch) -> None:
-    # AC: a tiering refusal (in-use / no space) surfaces verbatim as an error.
+def test_api_promote_refusal_surfaces_in_move_status(monkeypatch) -> None:
+    # AC: a tiering refusal (in-use / no space) surfaces verbatim — now via the
+    # background job's error state rather than a blocking response.
     _mounted(monkeypatch)
     monkeypatch.setattr(ud.tiered, "scan_external_tier", lambda cfg, infs, **k: [_ext_model("m")])
 
@@ -1894,11 +1923,15 @@ def test_api_promote_refusal_maps_to_error(monkeypatch) -> None:
         raise _tiering.PromoteError("dflash is running and could be serving m")
 
     monkeypatch.setattr(ud.tiering, "promote_model", boom)
+    ctx = _tier_ctx()
 
-    resp = ud.handle_request("POST", "/api/promote?name=m&format=gguf", _tier_ctx())
+    resp = ud.handle_request("POST", "/api/promote?name=m&format=gguf", ctx)
 
-    assert resp.status == 409
-    assert "could be serving" in json.loads(resp.body)["error"]
+    assert resp.status == 202
+    job = _await_move(ctx)
+    assert job["state"] == "error"
+    assert "could be serving" in job["error"]
+    assert job["result"] is None
 
 
 def test_api_promote_unknown_external_model_is_404(monkeypatch) -> None:
@@ -1910,8 +1943,9 @@ def test_api_promote_unknown_external_model_is_404(monkeypatch) -> None:
     assert resp.status == 404
 
 
-def test_api_demote_runs_verified_move(monkeypatch) -> None:
-    # AC2: a demote runs the verified move server-side and reports the new tier.
+def test_api_demote_runs_verified_move_in_background(monkeypatch) -> None:
+    # AC2 (12.6-002) + 12.6-003: the verified demote runs in the background
+    # worker; the POST returns 202 and /api/move-status carries the result.
     _mounted(monkeypatch)
     monkeypatch.setattr(
         ud.inventory,
@@ -1937,15 +1971,18 @@ def test_api_demote_runs_verified_move(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(ud.tiering, "demote_model", fake_demote)
+    ctx = _tier_ctx()
 
-    resp = ud.handle_request("POST", "/api/demote?name=m&format=gguf", _tier_ctx())
+    resp = ud.handle_request("POST", "/api/demote?name=m&format=gguf", ctx)
 
-    assert resp.status == 200
-    body = json.loads(resp.body)
-    assert body["demoted"]["name"] == "m"
-    assert body["demoted"]["tier"] == "external"
-    assert body["demoted"]["bytes_reclaimed"] == 100
-    assert body["demoted"]["reused_existing"] is False
+    assert resp.status == 202
+    job = _await_move(ctx)
+    assert job["state"] == "done"
+    assert job["verb"] == "demote"
+    assert job["result"]["demoted"]["name"] == "m"
+    assert job["result"]["demoted"]["tier"] == "external"
+    assert job["result"]["demoted"]["bytes_reclaimed"] == 100
+    assert job["result"]["demoted"]["reused_existing"] is False
     assert captured == {"source": "m"}
 
 
@@ -1964,7 +2001,7 @@ def test_api_demote_offline_is_refused_without_moving(monkeypatch) -> None:
     assert moved["called"] is False
 
 
-def test_api_demote_refusal_maps_to_error(monkeypatch) -> None:
+def test_api_demote_refusal_surfaces_in_move_status(monkeypatch) -> None:
     _mounted(monkeypatch)
     monkeypatch.setattr(
         ud.inventory,
@@ -1976,16 +2013,126 @@ def test_api_demote_refusal_maps_to_error(monkeypatch) -> None:
         raise _tiering.DemoteError("insufficient external free space to demote m")
 
     monkeypatch.setattr(ud.tiering, "demote_model", boom)
+    ctx = _tier_ctx()
 
-    resp = ud.handle_request("POST", "/api/demote?name=m&format=gguf", _tier_ctx())
+    resp = ud.handle_request("POST", "/api/demote?name=m&format=gguf", ctx)
 
-    assert resp.status == 409
-    assert "insufficient external free space" in json.loads(resp.body)["error"]
+    assert resp.status == 202
+    job = _await_move(ctx)
+    assert job["state"] == "error"
+    assert "insufficient external free space" in job["error"]
 
 
 def test_api_promote_without_external_tier_configured_is_409() -> None:
     resp = ud.handle_request("POST", "/api/promote?name=m&format=gguf", _tier_ctx(external=False))
     assert resp.status == 409
+
+
+# --- /api/move-status and the one-move-at-a-time worker (story 12.6-003) ----
+
+
+def test_api_move_status_is_null_before_any_move() -> None:
+    payload = json.loads(ud.handle_request("GET", "/api/move-status", _tier_ctx()).body)
+    assert payload == {"job": None}
+
+
+def test_second_move_while_one_is_running_is_refused(monkeypatch) -> None:
+    # The worker runs one move at a time: the second POST is refused with 409
+    # while the first reports live "running" state, and the request loop is
+    # never blocked by the in-flight copy.
+    _mounted(monkeypatch)
+    monkeypatch.setattr(
+        ud.tiered,
+        "scan_external_tier",
+        lambda cfg, infs, **k: [_ext_model("m"), _ext_model("n")],
+    )
+    gate = threading.Event()
+
+    def slow_promote(*a, **k):
+        assert gate.wait(5)
+        return _promote_result()
+
+    monkeypatch.setattr(ud.tiering, "promote_model", slow_promote)
+    ctx = _tier_ctx()
+
+    first = ud.handle_request("POST", "/api/promote?name=m&format=gguf", ctx)
+    assert first.status == 202
+
+    running = json.loads(ud.handle_request("GET", "/api/move-status", ctx).body)["job"]
+    assert running["state"] == "running"
+    assert running["name"] == "m"
+
+    second = ud.handle_request("POST", "/api/promote?name=n&format=gguf", ctx)
+    assert second.status == 409
+    assert "already in progress" in json.loads(second.body)["error"]
+
+    gate.set()
+    job = _await_move(ctx)
+    assert job["state"] == "done"
+
+
+def test_api_tier_apply_refused_while_move_is_running(monkeypatch) -> None:
+    # Auto-tier evictions mutate the same stores as a move — never concurrently.
+    _mounted(monkeypatch)
+    monkeypatch.setattr(ud.tiered, "scan_external_tier", lambda cfg, infs, **k: [_ext_model("m")])
+    gate = threading.Event()
+
+    def slow_promote(*a, **k):
+        assert gate.wait(5)
+        return _promote_result()
+
+    monkeypatch.setattr(ud.tiering, "promote_model", slow_promote)
+    ctx = _tier_ctx(autotier=AutoTierConfig(max_local_gb=1.0))
+
+    assert ud.handle_request("POST", "/api/promote?name=m&format=gguf", ctx).status == 202
+    resp = ud.handle_request("POST", "/api/tier-apply", ctx)
+    assert resp.status == 409
+    assert "move is in progress" in json.loads(resp.body)["error"]
+
+    gate.set()
+    ctx.move_worker.wait()
+
+
+def test_move_status_reports_live_staging_progress(monkeypatch, tmp_path) -> None:
+    # Progress for a running move is measured from the tiering staging path.
+    _mounted(monkeypatch)
+    monkeypatch.setattr(ud.tiered, "scan_external_tier", lambda cfg, infs, **k: [_ext_model("m")])
+    destination = tmp_path / "store" / "m.gguf"
+    monkeypatch.setattr(
+        ud.tiering,
+        "plan_promotion",
+        lambda source, inferencer, **k: _tiering.PromotePlan(
+            name="m",
+            store_format="gguf",
+            source=Path(source.path),
+            destination=destination,
+            size_bytes=100,
+        ),
+    )
+    gate = threading.Event()
+
+    def slow_promote(*a, **k):
+        assert gate.wait(5)
+        return _promote_result()
+
+    monkeypatch.setattr(ud.tiering, "promote_model", slow_promote)
+    ctx = _tier_ctx()
+
+    assert ud.handle_request("POST", "/api/promote?name=m&format=gguf", ctx).status == 202
+
+    staging = _tiering.staging_path(destination)
+    staging.mkdir(parents=True)
+    (staging / "part.bin").write_bytes(b"x" * 40)
+    job = json.loads(ud.handle_request("GET", "/api/move-status", ctx).body)["job"]
+    assert job["state"] == "running"
+    assert job["bytes_done"] == 40
+    assert job["bytes_total"] == 100
+
+    gate.set()
+    done = _await_move(ctx)
+    assert done["bytes_done"] == 100
+    # No on-disk path is ever projected in the job payload.
+    assert str(tmp_path) not in json.dumps(done)
 
 
 # --- /api/tier-plan and /api/tier-apply: auto-tiering ----------------------

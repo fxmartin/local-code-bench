@@ -7,7 +7,7 @@
 **Success Metrics**: From the CLI or dashboard FX can see every model with its tier (local / external-online / external-offline), its size, and which inferencers can serve it; promote a model from external to local and demote one back, each verified for integrity and refusing to clobber an in-use model; set a local disk budget and have the harness auto-evict LRU models to external to stay under it, while respecting pins; launch a benchmark against an external model and have it transparently promoted (or served in place) first; and never have the harness crash, mis-report, or lose a model when the external SSD is unplugged mid-session.
 
 ## Epic Scope
-**Total Stories**: 8 | **Total Points**: 39 | **MVP Stories**: 0 (Should Have / v1.x)
+**Total Stories**: 9 | **Total Points**: 42 | **MVP Stories**: 0 (Should Have / v1.x)
 
 ## Decisions Locked With FX
 - **External medium**: an attached USB/Thunderbolt **SSD**, identified by a configured mount path plus a stable volume marker so it can be recognised as the *same* external repo across remounts and reported as offline when unplugged. (Network shares / cloud object stores are explicitly out of scope — see Scope Boundaries.)
@@ -107,9 +107,9 @@ without error when the drive is unplugged.
 **Technical Notes**: New move module (e.g. `src/local_code_bench/inferencers/tiering.py`). Copy-then-verify-then-(optionally)-remove; promote does not delete the external source by default (it becomes a present-in-both redundancy the disk report can flag). Reuse the Epic-08 active-inferencer state for the in-use guard. Integrity = size match plus a content hash where cheap; for Ollama use the blob sha already in the identity.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 12.2-001
 **Risk Level**: High
@@ -201,9 +201,9 @@ Budget + pins are configured via an optional `auto_tier` block (`config.load_aut
 **Technical Notes**: Hook the tiering resolver into the benchmark launch path (Epic-09 launcher / Epic-08 auto-start). Promotion reuses 12.3-001; serve-from-external just resolves the inferencer's model path to the external location. Record tier provenance in the run metadata so the leaderboard/dashboard can caveat external-served speed.
 
 **Definition of Done**:
-- [ ] Code implemented and peer reviewed
-- [ ] Tests written and passing
-- [ ] Documentation updated
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
 
 **Dependencies**: 12.3-001, 09.2-001
 **Risk Level**: Medium
@@ -275,11 +275,44 @@ respects pins. When the SSD is offline, external rows are marked offline and all
 move/apply actions are disabled; every tier endpoint projects only model-identity
 fields (never an on-disk path) and binds localhost only.
 
+##### Story 12.6-003: Non-blocking dashboard moves with live progress
+**User Story**: As FX, I want promote/demote to run in the background with live byte progress in the dashboard, so that a multi-gigabyte move never freezes the UI while it copies.
+**Priority**: Should Have
+**Story Points**: 3
+
+**Acceptance Criteria**:
+- **Given** a promote or demote is triggered from the tier view **When** the request is valid **Then** it returns immediately (`202` + a job snapshot) and the copy runs on a background worker — every dashboard panel stays responsive for the duration of the move.
+- **Given** a move is running **When** the client polls `GET /api/move-status` **Then** it reports verb, model, live bytes copied / total (measured from the move's staging path), percent, and elapsed seconds — identity fields only, never an on-disk path — and the tier view's move buttons are disabled.
+- **Given** a move is running **When** a second move or a tier-apply is requested **Then** it is refused with `409` — exactly one operation mutates the stores at a time.
+- **Given** the move completes or fails **When** the status is polled **Then** the result payload (or the tiering error, verbatim) is reported, the panel refreshes the model's tier, and a page reloaded mid-move resumes the live progress display.
+
+**Technical Notes**: `MoveWorker` in `unified_dashboard.py`: one background daemon thread, refusals stay synchronous on the request thread (offline / unknown model / busy), progress measured via the new public `tiering.staging_path` helper. Move safety is unchanged — the worker runs the same copy → verify → atomically-publish tiering path, so a dashboard killed mid-move leaves both tiers intact and the next move cleans the stale staging.
+
+**Definition of Done**:
+- [x] Code implemented and peer reviewed
+- [x] Tests written and passing
+- [x] Documentation updated
+
+**Dependencies**: 12.6-002
+**Risk Level**: Medium
+
+**Status**: ✅ Done — `POST /api/promote` / `POST /api/demote` now validate up front and
+return `202` with a job snapshot while the verified move runs on the single-slot
+`MoveWorker`; `GET /api/move-status` reports live staging-path byte progress, the
+result payload, or the move error verbatim. A second move or `tier-apply` during a
+running move is refused with `409`. The tier view polls the status once per second,
+shows "Promoting/Demoting <model>… X of Y (Z%), Ns elapsed", disables move buttons
+while busy, resumes the display after a page reload mid-move, and refreshes the
+model's tier on completion.
+
 ## Epic Progress
-**Completed**: 6 / 8 stories · 31 / 39 points
+**Completed**: 9 / 9 stories · 42 / 42 points
 - 12.1-001 — External repo config + mount/availability detection (Should, 5 pts)
 - 12.2-001 — Tier-aware inventory merging local + external stores (Should, 5 pts)
 - 12.3-001 — Promote a model from external to local (Should, 5 pts)
 - 12.3-002 — Demote / evict a model from local to external (Should, 3 pts)
 - 12.4-001 — Disk-budget + LRU auto-tiering with pinning and dry-run (Should, 8 pts)
 - 12.5-001 — Serve directly from external, auto-promote-before-benchmark (Should, 5 pts)
+- 12.6-001 — CLI tier inventory and move commands (Should, 3 pts)
+- 12.6-002 — Dashboard tier view and move controls (Should, 5 pts)
+- 12.6-003 — Non-blocking dashboard moves with live progress (Should, 3 pts)

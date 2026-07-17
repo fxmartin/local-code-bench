@@ -34,7 +34,7 @@
 | Epic-09 | Unified Dashboard | One localhost surface to manage inferencers, browse results, launch model+inferencer+suite benchmarks, and chat-test models | 8 | 32 | Should Have (v1.x) |
 | Epic-10 (LLMBENCH-1) | OpenCode Local Coding Benchmark | Two-axis (coding vs rule-following) deterministic local benchmark with quant-source provenance | 5 | 21 | Should Have (v1.x) |
 | Epic-11 | Local Model Inventory & Sharing | Per-inferencer, format-aware view of downloaded models and detection of models several engines can share | 6 | 24 | Should Have (v1.x) |
-| Epic-12 | Tiered Model Storage (Local + External) | Two-tier model repository (internal disk + external SSD) with promote/demote, auto-tiering, and serve-from-external | 8 | 39 | Should Have (v1.x) |
+| Epic-12 | Tiered Model Storage (Local + External) | Two-tier model repository (internal disk + external SSD) with promote/demote, auto-tiering, and serve-from-external | 9 | 42 | Should Have (v1.x) |
 | Epic-13 | Context-Optimization Proxy Layer | Measure context-compression proxies (Headroom) as a bare-vs-proxied A/B treatment — tokens prefilled, latency, and correctness cost | 4 | 14 | Should Have (v2) |
 | Epic-14 | Additional Coding-Agent Harnesses | Generalize the Codex-only runner into a pluggable adapter and add Claude Code (cloud baseline) + Qwen Code (drives local models) | 3 | 11 | Should Have (v1.x) |
 | Epic-15 | Settings Management | Dashboard Settings tab to visualise and safely edit all harness configuration — models, inferencers, storage paths/tiering, suites, agents — plus nothing-hardcoded: every operational default externalized to YAML | 8 | 34 | Should Have (v1.x) |
@@ -79,8 +79,8 @@ v1 is "done" (per `REQUIREMENTS.md` §6) when one command runs the full HumanEva
 
 ## Project Metrics
 
-- **Total Stories**: 89
-- **Total Story Points**: 323
+- **Total Stories**: 90
+- **Total Story Points**: 326
 - **MVP Stories**: ~28 (Epics 01–04 + Epic-06 + NFR-SEC/QUAL)
 - **MVP Points**: ~88
 

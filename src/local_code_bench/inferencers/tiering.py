@@ -56,11 +56,22 @@ __all__ = [
     "promote_model",
     "resolve_benchmark_target",
     "serving_blockers",
+    "staging_path",
 ]
 
 #: Suffix of the hidden staging path a promote (or demote) copies into before
 #: publishing. Shared by both moves so a stale temp from either is cleaned alike.
 _STAGING_SUFFIX = ".promote-tmp"
+
+
+def staging_path(destination: Path) -> Path:
+    """The hidden staging path a move copies into before publishing ``destination``.
+
+    Public so a progress observer (the dashboard's move status, story 12.6-003)
+    can measure a running copy's bytes without reaching into move internals.
+    """
+
+    return destination.with_name(destination.name + _STAGING_SUFFIX)
 
 
 class PromoteError(RuntimeError):
@@ -213,7 +224,7 @@ def promote_model(
         )
 
     source_hash = _content_hash(plan.source)
-    staging = plan.destination.with_name(plan.destination.name + _STAGING_SUFFIX)
+    staging = staging_path(plan.destination)
     copy = copy_fn or _copy_path
     plan.destination.parent.mkdir(parents=True, exist_ok=True)
     _remove_path(staging)
@@ -534,7 +545,7 @@ def demote_model(
             f"free at least {_human_bytes(shortfall)} first (local copy left untouched)"
         )
 
-    staging = plan.destination.with_name(plan.destination.name + _STAGING_SUFFIX)
+    staging = staging_path(plan.destination)
     copy = copy_fn or _copy_path
     plan.destination.parent.mkdir(parents=True, exist_ok=True)
     _remove_path(staging)
