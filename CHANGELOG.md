@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.57.1 (2026-07-17)
+
+### Bug Fixes
+
+- **inventory**: Exclude in-flight downloads from model scan
+  ([`72767ae`](https://github.com/fxmartin/local-code-bench/commit/72767ae875cf183bf790b7e8e3d9ebde327b95ac))
+
+### Testing
+
+- Add coverage for fix #67
+  ([`f19067e`](https://github.com/fxmartin/local-code-bench/commit/f19067e5e3d4fd051460e91c0d4842b0373e8d6c))
+
+
 ## v0.57.0 (2026-07-17)
 
 ### Bug Fixes
