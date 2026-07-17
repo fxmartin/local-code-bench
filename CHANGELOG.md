@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.60.0 (2026-07-17)
+
+### Features
+
+- **settings-management**: Audit hardcoded defaults and (#15.5-001)
+  ([`9687e0c`](https://github.com/fxmartin/local-code-bench/commit/9687e0c6a2db497513d40b26e82e59e96f253f80))
+
+
 ## v0.59.0 (2026-07-17)
 
 ### Features
