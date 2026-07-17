@@ -1266,20 +1266,18 @@ _PAGE = """<!DOCTYPE html>
   nav button { border: 1px solid var(--border); border-bottom: none;
     border-radius: var(--radius-sm) var(--radius-sm) 0 0; background: transparent;
     padding: var(--space-1) var(--space-3); }
-  nav button.active { font-weight: 600; background: var(--surface-hover); }
+  nav button.active { font-weight: 600; background: var(--surface-hover); color: var(--accent); }
   main { margin: var(--space-5) var(--space-6) var(--space-7); }
   table { max-width: 80rem; margin-top: var(--space-2); }
   th[data-sort-key] { cursor: pointer; user-select: none; }
   th[data-sort-key]:hover { text-decoration: underline; }
   tr.row-clickable { cursor: pointer; }
   tr.row-clickable:hover { background: var(--surface-hover); }
-  #inf-err { color: var(--err-fg); font-weight: 600; min-height: 1.2rem; }
   #leaderboard-filter { margin-top: var(--space-2); width: 22rem; max-width: 100%; }
   #drilldown { margin-top: var(--space-3); }
   #drilldown table { max-width: 100%; }
   #drilldown .preview { font-family: var(--font-mono); font-size: var(--text-xs);
     white-space: pre-wrap; max-width: 28rem; }
-  #warnings { color: var(--err-fg); font-weight: 600; }
   #warnings li { font-family: var(--font-mono); font-size: var(--text-sm); }
   .run-grid { display: flex; gap: var(--space-6); flex-wrap: wrap; }
   .run-grid select { min-width: 18rem; }
@@ -1311,7 +1309,6 @@ _PAGE = """<!DOCTYPE html>
   .chat-compose { display: flex; gap: var(--space-2); margin-top: var(--space-3);
     max-width: 46rem; }
   #chat-input { flex: 1; resize: vertical; min-height: 2.4rem; }
-  #chat-err { color: var(--err-fg); font-weight: 600; min-height: 1.2rem; }
   .settings-source { color: var(--text-muted); font-size: var(--text-xs); font-weight: 400;
     margin-left: var(--space-2); font-family: var(--font-mono); }
   .lock-note { color: var(--warn-fg); }
@@ -1335,7 +1332,7 @@ _PAGE = """<!DOCTYPE html>
 
 <section id="section-inferencers" class="section">
   <h2>Inferencer Control</h2>
-  <p id="inf-err"></p>
+  <p id="inf-err" class="err"></p>
   <table>
     <thead>
       <tr><th></th><th>Engine</th><th>Version</th><th>Lifecycle</th><th>Port</th><th>PID</th><th>State</th><th></th></tr>
@@ -1456,7 +1453,7 @@ _PAGE = """<!DOCTYPE html>
     <tbody id="tier-plan"></tbody>
   </table>
   <p class="run-actions">
-    <button class="act" id="tier-apply" disabled>Apply eviction plan</button>
+    <button class="act danger" id="tier-apply" disabled>Apply eviction plan</button>
   </p>
   <p id="tier-plan-msg"></p>
 </section>
@@ -1486,7 +1483,7 @@ _PAGE = """<!DOCTYPE html>
   </p>
   <p id="run-msg"></p>
   <h3>Live Runs</h3>
-  <p id="run-err" class="fail"></p>
+  <p id="run-err" class="err"></p>
   <table>
     <thead>
       <tr>
@@ -1534,7 +1531,7 @@ _PAGE = """<!DOCTYPE html>
     <button class="act" id="chat-send">Send</button>
     <button class="act" id="chat-stop" disabled>Stop</button>
   </div>
-  <p id="chat-err"></p>
+  <p id="chat-err" class="err"></p>
 </section>
 
 <section id="section-settings" class="section" hidden>
@@ -1554,7 +1551,7 @@ _PAGE = """<!DOCTYPE html>
   <div class="card">
     <p id="modal-msg"></p>
     <ul id="modal-list"></ul>
-    <button class="act" id="modal-confirm">Stop them &amp; start</button>
+    <button class="act danger" id="modal-confirm">Stop them &amp; start</button>
     <button class="act" id="modal-cancel">Cancel</button>
   </div>
 </div>
@@ -1612,7 +1609,7 @@ _PAGE = """<!DOCTYPE html>
       const action = it.lifecycle === "app"
         ? "<span>manage in app</span>"
         : (it.running
-            ? `<button class="act" data-stop="${it.name}">Stop</button>`
+            ? `<button class="act danger" data-stop="${it.name}">Stop</button>`
             : (starting
                 ? `<button class="act" data-starting="${it.name}" disabled>Starting…</button>`
                 : `<button class="act" data-start="${it.name}">Start</button>`));
@@ -1885,6 +1882,7 @@ _PAGE = """<!DOCTYPE html>
     title.hidden = items.length === 0;
     for (const w of items) {
       const li = document.createElement("li");
+      li.className = "warn";
       const where = w.line === null ? w.source : (w.source + ":" + w.line);
       li.textContent = where + " - " + w.message;
       list.appendChild(li);
@@ -2576,7 +2574,7 @@ _PAGE = """<!DOCTYPE html>
     } else if (onLocal) {
       td.innerHTML = offline
         ? '<span class="empty">demote disabled — SSD offline</span>'
-        : `<button class="act" data-demote ${attrs}${lock}>Demote</button>`;
+        : `<button class="act danger" data-demote ${attrs}${lock}>Demote</button>`;
     }
     return td;
   }
@@ -2601,6 +2599,7 @@ _PAGE = """<!DOCTYPE html>
     }
     const avail = offline ? "offline — plug in the SSD to enable moves" : "mounted";
     const cached = data.external_cached ? " (showing last-known catalog)" : "";
+    status.classList.remove("progress");
     status.textContent = "External SSD: " + avail + cached +
       ". Reclaimable across tiers: " + humanSize(data.reclaimable_bytes) +
       " of " + humanSize(data.total_bytes) + " total.";
@@ -2664,6 +2663,7 @@ _PAGE = """<!DOCTYPE html>
     busy = true;
     err.textContent = "";
     planMsg.textContent = "";
+    status.classList.add("progress");
     status.textContent = verb === "promote" ? "Promoting…" : "Demoting…";
     try {
       const url = "/api/" + verb + "?name=" + encodeURIComponent(name) +
@@ -2711,6 +2711,7 @@ _PAGE = """<!DOCTYPE html>
       if (!job) break;
       if (job.state === "running") {
         busy = true;
+        status.classList.add("progress");
         status.textContent = moveLabel(job);
         await new Promise((resolve) => setTimeout(resolve, 1000));
         continue;
@@ -2718,6 +2719,7 @@ _PAGE = """<!DOCTYPE html>
       if (job.state === "error") err.textContent = job.error || "move failed";
       break;
     }
+    status.classList.remove("progress");
     busy = false;
     refresh();
   }

@@ -163,7 +163,6 @@ _PAGE = """<!DOCTYPE html>
   #drilldown table { max-width: 100%; }
   #drilldown .preview { font-family: var(--font-mono); font-size: var(--text-xs);
     white-space: pre-wrap; max-width: 28rem; }
-  #warnings { color: var(--err-fg); font-weight: 600; }
   #warnings li { font-family: var(--font-mono); font-size: var(--text-sm); }
 </style>
 </head>
@@ -417,6 +416,7 @@ function renderWarnings(items) {
   title.hidden = items.length === 0;
   for (const w of items) {
     const li = document.createElement("li");
+    li.className = "warn";
     const where = w.line === null ? w.source : (w.source + ":" + w.line);
     li.textContent = where + " - " + w.message;
     list.appendChild(li);

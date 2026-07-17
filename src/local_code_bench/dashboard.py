@@ -186,7 +186,6 @@ th.sortable-th { cursor: pointer; user-select: none; }
 th.sortable-th:hover { text-decoration: underline; }
 .filter { margin-bottom: var(--space-3); width: 22rem; max-width: 100%; }
 .warnings { border-color: var(--border-strong); }
-.warnings li { color: var(--warn-fg); }
 .chart-svg { width: 100%; max-width: 520px; height: auto; display: block; }
 .chart-svg .axis { stroke: var(--border-strong); stroke-width: 1; }
 .chart-svg .tick { fill: var(--text-muted); font-size: 10px; }
@@ -405,7 +404,9 @@ def _run_history_section(runs: tuple[RunSummary, ...]) -> str:
 def _warnings_section(warnings: tuple[DataQualityWarning, ...]) -> str:
     if not warnings:
         return ""
-    items = "".join(f"<li>{html.escape(_warning_label(warning))}</li>" for warning in warnings)
+    items = "".join(
+        f'<li class="warn">{html.escape(_warning_label(warning))}</li>' for warning in warnings
+    )
     return f'<section class="warnings"><h2>Data Quality Warnings</h2><ul>{items}</ul></section>'
 
 

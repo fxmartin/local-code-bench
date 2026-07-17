@@ -13,7 +13,11 @@ rendered page to enforce it. The layer has two parts:
 * ``BASE_CSS`` — token-driven styles for the shared primitives (page shell,
   headings, tables, buttons, inputs, badges/dots, status lines, modal card):
   system font stack, hairline borders, restrained radii, and no decorative
-  gradients or drop shadows.
+  gradients or drop shadows. Status semantics are locked (story 16.2-001):
+  ``--danger`` is the only status hue and is reserved for failures and
+  destructive actions; pass/ok/warn stay monochrome, distinguished by glyph +
+  weight so no state relies on color alone. The accent carries focus, primary
+  emphasis (``.act``), and live progress (``.progress``).
 * ``MODES_CSS`` + the theme-toggle chrome (story 16.1-002) — a
   ``[data-theme="light"|"dark"]`` root attribute forces one ``color-scheme``
   (flipping every ``light-dark()`` token and native controls/scrollbars at
@@ -51,6 +55,12 @@ GREY_RAMP = (
 # the deeper stop for light mode, a lifted stop for dark mode.
 ACCENT = "#3a6df0"
 ACCENT_DARK = "#7aa2ff"
+
+# Danger red (story 16.2-001): the one status hue, reserved for failures and
+# destructive actions. Dual-valued like the accent so it holds AA contrast on
+# both anchors; every other status state stays monochrome (glyph + weight).
+DANGER = "#b3261e"
+DANGER_DARK = "#f2726f"
 
 # Categorical data-series colors for the inline SVG charts. These are a
 # data-visualization layer on top of the UI palette (distinguishing up to eight
@@ -99,10 +109,13 @@ TOKENS_CSS = f"""\
   --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
   --scrim: color-mix(in srgb, var(--black) 50%, transparent);
 
-  /* Status semantics, mapped onto the palette (mono + weight, not extra hues). */
+  /* Status semantics (locked, story 16.2-001): --danger alone carries hue,
+     for failures/destructive actions only; pass/ok/warn are mono + weight. */
+  --danger: light-dark({DANGER}, {DANGER_DARK});
+  --danger-soft: color-mix(in srgb, var(--danger) 10%, transparent);
   --ok-fg: var(--text-muted);
-  --err-fg: var(--text);
-  --warn-fg: var(--text-muted);
+  --err-fg: var(--danger);
+  --warn-fg: var(--text);
   --status-on: var(--accent);
   --status-off: var(--text-muted);
   --status-warn: light-dark(var(--grey-6), var(--grey-3));
@@ -238,7 +251,13 @@ button { font: inherit; color: var(--text); background: transparent;
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-3); cursor: pointer; }
 button:hover:not(:disabled) { background: var(--surface-hover); }
+button:active:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: 0.4; cursor: default; }
+button.act { border-color: var(--accent); color: var(--accent); }
+button.act:hover:not(:disabled) { background: var(--accent-soft); }
+button.danger { border-color: var(--danger); color: var(--danger); }
+button.danger:hover:not(:disabled) { background: var(--danger-soft); }
+button.danger:active:not(:disabled) { border-color: var(--danger); }
 input, select, textarea { font: inherit; color: var(--text); background: var(--surface);
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-2); }
@@ -247,17 +266,21 @@ input, select, textarea { font: inherit; color: var(--text); background: var(--s
 .badge { display: inline-block; padding: 0 var(--space-2);
   border: 1px solid var(--border-strong); border-radius: var(--radius-full);
   font-size: var(--text-xs); color: var(--text-muted); }
-.dot { display: inline-block; width: 0.65rem; height: 0.65rem;
-  border-radius: var(--radius-full); }
-.dot.up { background: var(--status-on); }
-.dot.down { background: var(--status-off); }
-.dot.warn { background: var(--status-warn); }
-.pass, .ok { color: var(--ok-fg); }
+.dot { display: inline-block; width: 1rem; text-align: center; line-height: 1; }
+.dot.up::before { content: "●"; color: var(--status-on); }
+.dot.down::before { content: "○"; color: var(--status-off); }
+.dot.warn::before { content: "◐"; color: var(--status-warn); }
+.pass, .ok { color: var(--ok-fg); font-weight: 600; }
 .fail { color: var(--err-fg); font-weight: 600; }
 .err, .bad { color: var(--err-fg); font-weight: 600; min-height: 1.2rem; }
-p.warn, span.warn { color: var(--warn-fg); min-height: 1.2rem; }
+p.warn, span.warn, li.warn { color: var(--warn-fg); font-weight: 600; min-height: 1.2rem; }
+:is(.pass, .ok):not(:empty)::before { content: "✓ "; }
+:is(.fail, .err, .bad):not(:empty)::before { content: "✕ "; }
+:is(p, span, li).warn:not(:empty)::before { content: "! "; }
 .empty { color: var(--text-muted); font-style: italic; }
 .note { color: var(--text-muted); max-width: 44rem; line-height: 1.5; }
+.progress:not(:empty) { color: var(--accent); font-weight: 600;
+  font-variant-numeric: tabular-nums; }
 #modal { position: fixed; inset: 0; background: var(--scrim); display: none;
   align-items: center; justify-content: center; }
 #modal.show { display: flex; }
