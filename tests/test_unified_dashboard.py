@@ -315,6 +315,28 @@ def test_api_data_reflects_appended_records_without_restart(tmp_path: Path) -> N
     assert second["endpoint_models"][0]["attempts"] == 2
 
 
+def test_api_compare_delegates_to_comparison_module(tmp_path: Path) -> None:
+    path = tmp_path / "run.jsonl"
+    append_jsonl(path, _endpoint_record("Qwen2.5-Coder-7B-Q4_K_M", "HumanEval/0", passed=True))
+    append_jsonl(path, _endpoint_record("Qwen2.5-Coder-7B-Q8_0", "HumanEval/0", passed=True))
+
+    resp = ud.handle_request("GET", "/api/compare?axis=quant", _ctx([path]))
+
+    assert resp.status == 200
+    assert resp.content_type.startswith("application/json")
+    payload = json.loads(resp.body)
+    assert payload["axis"]["id"] == "quant"
+    assert payload["cohorts"][0]["base_model_key"] == "qwen2.5-coder-7b"
+
+
+def test_api_compare_unknown_axis_is_404(tmp_path: Path) -> None:
+    resp = ud.handle_request("GET", "/api/compare?axis=bogus", _ctx([tmp_path / "none.jsonl"]))
+
+    assert resp.status == 404
+    payload = json.loads(resp.body)
+    assert "unknown axis" in payload["error"]
+
+
 # ---------------------------------------------------------------------------
 # routing / safety
 # ---------------------------------------------------------------------------

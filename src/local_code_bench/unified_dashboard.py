@@ -35,6 +35,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from . import chat
+from . import compare
 from . import dashboard_lifecycle
 from . import dashboard_server as results_panel
 from . import launch
@@ -951,6 +952,14 @@ def handle_request(
         return _json(*inferencer_panel.stop_action(name, ctx.configs, ctx.state_dir))
     if method == "GET" and route == "/api/data":
         return _json(*results_panel.data_action(_resolve_result_paths(ctx)))
+    if method == "GET" and route == "/api/compare":
+        return _json(
+            *compare.compare_action(
+                [Path(p) for p in _resolve_result_paths(ctx)],
+                query.get("axis", [""])[0],
+                memory=compare.memory_index(_scan_local(ctx)),
+            )
+        )
     if method == "GET" and route == "/api/catalog":
         return _json(*catalog_action(ctx))
     if method == "GET" and route == "/api/chat/catalog":
