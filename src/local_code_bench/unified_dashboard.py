@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -109,6 +110,140 @@ def sanitize_payload(value: object) -> object:
     return value
 
 
+class MoveWorker:
+    """Runs one tier move at a time in a background thread (story 12.6-003).
+
+    The dashboard's HTTP loop is single-threaded, so a synchronous multi-GB
+    promote/demote used to freeze every panel until the copy finished. The worker
+    moves the copy off the request thread: ``start`` launches the verified tiering
+    move in a daemon thread and returns immediately, ``status`` reports the one
+    current/last job — with live byte progress measured from the move's staging
+    path — and a second ``start`` while a move is running is refused, so at most
+    one move ever mutates the stores at a time.
+
+    Safety is unchanged: the thread runs the same copy → verify → atomically
+    publish tiering path, which cleans its own staging on failure and never
+    deletes a source before a verified destination exists — so a dashboard killed
+    mid-move leaves both tiers intact.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._job: dict | None = None
+        self._probe: Callable[[], int] | None = None
+
+    @property
+    def busy(self) -> bool:
+        """True while a move is running (new moves and tier-apply must wait)."""
+
+        with self._lock:
+            return self._job is not None and self._job["state"] == "running"
+
+    def start(
+        self,
+        *,
+        verb: str,
+        name: str,
+        store_format: str,
+        bytes_total: int,
+        probe: Callable[[], int],
+        run: Callable[[], object],
+        payload: Callable[[object], dict],
+    ) -> bool:
+        """Launch ``run`` in the background; False when a move is already running.
+
+        ``probe`` measures bytes copied so far (from the staging path) for live
+        progress; ``payload`` projects the tiering result into the identity-only
+        response shape once the move completes.
+        """
+
+        with self._lock:
+            if self._job is not None and self._job["state"] == "running":
+                return False
+            self._job = {
+                "verb": verb,
+                "name": name,
+                "format": store_format,
+                "state": "running",
+                "bytes_total": bytes_total,
+                "error": None,
+                "result": None,
+                "started": time.monotonic(),
+                "finished": None,
+            }
+            self._probe = probe
+            self._thread = threading.Thread(
+                target=self._run, args=(run, payload), daemon=True
+            )
+            self._thread.start()
+        return True
+
+    def _run(self, run: Callable[[], object], payload: Callable[[object], dict]) -> None:
+        try:
+            result = run()
+        except (tiering.PromoteError, tiering.DemoteError) as exc:
+            self._finish(state="error", error=str(exc))
+            return
+        except Exception as exc:  # never leave a job stuck "running"
+            self._finish(state="error", error=f"move failed unexpectedly: {exc}")
+            return
+        self._finish(state="done", result=payload(result))
+
+    def _finish(
+        self, *, state: str, error: str | None = None, result: dict | None = None
+    ) -> None:
+        with self._lock:
+            if self._job is None:  # pragma: no cover - start() always sets it
+                return
+            self._job["state"] = state
+            self._job["error"] = error
+            self._job["result"] = result
+            self._job["finished"] = time.monotonic()
+
+    def status(self) -> dict | None:
+        """The current/last job as a client payload, or None before any move.
+
+        Progress for a running job is measured live from the staging path, capped
+        at ``bytes_total`` (the copy briefly holds staging + published bytes around
+        the atomic rename). Identity fields only — never an on-disk path.
+        """
+
+        with self._lock:
+            if self._job is None:
+                return None
+            job = dict(self._job)
+            probe = self._probe
+        if job["state"] == "done":
+            bytes_done = job["bytes_total"]
+        elif job["state"] == "running" and probe is not None:
+            try:
+                bytes_done = min(probe(), job["bytes_total"]) if job["bytes_total"] else probe()
+            except OSError:
+                bytes_done = 0
+        else:
+            bytes_done = 0
+        end = job["finished"] if job["finished"] is not None else time.monotonic()
+        return {
+            "verb": job["verb"],
+            "name": job["name"],
+            "format": job["format"],
+            "state": job["state"],
+            "bytes_total": job["bytes_total"],
+            "bytes_done": bytes_done,
+            "elapsed_seconds": round(end - job["started"], 1),
+            "error": job["error"],
+            "result": job["result"],
+        }
+
+    def wait(self, timeout: float | None = 30.0) -> None:
+        """Block until the current move thread exits (tests and shutdown hooks)."""
+
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout)
+
+
 @dataclass(frozen=True)
 class DashboardContext:
     """Everything the unified server needs to answer a request, held by reference.
@@ -143,6 +278,9 @@ class DashboardContext:
     # the dashboard — the tier view then shows only local models with no controls.
     external_cfg: ExternalRepoConfig | None = None
     autotier_cfg: AutoTierConfig | None = None
+    # Story 12.6-003: single background worker for promote/demote so a multi-GB
+    # copy never blocks the (single-threaded) request loop or freezes the UI.
+    move_worker: MoveWorker = field(default_factory=MoveWorker)
 
 
 @dataclass(frozen=True)
@@ -452,15 +590,57 @@ def _compatible_inferencer(ctx: DashboardContext, store_format: str) -> Inferenc
     return None
 
 
-def promote_action(ctx: DashboardContext, name: str, store_format: str) -> tuple[int, dict]:
-    """Promote an external-tier model into a compatible engine's local store.
+_BUSY_ERROR = "another move is already in progress — wait for it to finish"
 
-    A thin seam over :func:`tiering.promote_model` (story 12.3-001). Refuses up
-    front — moving no bytes — when no external tier is configured or the SSD is
-    offline; 404s when the named external model or a compatible local store is
-    absent. A :class:`tiering.PromoteError` (in-use / no space / integrity) is
-    surfaced verbatim as a 409. The response carries only the new tier and the
-    bytes copied — never the on-disk destination path (AC4).
+
+def _path_bytes(path: Path) -> int:
+    """Best-effort on-disk size of a file or directory; 0 when absent."""
+
+    try:
+        if path.is_file():
+            return path.stat().st_size
+        if not path.is_dir():
+            return 0
+        total = 0
+        for child in path.rglob("*"):
+            if child.is_file() and not child.is_symlink():
+                try:
+                    total += child.stat().st_size
+                except OSError:
+                    continue
+        return total
+    except OSError:
+        return 0
+
+
+def _move_progress_probe(destination: Path) -> Callable[[], int]:
+    """Bytes a running move has copied so far, measured from its staging path.
+
+    The verified move copies into ``staging_path(destination)`` and publishes with
+    one atomic rename, so staging size *is* the live progress; after the rename
+    (just before the job flips to done) the destination carries the bytes instead.
+    """
+
+    staging = tiering.staging_path(destination)
+
+    def probe() -> int:
+        done = _path_bytes(staging)
+        return done if done else _path_bytes(destination)
+
+    return probe
+
+
+def promote_action(ctx: DashboardContext, name: str, store_format: str) -> tuple[int, dict]:
+    """Start a background promote of an external-tier model into a local store.
+
+    A thin seam over :func:`tiering.promote_model` (story 12.3-001), run on the
+    :class:`MoveWorker` (story 12.6-003) so a multi-GB copy never blocks the
+    request loop: validation refuses up front — no external tier, offline SSD,
+    unknown model, no compatible store, or a move already running — and a valid
+    request returns ``202`` immediately with the job snapshot; completion, live
+    byte progress, and any :class:`tiering.PromoteError` are reported by
+    ``GET /api/move-status``. Responses carry only identity fields — never an
+    on-disk path (AC4).
     """
 
     if ctx.external_cfg is None:
@@ -478,27 +658,41 @@ def promote_action(ctx: DashboardContext, name: str, store_format: str) -> tuple
         }
 
     try:
-        result = tiering.promote_model(source, target, ctx.external_cfg, ctx.configs, ctx.state_dir)
+        plan = tiering.plan_promotion(source, target)
     except tiering.PromoteError as exc:
         return 409, {"error": str(exc)}
-    return 200, {
-        "promoted": {
-            "name": name,
-            "tier": "local",
-            "bytes_copied": result.bytes_copied,
-            "verified": result.verified,
-        }
-    }
+
+    external_cfg, configs, state_dir = ctx.external_cfg, ctx.configs, ctx.state_dir
+    started = ctx.move_worker.start(
+        verb="promote",
+        name=name,
+        store_format=store_format,
+        bytes_total=plan.size_bytes,
+        probe=_move_progress_probe(plan.destination),
+        run=lambda: tiering.promote_model(source, target, external_cfg, configs, state_dir),
+        payload=lambda result: {
+            "promoted": {
+                "name": name,
+                "tier": "local",
+                "bytes_copied": result.bytes_copied,
+                "verified": result.verified,
+            }
+        },
+    )
+    if not started:
+        return 409, {"error": _BUSY_ERROR}
+    return 202, {"job": ctx.move_worker.status()}
 
 
 def demote_action(ctx: DashboardContext, name: str, store_format: str) -> tuple[int, dict]:
-    """Demote a local-tier model out to the external tier, reclaiming local disk.
+    """Start a background demote of a local-tier model out to the external tier.
 
-    A thin seam over :func:`tiering.demote_model` (story 12.3-002). Refuses up
-    front when no external tier is configured or the SSD is offline; 404s when the
-    named local model is absent. A :class:`tiering.DemoteError` (in-use / no space
-    / name collision / integrity) is surfaced verbatim as a 409. The response
-    carries only the new tier and the bytes reclaimed — never an on-disk path (AC4).
+    A thin seam over :func:`tiering.demote_model` (story 12.3-002), run on the
+    :class:`MoveWorker` (story 12.6-003) exactly like :func:`promote_action`:
+    up-front refusals stay synchronous (409/404), a valid request returns ``202``
+    with the job snapshot, and progress/completion/errors are reported by
+    ``GET /api/move-status``. Responses carry only identity fields — never an
+    on-disk path (AC4).
     """
 
     if ctx.external_cfg is None:
@@ -511,18 +705,43 @@ def demote_action(ctx: DashboardContext, name: str, store_format: str) -> tuple[
         return 404, {"error": f"{name}: not found on the local tier"}
 
     try:
-        result = tiering.demote_model(source, ctx.external_cfg, ctx.configs, ctx.state_dir)
+        plan = tiering.plan_demotion(source, ctx.external_cfg)
     except tiering.DemoteError as exc:
         return 409, {"error": str(exc)}
-    return 200, {
-        "demoted": {
-            "name": name,
-            "tier": "external",
-            "bytes_reclaimed": result.bytes_reclaimed,
-            "verified": result.verified,
-            "reused_existing": result.reused_existing,
-        }
-    }
+
+    external_cfg, configs, state_dir = ctx.external_cfg, ctx.configs, ctx.state_dir
+    started = ctx.move_worker.start(
+        verb="demote",
+        name=name,
+        store_format=store_format,
+        bytes_total=plan.size_bytes,
+        probe=_move_progress_probe(plan.destination),
+        run=lambda: tiering.demote_model(source, external_cfg, configs, state_dir),
+        payload=lambda result: {
+            "demoted": {
+                "name": name,
+                "tier": "external",
+                "bytes_reclaimed": result.bytes_reclaimed,
+                "verified": result.verified,
+                "reused_existing": result.reused_existing,
+            }
+        },
+    )
+    if not started:
+        return 409, {"error": _BUSY_ERROR}
+    return 202, {"job": ctx.move_worker.status()}
+
+
+def move_status_action(ctx: DashboardContext) -> tuple[int, dict]:
+    """The current/last background move as ``{"job": ...}`` (story 12.6-003).
+
+    ``job`` is ``null`` before any move; while one runs it carries live byte
+    progress measured from the staging path, and once finished it carries the
+    same result payload the synchronous endpoints used to return (or the move
+    error verbatim). Identity fields only — never an on-disk path.
+    """
+
+    return 200, {"job": ctx.move_worker.status()}
 
 
 def _find_external(
@@ -643,6 +862,8 @@ def tier_apply_action(ctx: DashboardContext) -> tuple[int, dict]:
 
     if ctx.autotier_cfg is None:
         return 409, {"error": "auto-tiering is not configured — nothing to apply"}
+    if ctx.move_worker.busy:
+        return 409, {"error": "a tier move is in progress — wait for it before applying evictions"}
 
     plan, store = _build_autotier_plan(ctx, ctx.autotier_cfg)
     if plan.paused or ctx.external_cfg is None:
@@ -738,6 +959,8 @@ def handle_request(
         return _json(*inventory_action(ctx))
     if method == "GET" and route == "/api/tiers":
         return _json(*tier_inventory_action(ctx))
+    if method == "GET" and route == "/api/move-status":
+        return _json(*move_status_action(ctx))
     if method == "POST" and route == "/api/promote":
         return _json(*promote_action(ctx, name, query.get("format", [""])[0]))
     if method == "POST" and route == "/api/demote":
@@ -2299,14 +2522,15 @@ _PAGE = """<!DOCTYPE html>
     const onExternal = (model.tiers || []).includes("external");
     const td = document.createElement("td");
     const attrs = `data-name="${encodeURIComponent(model.name)}" data-format="${model.format}"`;
+    const lock = busy ? " disabled" : "";
     if (onExternal && !onLocal) {
       td.innerHTML = offline
         ? '<span class="empty">SSD offline</span>'
-        : `<button class="act" data-promote ${attrs}>Promote</button>`;
+        : `<button class="act" data-promote ${attrs}${lock}>Promote</button>`;
     } else if (onLocal) {
       td.innerHTML = offline
         ? '<span class="empty">demote disabled — SSD offline</span>'
-        : `<button class="act" data-demote ${attrs}>Demote</button>`;
+        : `<button class="act" data-demote ${attrs}${lock}>Demote</button>`;
     }
     return td;
   }
@@ -2399,13 +2623,57 @@ _PAGE = """<!DOCTYPE html>
       const url = "/api/" + verb + "?name=" + encodeURIComponent(name) +
         "&format=" + encodeURIComponent(format);
       const { status: code, body } = await post(url);
-      if (code >= 400) err.textContent = body.error || (verb + " failed (" + code + ")");
+      if (code >= 400) {
+        err.textContent = body.error || (verb + " failed (" + code + ")");
+        busy = false;
+        refresh();
+        return;
+      }
+      // 202: the move runs in a background worker (story 12.6-003) — poll for
+      // live progress instead of holding a request open; the UI stays usable.
+      watchMove();
     } catch (e) {
       err.textContent = verb + " failed: " + e;
-    } finally {
       busy = false;
-      refresh();  // AC2: the panel refreshes the model's tier on completion
+      refresh();
     }
+  }
+
+  function moveLabel(job) {
+    const verbing = job.verb === "promote" ? "Promoting" : "Demoting";
+    let text = verbing + " " + job.name + "… " +
+      humanSize(job.bytes_done) + " of " + humanSize(job.bytes_total);
+    if (job.bytes_total) {
+      text += " (" + Math.round(100 * job.bytes_done / job.bytes_total) + "%)";
+    }
+    return text + ", " + Math.round(job.elapsed_seconds) + "s elapsed.";
+  }
+
+  async function watchMove() {
+    // Polls /api/move-status until the background move finishes, keeping the
+    // status line live; also resumes after a page reload mid-move. Ends with a
+    // refresh so the model's tier updates on completion (AC2).
+    for (;;) {
+      let job = null;
+      try {
+        const res = await fetch("/api/move-status");
+        job = (await res.json()).job;
+      } catch (e) {
+        err.textContent = "move status unavailable: " + e;
+        break;
+      }
+      if (!job) break;
+      if (job.state === "running") {
+        busy = true;
+        status.textContent = moveLabel(job);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        continue;
+      }
+      if (job.state === "error") err.textContent = job.error || "move failed";
+      break;
+    }
+    busy = false;
+    refresh();
   }
 
   modelsBody.addEventListener("click", (ev) => {
@@ -2434,7 +2702,9 @@ _PAGE = """<!DOCTYPE html>
     }
   });
 
-  refresh();
+  // watchMove resumes progress if a move is already running (page reload
+  // mid-move) and falls through to the initial refresh otherwise.
+  watchMove();
 })();
 </script>
 </body>

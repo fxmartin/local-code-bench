@@ -34,9 +34,11 @@
 | Epic-09 | Unified Dashboard | One localhost surface to manage inferencers, browse results, launch model+inferencer+suite benchmarks, and chat-test models | 8 | 32 | Should Have (v1.x) |
 | Epic-10 (LLMBENCH-1) | OpenCode Local Coding Benchmark | Two-axis (coding vs rule-following) deterministic local benchmark with quant-source provenance | 5 | 21 | Should Have (v1.x) |
 | Epic-11 | Local Model Inventory & Sharing | Per-inferencer, format-aware view of downloaded models and detection of models several engines can share | 6 | 24 | Should Have (v1.x) |
-| Epic-12 | Tiered Model Storage (Local + External) | Two-tier model repository (internal disk + external SSD) with promote/demote, auto-tiering, and serve-from-external | 8 | 39 | Should Have (v1.x) |
+| Epic-12 | Tiered Model Storage (Local + External) | Two-tier model repository (internal disk + external SSD) with promote/demote, auto-tiering, and serve-from-external | 9 | 42 | Should Have (v1.x) |
 | Epic-13 | Context-Optimization Proxy Layer | Measure context-compression proxies (Headroom) as a bare-vs-proxied A/B treatment — tokens prefilled, latency, and correctness cost | 4 | 14 | Should Have (v2) |
 | Epic-14 | Additional Coding-Agent Harnesses | Generalize the Codex-only runner into a pluggable adapter and add Claude Code (cloud baseline) + Qwen Code (drives local models) | 3 | 11 | Should Have (v1.x) |
+| Epic-15 | Settings Management | Dashboard Settings tab to visualise and safely edit all harness configuration — models, inferencers, storage paths/tiering, suites, agents — plus nothing-hardcoded: every operational default externalized to YAML | 8 | 34 | Should Have (v1.x) |
+| Epic-16 | Dashboard UI Revamp | Modern minimalist theme — black/white/grey + one configurable accent, designed light & dark modes, design tokens across every surface, vendored-only tooling | 6 | 22 | Should Have (v1.x) |
 | NFR | Non-Functional Requirements | Accuracy, security, quality, portability, hardware fit | 5 | 12 | Mixed (SEC/QUAL = MVP) |
 
 ## Epic Navigation
@@ -55,6 +57,8 @@
 - **[Epic-12: Tiered Model Storage (Local + External)](./stories/epic-12-tiered-model-storage.md)** — external USB/Thunderbolt SSD as a second model repository with mount/availability detection, a tier-aware unified inventory built on Epic-11, integrity-checked promote/demote moves, disk-budget + LRU auto-tiering with pinning, serve-from-external (with auto-promote-before-benchmark for clean metrics), and CLI + dashboard tier surfaces.
 - **[Epic-13: Context-Optimization Proxy Layer](./stories/epic-13-context-optimization-proxy.md)** — `configs/optimizers.yaml` registry (detect-only, manual-install, link-guided) for OpenAI-compatible context-compression proxies, chained `proxy → inferencer` lifecycle, and a bare-vs-proxied A/B measurement treatment reporting tokens prefilled, latency, and correctness/task-success deltas; Headroom is the first proxy, scoped to agent mode.
 - **[Epic-14: Additional Coding-Agent Harnesses](./stories/epic-14-additional-agent-harnesses.md)** — generalize the Codex-only agent runner into a pluggable harness-adapter registry (command builder + output parser + read-only detection, reusing Epic-06's workspace + scoring + agent JSONL), then add Claude Code (frontier/cloud baseline; cannot natively target local OpenAI endpoints) and Qwen Code (OpenAI-compatible, drives the project's local models directly). Manual-install / link-only.
+- **[Epic-15: Settings Management](./stories/epic-15-settings-management.md)** — dashboard Settings tab aggregating every config surface (`models.yaml`, `inferencers.yaml` incl. `external_repo`/`auto_tier`, `suites.yaml`, `agents.yaml`, plus a new `configs/settings.yaml` for harness defaults) into one grouped, provenance-labelled view, with validated editors over a single safe write pipeline: loader-backed validation, atomic comment-preserving writes with timestamped backups, external-edit conflict detection, live reload of affected panels, and secrets shown by env-var reference only (never values). Enforces the nothing-hardcoded principle: every operational default (timeouts, ports, token caps, directories, canary set) is externalized to YAML with fixed precedence (flag > env > yaml > fallback) and surfaced in the tab with per-key source provenance.
+- **[Epic-16: Dashboard UI Revamp](./stories/epic-16-ui-theme-revamp.md)** — one design-token layer (black/white/grey ramp + a single accent) replacing ~60 scattered hex literals across all dashboard surfaces; fully designed light and dark modes (OS-following default, persistent no-flash toggle, WCAG AA in both); every section and chart restyled onto the tokens; a time-boxed evaluation of vendorable tooling (Open Props, Pico.css, uPlot — offline, no build step); and the accent/default-mode as validated `settings.yaml` values editable from the Epic-15 Settings tab.
 - **[Non-Functional Requirements](./stories/non-functional-requirements.md)** — performance, security, quality, integration, infrastructure.
 
 ## MVP Summary
@@ -77,8 +81,8 @@ v1 is "done" (per `REQUIREMENTS.md` §6) when one command runs the full HumanEva
 
 ## Project Metrics
 
-- **Total Stories**: 73
-- **Total Story Points**: 261
+- **Total Stories**: 96
+- **Total Story Points**: 348
 - **MVP Stories**: ~28 (Epics 01–04 + Epic-06 + NFR-SEC/QUAL)
 - **MVP Points**: ~88
 
@@ -110,6 +114,10 @@ graph TD
     E09 --> E11
     E11 --> E12[Epic-12: Tiered Model Storage]
     E09 --> E12
+    E09 --> E15[Epic-15: Settings Management]
+    E12 --> E15
+    E09 --> E16[Epic-16: Dashboard UI Revamp]
+    E15 --> E16
     NFR[NFR: Security/Sandbox] -.governs.-> E02
     NFR -.governs.-> E03
 ```
