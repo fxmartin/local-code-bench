@@ -141,8 +141,11 @@ def test_no_color_literals_outside_theme_module() -> None:
 
 
 def test_chart_palette_is_sourced_from_theme() -> None:
+    # Since story 16.2-002 the palette entries are var(--chart-*) references,
+    # so the SVG re-colors live when the mode toggles.
     assert dashboard_charts._PALETTE == theme.CHART_SERIES
     assert dashboard_charts._POINT_COLOR == theme.CHART_SERIES[0]
+    assert all(paint.startswith("var(--chart-") for paint in theme.CHART_SERIES)
 
 
 # --------------------------------------------------------------------------- #
@@ -208,6 +211,6 @@ def test_static_results_page_uses_token_block(tmp_path) -> None:
 
     content = dashboard.generate_dashboard([path], tmp_path / "dashboard.html")
 
-    # Inline SVG series colors are the one sanctioned addition, and they too are
-    # defined in the theme module.
-    _assert_page_uses_tokens(content, allowed=_palette_hexes() | set(theme.CHART_SERIES))
+    # Inline SVG series colors are var(--chart-*) references since 16.2-002,
+    # so the token block's hexes are the only literals on the page.
+    _assert_page_uses_tokens(content, allowed=_palette_hexes())

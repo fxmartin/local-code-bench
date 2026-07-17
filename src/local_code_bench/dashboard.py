@@ -187,9 +187,10 @@ th.sortable-th:hover { text-decoration: underline; }
 .filter { margin-bottom: var(--space-3); width: 22rem; max-width: 100%; }
 .warnings { border-color: var(--border-strong); }
 .chart-svg { width: 100%; max-width: 520px; height: auto; display: block; }
-.chart-svg .axis { stroke: var(--border-strong); stroke-width: 1; }
-.chart-svg .tick { fill: var(--text-muted); font-size: 10px; }
-.chart-svg .axis-title { fill: var(--text-muted); font-size: 11px; }
+.chart-svg .axis { stroke: var(--chart-axis); stroke-width: 1; }
+.chart-svg .grid { stroke: var(--chart-grid); stroke-width: 1; }
+.chart-svg .tick { fill: var(--chart-label); font-size: 10px; }
+.chart-svg .axis-title { fill: var(--chart-label); font-size: 11px; }
 .chart-note { color: var(--warn-fg); font-size: var(--text-sm); margin: var(--space-2) 0 0; }
 .legend { list-style: none; padding: 0; margin: var(--space-2) 0 0; display: flex;
   flex-wrap: wrap; gap: var(--space-1) var(--space-4); font-size: var(--text-sm); }

@@ -521,7 +521,11 @@ unified dashboard, and the inferencer panel) ships designed light and dark
 modes. Pages follow the OS `prefers-color-scheme` by default; the round toggle
 in the top-right corner switches instantly and remembers the choice in the
 browser's `localStorage`, applied before first paint so a reload never flashes
-the wrong theme.
+the wrong theme. The charts follow the same monochrome-plus-accent language:
+axes, gridlines, labels, and series resolve from the shared theme tokens and
+re-color live when the mode toggles, with the accent reserved for the
+highlighted series and the remaining series told apart by grey ramp stops plus
+per-series dash patterns and marker shapes.
 
 ## Inferencer Lifecycle
 

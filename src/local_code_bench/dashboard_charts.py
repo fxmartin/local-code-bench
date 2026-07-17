@@ -12,6 +12,13 @@ keeps the static artifact fully offline: no matplotlib PNGs, no JavaScript, and 
 CDN fetches. A point is plotted only when its required metrics are present; models
 or sweep observations with incomplete metrics are dropped and surfaced in a visible
 data-quality note rather than plotted as misleading zeros.
+
+The charts speak the theme's monochrome-plus-accent language (story 16.2-002):
+every paint is a ``var(--chart-*)`` reference into the shared token layer, so
+axes, gridlines, labels, and series re-color live when the mode toggles. The
+accent is reserved for the highlighted first series; supporting series combine
+grey ramp stops with per-series dash patterns and marker shapes, because hue
+alone can no longer tell them apart.
 """
 
 from __future__ import annotations
@@ -23,10 +30,41 @@ from dataclasses import dataclass
 from local_code_bench.dashboard_model import EndpointModelAggregate, SweepPoint
 from local_code_bench.theme import CHART_SERIES
 
-# Series colors come from the shared token layer (story 16.1-001); values are
-# inlined into the SVG (no external CSS/CDN) and cycle per sweep series.
+# Series paints come from the shared token layer; the inline SVG resolves the
+# custom properties against the embedding page's stylesheet at paint time.
 _PALETTE = CHART_SERIES
 _POINT_COLOR = _PALETTE[0]
+
+# Per-series line/marker variation. Supporting series cycle the grey stops with
+# staggered dash patterns and marker shapes so the (paint, dash, marker) combo
+# stays unique well past eight series.
+_DASHES = ("", "7 4", "2 3", "10 4 2 4")
+_MARKERS = ("circle", "square", "diamond", "triangle")
+_LEGEND_GLYPHS = {"circle": "●", "square": "■", "diamond": "◆", "triangle": "▲"}
+
+
+@dataclass(frozen=True)
+class SeriesStyle:
+    """Paint plus line/marker treatment for one sweep series."""
+
+    paint: str
+    dash: str
+    marker: str
+
+
+def series_style(index: int) -> SeriesStyle:
+    """Style for sweep series ``index`` — accent first, grey ramp variants after."""
+
+    if index == 0:
+        return SeriesStyle(_PALETTE[0], "", _MARKERS[0])
+    support = index - 1
+    greys = _PALETTE[1:]
+    return SeriesStyle(
+        greys[support % len(greys)],
+        _DASHES[support % len(_DASHES)],
+        _MARKERS[support % len(_MARKERS)],
+    )
+
 
 # SVG geometry (viewBox units). Plot area is the canvas minus margins.
 _W = 480
@@ -192,7 +230,7 @@ def _scatter_section(
         cy = _scale(point.y, y_lo, y_hi, _PX_BOTTOM, _PX_TOP)
         tooltip = f"{point.label}: {x_fmt(point.x)}, {y_fmt(point.y)}"
         parts.append(
-            f'<circle cx="{cx:.2f}" cy="{cy:.2f}" r="5" fill="{_POINT_COLOR}">'
+            f'<circle cx="{cx:.2f}" cy="{cy:.2f}" r="5" style="fill:{_POINT_COLOR}">'
             f"<title>{html.escape(tooltip)}</title></circle>"
         )
     return _chart_section(title, _svg(title, parts), omitted)
@@ -217,7 +255,7 @@ def _sweep_section(
     parts = _axes_svg(x_title, y_title, x_lo, x_hi, y_lo, y_hi, _fmt_int, _fmt_speed)
     legend: list[str] = []
     for index, model in enumerate(sorted(series)):
-        color = _PALETTE[index % len(_PALETTE)]
+        style = series_style(index)
         plotted = series[model]
         coords = [
             (
@@ -228,20 +266,44 @@ def _sweep_section(
         ]
         if len(coords) > 1:
             line = " ".join(f"{cx:.2f},{cy:.2f}" for cx, cy in coords)
+            dash = f' stroke-dasharray="{style.dash}"' if style.dash else ""
             parts.append(
-                f'<polyline points="{line}" fill="none" stroke="{color}" stroke-width="2"/>'
+                f'<polyline points="{line}" fill="none" style="stroke:{style.paint}" '
+                f'stroke-width="2"{dash}/>'
             )
         for (cx, cy), point in zip(coords, plotted):
             tooltip = f"{point.label}: {_fmt_speed(point.y)}"
-            parts.append(
-                f'<circle cx="{cx:.2f}" cy="{cy:.2f}" r="4" fill="{color}">'
-                f"<title>{html.escape(tooltip)}</title></circle>"
-            )
+            parts.append(_marker_svg(style, cx, cy, tooltip))
+        glyph = _LEGEND_GLYPHS[style.marker]
         legend.append(
-            f'<li><span class="swatch" style="color:{color}">●</span>{html.escape(model)}</li>'
+            f'<li><span class="swatch" style="color:{style.paint}">{glyph}</span>'
+            f"{html.escape(model)}</li>"
         )
     body = _svg(title, parts) + f'<ul class="legend">{"".join(legend)}</ul>'
     return _chart_section(title, body, omitted)
+
+
+def _marker_svg(style: SeriesStyle, cx: float, cy: float, tooltip: str) -> str:
+    """One data-point marker in the series' shape, painted from the token layer."""
+
+    title = f"<title>{html.escape(tooltip)}</title>"
+    fill = f'style="fill:{style.paint}"'
+    if style.marker == "square":
+        return (
+            f'<rect x="{cx - 3.5:.2f}" y="{cy - 3.5:.2f}" width="7" height="7" '
+            f"{fill}>{title}</rect>"
+        )
+    if style.marker == "diamond":
+        return (
+            f'<rect x="{cx - 3.5:.2f}" y="{cy - 3.5:.2f}" width="7" height="7" '
+            f'transform="rotate(45 {cx:.2f} {cy:.2f})" {fill}>{title}</rect>'
+        )
+    if style.marker == "triangle":
+        return (
+            f'<path d="M {cx:.2f} {cy - 4.5:.2f} L {cx + 4.2:.2f} {cy + 3.5:.2f} '
+            f'L {cx - 4.2:.2f} {cy + 3.5:.2f} Z" {fill}>{title}</path>'
+        )
+    return f'<circle cx="{cx:.2f}" cy="{cy:.2f}" r="4" {fill}>{title}</circle>'
 
 
 def _axes_svg(
@@ -254,7 +316,11 @@ def _axes_svg(
     x_fmt,
     y_fmt,
 ) -> list[str]:
+    mid_y = (_PX_TOP + _PX_BOTTOM) / 2
     parts = [
+        # Hairline gridlines at the top (y max) and midpoint of the plot area.
+        f'<line x1="{_PX_LEFT}" y1="{_PX_TOP}" x2="{_PX_RIGHT}" y2="{_PX_TOP}" class="grid"/>',
+        f'<line x1="{_PX_LEFT}" y1="{mid_y:.0f}" x2="{_PX_RIGHT}" y2="{mid_y:.0f}" class="grid"/>',
         f'<line x1="{_PX_LEFT}" y1="{_PX_BOTTOM}" x2="{_PX_RIGHT}" y2="{_PX_BOTTOM}" '
         'class="axis"/>',
         f'<line x1="{_PX_LEFT}" y1="{_PX_TOP}" x2="{_PX_LEFT}" y2="{_PX_BOTTOM}" class="axis"/>',
