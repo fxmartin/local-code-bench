@@ -37,7 +37,7 @@
 | Epic-12 | Tiered Model Storage (Local + External) | Two-tier model repository (internal disk + external SSD) with promote/demote, auto-tiering, and serve-from-external | 8 | 39 | Should Have (v1.x) |
 | Epic-13 | Context-Optimization Proxy Layer | Measure context-compression proxies (Headroom) as a bare-vs-proxied A/B treatment — tokens prefilled, latency, and correctness cost | 4 | 14 | Should Have (v2) |
 | Epic-14 | Additional Coding-Agent Harnesses | Generalize the Codex-only runner into a pluggable adapter and add Claude Code (cloud baseline) + Qwen Code (drives local models) | 3 | 11 | Should Have (v1.x) |
-| Epic-15 | Settings Management | Dashboard Settings tab to visualise and safely edit all harness configuration — models, inferencers, storage paths/tiering, suites, agents | 6 | 26 | Should Have (v1.x) |
+| Epic-15 | Settings Management | Dashboard Settings tab to visualise and safely edit all harness configuration — models, inferencers, storage paths/tiering, suites, agents — plus nothing-hardcoded: every operational default externalized to YAML | 8 | 34 | Should Have (v1.x) |
 | NFR | Non-Functional Requirements | Accuracy, security, quality, portability, hardware fit | 5 | 12 | Mixed (SEC/QUAL = MVP) |
 
 ## Epic Navigation
@@ -56,7 +56,7 @@
 - **[Epic-12: Tiered Model Storage (Local + External)](./stories/epic-12-tiered-model-storage.md)** — external USB/Thunderbolt SSD as a second model repository with mount/availability detection, a tier-aware unified inventory built on Epic-11, integrity-checked promote/demote moves, disk-budget + LRU auto-tiering with pinning, serve-from-external (with auto-promote-before-benchmark for clean metrics), and CLI + dashboard tier surfaces.
 - **[Epic-13: Context-Optimization Proxy Layer](./stories/epic-13-context-optimization-proxy.md)** — `configs/optimizers.yaml` registry (detect-only, manual-install, link-guided) for OpenAI-compatible context-compression proxies, chained `proxy → inferencer` lifecycle, and a bare-vs-proxied A/B measurement treatment reporting tokens prefilled, latency, and correctness/task-success deltas; Headroom is the first proxy, scoped to agent mode.
 - **[Epic-14: Additional Coding-Agent Harnesses](./stories/epic-14-additional-agent-harnesses.md)** — generalize the Codex-only agent runner into a pluggable harness-adapter registry (command builder + output parser + read-only detection, reusing Epic-06's workspace + scoring + agent JSONL), then add Claude Code (frontier/cloud baseline; cannot natively target local OpenAI endpoints) and Qwen Code (OpenAI-compatible, drives the project's local models directly). Manual-install / link-only.
-- **[Epic-15: Settings Management](./stories/epic-15-settings-management.md)** — dashboard Settings tab aggregating every config surface (`models.yaml`, `inferencers.yaml` incl. `external_repo`/`auto_tier`, `suites.yaml`, `agents.yaml`) into one grouped, provenance-labelled view, with validated editors over a single safe write pipeline: loader-backed validation, atomic comment-preserving writes with timestamped backups, external-edit conflict detection, live reload of affected panels, and secrets shown by env-var reference only (never values).
+- **[Epic-15: Settings Management](./stories/epic-15-settings-management.md)** — dashboard Settings tab aggregating every config surface (`models.yaml`, `inferencers.yaml` incl. `external_repo`/`auto_tier`, `suites.yaml`, `agents.yaml`, plus a new `configs/settings.yaml` for harness defaults) into one grouped, provenance-labelled view, with validated editors over a single safe write pipeline: loader-backed validation, atomic comment-preserving writes with timestamped backups, external-edit conflict detection, live reload of affected panels, and secrets shown by env-var reference only (never values). Enforces the nothing-hardcoded principle: every operational default (timeouts, ports, token caps, directories, canary set) is externalized to YAML with fixed precedence (flag > env > yaml > fallback) and surfaced in the tab with per-key source provenance.
 - **[Non-Functional Requirements](./stories/non-functional-requirements.md)** — performance, security, quality, integration, infrastructure.
 
 ## MVP Summary
@@ -79,8 +79,8 @@ v1 is "done" (per `REQUIREMENTS.md` §6) when one command runs the full HumanEva
 
 ## Project Metrics
 
-- **Total Stories**: 87
-- **Total Story Points**: 315
+- **Total Stories**: 89
+- **Total Story Points**: 323
 - **MVP Stories**: ~28 (Epics 01–04 + Epic-06 + NFR-SEC/QUAL)
 - **MVP Points**: ~88
 

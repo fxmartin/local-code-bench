@@ -2,12 +2,13 @@
 
 ## Epic Overview
 **Epic ID**: Epic-15
-**Description**: Give the unified dashboard (Epic-09) a **Settings tab** that surfaces every piece of harness configuration in one place — the model matrix (`configs/models.yaml`), the inferencer registry with its storage paths and tiering policy (`configs/inferencers.yaml`, including `external_repo` and `auto_tier`), the suite catalog (`configs/suites.yaml`), and the agent harnesses (`configs/agents.yaml`) — first as a grouped, provenance-labelled read view, then as validated editors. Edits flow through one safe write pipeline: validated with the same loaders the harness itself uses, written atomically with a timestamped backup, preserving file comments, refusing to clobber concurrent external edits, and never touching any file outside the registered config set. Secrets are handled by reference only — the tab shows *which* environment variable a provider reads and whether it is set, never its value.
+**Description**: Give the unified dashboard (Epic-09) a **Settings tab** that surfaces every piece of harness configuration in one place — the model matrix (`configs/models.yaml`), the inferencer registry with its storage paths and tiering policy (`configs/inferencers.yaml`, including `external_repo` and `auto_tier`), the suite catalog (`configs/suites.yaml`), the agent harnesses (`configs/agents.yaml`), and a new **harness-defaults file (`configs/settings.yaml`)** that absorbs every operational value currently hardcoded in the source — first as a grouped, provenance-labelled read view, then as validated editors. Edits flow through one safe write pipeline: validated with the same loaders the harness itself uses, written atomically with a timestamped backup, preserving file comments, refusing to clobber concurrent external edits, and never touching any file outside the registered config set. Secrets are handled by reference only — the tab shows *which* environment variable a provider reads and whether it is set, never its value.
+**Guiding Principle — nothing hardcoded**: every operational value an operator might reasonably tune (timeouts, ports, default token caps, directories, anchor sets, retention) lives in a YAML file under `configs/` and is visible in the Settings tab. Source-code constants are permitted only as last-resort fallbacks for a missing file/key, and any such fallback must mirror the shipped YAML value. Resolution precedence is fixed and documented: explicit CLI flag > environment variable > YAML setting > built-in fallback.
 **Business Value**: Today changing any setting means knowing which of four YAML files owns it, editing it by hand, and finding out at the next CLI run whether the edit was valid. That is fine for FX-as-developer but hostile to FX-as-operator mid-benchmark-campaign: adding a model, pointing a store at a new path, or bumping a suite timeout is a context switch out of the dashboard and into an editor, with no guardrails against typos that silently invalidate a run (a duplicate model name, a concurrency that corrupts local speed metrics, a price table entry that skews cost math). A Settings tab makes the whole configuration visible and safely editable from the same surface that runs the benchmarks, with validation *before* the file is written instead of a stack trace after.
 **Success Metrics**: From the dashboard FX can see every setting grouped by domain (models / inferencers / storage / suites / agents) with the file it comes from; add, edit, or remove a model entry and have the result validated and written with comments intact; change a store path, external-repo root, or auto-tier budget and see the tier views pick it up without restarting the dashboard; never see a secret value rendered anywhere; and never lose a hand-made edit — a conflicting external change is detected and surfaced, every write leaves a restorable backup, and an invalid edit is rejected with the loader's real error message before anything touches disk.
 
 ## Epic Scope
-**Total Stories**: 6 | **Total Points**: 26 | **MVP Stories**: 0 (Should Have / v1.x)
+**Total Stories**: 8 | **Total Points**: 34 | **MVP Stories**: 0 (Should Have / v1.x)
 
 ## Decisions To Confirm With FX
 - **Comment preservation strategy**: config files carry load-bearing comments (the whole benchmark protocol lives in `models.yaml` comments). The design assumes round-trip YAML editing (`ruamel.yaml` — a new dependency) so edits keep comments; the fallback is targeted line-level patching. Confirm the dependency is acceptable before 15.2-001 starts.
@@ -17,7 +18,7 @@
 ## Scope Boundaries (explicitly NOT building)
 - **No secret management** — API keys stay in the shell environment. The tab shows the `api_key_env` *name* and a set/unset indicator; it never displays, stores, or edits a secret value, and no secret ever appears in a settings API response.
 - **No arbitrary file editing** — the write path accepts exactly the registered config files (`models.yaml`, `inferencers.yaml`, `suites.yaml`, `agents.yaml`); it is not a general YAML editor and never follows a client-supplied path.
-- **No schema invention** — the editors expose what the existing `config.py` loaders accept; a config feature that does not exist in the harness is not added here.
+- **No schema invention in editors** — the section editors expose what the config loaders accept; they never write keys no loader reads. The one deliberate schema addition in this epic is `configs/settings.yaml` (Feature 15.5), whose keys exist precisely because the harness already consumes them as hardcoded constants.
 - **No multi-user story** — single operator on localhost; conflict handling is last-write detection against external edits (editor, git pull), not collaborative editing.
 - **No remote sync** — settings live in the repo's `configs/` files; no cloud profiles or per-machine overlays.
 
@@ -174,5 +175,51 @@
 **Dependencies**: 15.2-001
 **Risk Level**: Medium
 
+### Feature 15.5: Nothing Hardcoded — Externalized Harness Defaults
+
+#### Stories
+
+##### Story 15.5-001: Audit hardcoded defaults and externalize them into `configs/settings.yaml`
+**User Story**: As FX, I want every operational default currently hardcoded in the source moved into a checked-in `configs/settings.yaml` with a single loader and a fixed precedence order, so that no tunable behaviour is buried in a Python constant.
+**Priority**: Should Have
+**Story Points**: 5
+
+**Acceptance Criteria**:
+- **Given** the codebase **When** the audit story completes **Then** a written inventory (in the epic file or a design note) lists every hardcoded operational value with its owner module, and each is either externalized or explicitly ruled a non-setting (with rationale). Known targets at writing time: endpoint suite default `max_tokens` (`runner.DEFAULT_ENDPOINT_MAX_TOKENS` = 1024), chat defaults (`chat.DEFAULT_TEMPERATURE` = 0.7, `DEFAULT_MAX_TOKENS` = 1024), sandbox timeout (5 s), provider timeout (120 s, today env-only via `BENCH_PROVIDER_TIMEOUT_SECONDS`), dashboard hosts/ports (8765 / 8770), suite cache dir (`.cache/benchmarks`), canary anchor set (`CANARY_HUMANEVAL_IDS`), inferencer start/health timeouts (30 s / 1 s), OpenCode build/run timeouts (60 s / 10 s), results and state directories, and the 15.2-001 backup directory/retention.
+- **Given** `configs/settings.yaml` exists **When** any consumer needs one of these values **Then** it resolves through one shared loader with the documented precedence (CLI flag > env var > `settings.yaml` > built-in fallback), and the built-in fallback equals the shipped YAML value.
+- **Given** `configs/settings.yaml` is absent or a key is missing **When** the harness runs **Then** behaviour is identical to today (fallbacks apply) — the file is additive, never a breaking requirement.
+- **Given** a protocol-locked value (benchmark temperature/seed, local-model concurrency) **When** the file is authored **Then** it is either excluded or present under a clearly marked read-only section the loader refuses to override — the settings file must not become a side door around the measurement protocol.
+
+**Technical Notes**: One loader module (e.g. `config.load_settings` or `settings.py`) returning a typed defaults object injected at the existing call sites — the constants become the fallback layer rather than the source of truth. Migrate call sites incrementally but land the loader + file + inventory in one story so the Settings tab (15.5-002) has a complete surface. `BENCH_PROVIDER_TIMEOUT_SECONDS` keeps working as the env layer of the same key.
+
+**Definition of Done**:
+- [ ] Code implemented and peer reviewed
+- [ ] Tests written and passing
+- [ ] Documentation updated
+
+**Dependencies**: None (config layer; precedes the tab surfacing)
+**Risk Level**: Medium
+
+##### Story 15.5-002: Harness defaults group in the Settings tab
+**User Story**: As FX, I want the externalized harness defaults visible and editable in the Settings tab like every other group, so that "everything in YAML, everything in the tab" holds end to end.
+**Priority**: Should Have
+**Story Points**: 3
+
+**Acceptance Criteria**:
+- **Given** the Settings tab **When** it renders **Then** a Harness group shows every `configs/settings.yaml` key with its resolved effective value *and* its source layer (flag / env / yaml / fallback), so an env override is never mistaken for the YAML value.
+- **Given** a key currently overridden by an environment variable **When** displayed **Then** the YAML field is editable but the tab states the env override wins until unset — editing never silently loses to an invisible layer.
+- **Given** an edit to the Harness group **When** submitted **Then** it flows through the 15.2-001 pipeline (loader validation, atomic write, backup, conflict check) like every other file.
+- **Given** read-only protocol-locked entries **When** rendered **Then** they appear with their rationale and no edit affordance, consistent with 15.1-001.
+
+**Technical Notes**: Thin extension of the 15.1-001 aggregator and 15.3 editor pattern; the interesting part is surfacing per-key provenance (which precedence layer produced the effective value), which the 15.5-001 loader should expose rather than the tab recomputing it.
+
+**Definition of Done**:
+- [ ] Code implemented and peer reviewed
+- [ ] Tests written and passing
+- [ ] Documentation updated
+
+**Dependencies**: 15.5-001, 15.2-001
+**Risk Level**: Low
+
 ## Epic Progress
-**Completed**: 0 / 6 stories · 0 / 26 points
+**Completed**: 0 / 8 stories · 0 / 34 points
