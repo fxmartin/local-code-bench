@@ -329,6 +329,8 @@ saving is never shown without its correctness delta, and a condition whose
 correctness signal is missing is reported `unverified` rather than implying
 parity. Agents without a configurable base URL (e.g. a `codex` entry routed via
 its own profile) are refused, and `--resume` is not supported with `--ab-proxy`.
+The same comparison is also available as `bench optimizer ab --task <suite>
+--agent <agent> --proxy <name>` (see the optimizer lifecycle commands below).
 
 ## OpenCode Benchmark
 
@@ -613,12 +615,34 @@ detection is read-only, and a missing proxy is reported as not installed with it
 reference `url` as the manual-install link (see the proxies section of
 [`docs/INFERENCER-INSTALLATION.md`](docs/INFERENCER-INSTALLATION.md)).
 
+`bench optimizer` drives the proxy layer beside the `bench inferencer` commands
+(Story 13.4-001):
+
+```bash
+uv run bench optimizer list               # installed state, listen port, and reference URL
+uv run bench optimizer status             # installed/running/healthy/upstream table
+uv run bench optimizer start headroom     # chain in front of the single active engine
+uv run bench optimizer start headroom --inferencer mlx-lm   # chain in front of a named running engine
+uv run bench optimizer stop headroom      # idempotent stop (never touches the upstream engine)
+uv run bench optimizer ab --task humaneval --agent qwen-code --proxy headroom --limit 3
+```
+
+`start` refuses when the target engine is not running (a proxy must front a real
+engine), and `stop` only signals the proxy's own process group. `ab` runs the same
+bare-vs-proxied comparison as `--mode agent --ab-proxy` — `--task` names the suite,
+`--agent` the configured agent, and `--proxy` the registered proxy — and prints the
+side-by-side token/latency/correctness report. Proxy state lives under
+`.runtime/optimizers/` (override with `--state-dir`); any config or lifecycle
+failure prints `bench: error: ...` and exits 2, consistent with the other verbs.
+Headroom's own `--learn` flag is an optional manual tuning step you can run
+yourself — the harness neither triggers nor depends on it.
+
 ## Unified Dashboard
 
 `bench dashboard` serves a single localhost page that brings the inferencer control
-panel, the live results view, a benchmark **Run** section, a **Chat** section, and a
-read-only **Settings** section together — switch between them client-side with no
-reload and no build step:
+panel, a read-only **Optimizers** section, the live results view, a benchmark
+**Run** section, a **Chat** section, and a read-only **Settings** section together —
+switch between them client-side with no reload and no build step:
 
 ```bash
 uv run bench dashboard                       # serve on http://127.0.0.1:8765
@@ -635,6 +659,10 @@ It composes the existing surfaces rather than duplicating them: the **Inferencer
 section drives the same exclusive start/stop as `bench inferencer` (exactly one
 headless server ever holds the GPU), and the **Results** section reuses the live
 aggregates, so a still-running run shows up on refresh without a restart. The
+**Optimizers** section (Epic-13) is a distinct panel — never mixed into the
+Inferencers one — showing each registered proxy's installed/running/healthy state
+and upstream; it is read-only, with lifecycle driven from `bench optimizer
+start/stop` (registry and state paths: `--optimizers`, `--optimizer-state-dir`). The
 **Run** section composes a benchmark from a model, an inferencer, and one or more
 test suites: the selectors are populated from `--models` (`configs/models.yaml`),
 `--config` (`configs/inferencers.yaml`), and the available-suites catalog (built-in

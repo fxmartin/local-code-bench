@@ -138,3 +138,8 @@ harness detects the `headroom` binary on your `PATH`.
 **Verify**: `which headroom`, then (once running against an engine)
 `curl -s http://127.0.0.1:8787/v1/models`.
 Reference: <https://headroom-docs.vercel.app/docs>
+
+**Optional tuning**: Headroom's `--learn` flag trains its context-trimming
+heuristics on your own traffic. It is a manual step you run yourself when you
+want it — the harness neither triggers nor depends on it, and benchmark runs
+work the same with or without it.

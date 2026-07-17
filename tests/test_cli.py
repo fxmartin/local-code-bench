@@ -363,6 +363,8 @@ def test_unified_dashboard_command_invokes_server(monkeypatch) -> None:
         agents_path,
         results_dir,
         suites_path,
+        optimizers_path,
+        optimizer_state_dir,
         host,
         port,
         progress,
@@ -376,6 +378,8 @@ def test_unified_dashboard_command_invokes_server(monkeypatch) -> None:
             agents_path=agents_path,
             results_dir=results_dir,
             suites_path=suites_path,
+            optimizers_path=optimizers_path,
+            optimizer_state_dir=optimizer_state_dir,
             host=host,
             port=port,
             dashboard_state_file=dashboard_state_file,
@@ -413,7 +417,7 @@ def test_unified_dashboard_discovers_results_dir(monkeypatch, tmp_path) -> None:
 
     def fake_serve(
         config, state_dir, result_paths, *, models_path, agents_path, results_dir, suites_path,
-        host, port, progress, dashboard_state_file
+        optimizers_path, optimizer_state_dir, host, port, progress, dashboard_state_file
     ) -> None:
         captured["result_paths"] = result_paths
 
@@ -430,7 +434,7 @@ def test_unified_dashboard_missing_results_dir_yields_no_inputs(monkeypatch, tmp
 
     def fake_serve(
         config, state_dir, result_paths, *, models_path, agents_path, results_dir, suites_path,
-        host, port, progress, dashboard_state_file
+        optimizers_path, optimizer_state_dir, host, port, progress, dashboard_state_file
     ) -> None:
         captured["result_paths"] = result_paths
 

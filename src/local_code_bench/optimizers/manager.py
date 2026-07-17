@@ -82,6 +82,29 @@ def active_inferencer_base_url(
     return _UPSTREAM_TEMPLATE.format(port=running[0].port)
 
 
+def named_inferencer_base_url(
+    name: str, configs: dict[str, InferencerConfig], state_dir: str | Path
+) -> str:
+    """Resolve the base URL of a named inferencer, refusing unless it is running.
+
+    The CLI's `optimizer start <proxy> --inferencer <engine>` path: the same
+    proxy-fronts-a-real-engine rule as :func:`active_inferencer_base_url`, but
+    for an explicitly chosen engine instead of the single active one.
+    """
+
+    statuses = status_all(configs, state_dir)
+    if name not in statuses:
+        available = ", ".join(sorted(statuses)) or "(none)"
+        raise OptimizerError(f"unknown inferencer '{name}'. Available: {available}")
+    st = statuses[name]
+    if not st.running:
+        raise OptimizerError(
+            f"inferencer '{name}' is not running — start it first so the proxy "
+            "fronts a real engine"
+        )
+    return _UPSTREAM_TEMPLATE.format(port=st.port)
+
+
 def status(cfg: OptimizerConfig, state_dir: str | Path) -> OptimizerStatus:
     """Report installed / running / healthy state for a single proxy.
 
