@@ -115,3 +115,26 @@ uv run bench inferencer status              # see installed / running / healthy
 
 If an engine isn't installed, `bench inferencer status` reports it as not installed and
 points back to the reference URL in this guide.
+
+---
+
+## Context-optimization proxies (Epic-13)
+
+`configs/optimizers.yaml` registers context-optimization proxies the harness can
+detect and drive. A proxy sits between the harness and an engine: it listens on its
+own `port` and forwards to the active inferencer's base URL (substituted into its
+`start` template as `{upstream}`), trimming and caching prompt context to cut
+prefill cost. The same rule applies as for engines: the harness **never installs a
+proxy** — detection is read-only (`shutil.which` / `find_spec`), and a missing
+proxy is reported as not installed with its reference `url` as the manual-install
+link.
+
+### Headroom (`headroom`) — port 8787
+
+**What it is**: a prompt-processing proxy that optimizes the context sent to an
+OpenAI-compatible upstream. Install it manually following its docs, then the
+harness detects the `headroom` binary on your `PATH`.
+
+**Verify**: `which headroom`, then (once running against an engine)
+`curl -s http://127.0.0.1:8787/v1/models`.
+Reference: <https://headroom-docs.vercel.app/docs>

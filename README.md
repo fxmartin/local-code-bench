@@ -561,6 +561,16 @@ page. Installation is always manual and link-guided. For step-by-step, per-engin
 the M3 Max (install, start, verify), see
 [`docs/INFERENCER-INSTALLATION.md`](docs/INFERENCER-INSTALLATION.md).
 
+**Context-optimization proxies (Epic-13).** `configs/optimizers.yaml` declares the
+context-optimization proxies the harness can drive (seeded with
+[Headroom](https://headroom-docs.vercel.app/docs) on port 8787). A proxy sits between
+the harness and an engine: its `start` template substitutes both `{port}` (the proxy's
+own listen port) and `{upstream}` (the active inferencer's base URL), so it is always
+wired to a real engine. As with engines, the harness never installs a proxy —
+detection is read-only, and a missing proxy is reported as not installed with its
+reference `url` as the manual-install link (see the proxies section of
+[`docs/INFERENCER-INSTALLATION.md`](docs/INFERENCER-INSTALLATION.md)).
+
 ## Unified Dashboard
 
 `bench dashboard` serves a single localhost page that brings the inferencer control
