@@ -150,5 +150,6 @@ docs/STORIES.md (overview and navigation)
 - `PROJECT-SEED.md` — Project seed data for downstream skills
 - `LEADERBOARD.md` — Generated benchmark rankings (created by the harness)
 - `docs/FINDINGS.md` — Recorded benchmark findings (e.g. DFlash vs TurboQuant on M3 Max)
+- `docs/UI-TOOLING-DECISION.md` — CSS/chart tooling evaluation (16.3-001): all candidates rejected, hand-rolled token layer stands
 - `articles/` — The two-part Medium series this project is modeled on (local Claude
   Code setup; MoE vs speculative decoding benchmark methodology)
