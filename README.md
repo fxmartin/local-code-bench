@@ -728,6 +728,34 @@ lands. An axis whose cohorts have no runs yet is still declared — the loader e
 which configured models would populate each cohort, so the tab can say "no comparable
 runs yet" and list what to run.
 
+## macOS App
+
+`app/macos/` holds a native SwiftUI shell that hosts the unified dashboard in a
+full-bleed `WKWebView` — Dock icon, real window (size/position restored across
+launches), no browser tab to lose. It launches `bench dashboard` itself, shows a
+native loading state until the service answers on `/api/status` (and the tail of
+the service log if startup fails — never a blank error page), and keeps the
+service running from the menu bar when the window is closed, so in-flight runs
+and tier moves survive; reopening the window reattaches to the same session. On
+first run it asks where benchmark data lives: a private
+`~/Library/Application Support/LocalCodeBench` directory, or an existing
+`local-code-bench` checkout so configs and results are shared with the CLI.
+
+It is a Swift Package (open `app/macos/Package.swift` in Xcode, or build from
+the CLI — Command Line Tools are enough, no full Xcode required):
+
+```bash
+cd app/macos
+swift build                        # compile the app + kit
+swift run LocalCodeBench           # run the shell (unbundled, for development)
+swift run LocalCodeBenchChecks     # run the kit's test suite
+```
+
+The testable logic (startup state machine, log tailing, data-location store,
+link/download policy, service launch plan) lives in the `LocalCodeBenchKit`
+library; `LocalCodeBenchChecks` is an assertion-based runner used instead of
+`swift test` because the XCTest/Testing runtime ships only with full Xcode.
+
 ## Verification Status
 
 Last automated verification: 2026-06-27.

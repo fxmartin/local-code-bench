@@ -37,6 +37,9 @@ results/
 # Agent worktrees (runtime, not part of the repo)
 .claude/worktrees/
 
+# Swift Package Manager (macOS app shell)
+app/macos/.build/
+
 # OS / editors
 .DS_Store
 .vscode/
