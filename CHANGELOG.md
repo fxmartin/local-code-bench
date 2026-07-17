@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.62.0 (2026-07-17)
+
+### Features
+
+- **ui-theme-revamp**: Design-token layer and base styles (#16.1-001)
+  ([`44f9763`](https://github.com/fxmartin/local-code-bench/commit/44f9763474f30bb4e1922a9898afc4296a12b9d9))
+
+
 ## v0.61.0 (2026-07-17)
 
 ### Features
