@@ -679,6 +679,23 @@ and runs from different suites, suite versions, or hardware tags are excluded fr
 a comparison with an explicit reason instead of being silently averaged. An unknown
 axis returns 404 with the list of available axes.
 
+The comparison axes the Benchmarks tab will render are declared as data in
+`configs/comparisons.yaml` — the seven proposed comparisons (engine, architecture,
+size ladder, quantization, context scaling, specialized vs general, local vs cloud)
+ship in the catalog, and an eighth is a config edit, not code. Each axis declares an
+id, a title, two or more **cohort filters** (matching on model-name globs, explicit
+name lists, the model's declared `inferencer`, and/or a quant token such as `q4` or
+`4bit`), a **pairing key** (`base_model`, `base_model_engine`, or `suite_context`),
+the **highlighted controlled pairs** (e.g. the gpt-oss identical-weights engine A/B),
+and deterministic **verdict rules** with their thresholds. A malformed axis is
+rejected with a loader error naming the offending field while the valid axes still
+load, so one bad edit never blanks the catalog. Verdict thresholds are shipped
+defaults; a rule carrying a `settings_key` (e.g. the quality bar at
+`benchmark_dashboard.quality_bar`) will resolve through the settings layer once it
+lands. An axis whose cohorts have no runs yet is still declared — the loader exposes
+which configured models would populate each cohort, so the tab can say "no comparable
+runs yet" and list what to run.
+
 ## Verification Status
 
 Last automated verification: 2026-06-27.

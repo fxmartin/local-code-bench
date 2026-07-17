@@ -1,0 +1,245 @@
+# Comparison-axis catalog for the Benchmarks tab (Epic-17, story 17.1-002).
+#
+# Each axis declares: id, title, the cohort filters (two or more sides), a
+# pairing key, the highlighted controlled pairs, and deterministic verdict
+# rules with their thresholds. The dashboard renders ONLY what is declared
+# here — an eighth comparison is a config edit, never code.
+#
+# Cohort filter criteria combine with AND; each cohort needs at least one of:
+#   name_globs   globs over configured model names (configs/models.yaml)
+#   names        explicit model-name allow-list
+#   inferencer   the model's declared engine (mlx-lm, ollama)
+#   quant        a quant token (q4, 4bit, ...) matched on a token boundary
+#
+# pairing_key — how configurations pair across cohorts:
+#   base_model         same base model (Epic-11 base_model_key normalization)
+#   base_model_engine  same base model on the same engine (quant sensitivity)
+#   suite_context      any configurations sharing (suite, version, hardware)
+#
+# Verdict thresholds are shipped defaults; a rule with a settings_key is
+# overridden by that entry of the Epic-15 settings layer once it lands.
+comparisons:
+  - id: engine
+    title: "Engine: mlx-lm vs Ollama"
+    description: >-
+      Every local model served by both engines. Caveat: MLX and GGUF artifacts
+      are different quantizations of the same weights, so engine deltas include
+      quant effects — except gpt-oss, where both engines run the identical
+      native MXFP4 weights.
+    pairing_key: base_model
+    cohorts:
+      - name: mlx-lm
+        inferencer: mlx-lm
+        name_globs: ["local-mlx-*"]
+      - name: ollama
+        inferencer: ollama
+        name_globs: ["local-ollama-*"]
+    highlighted_pairs:
+      - models: [local-mlx-gpt-oss-20b, local-ollama-gpt-oss-20b]
+        reason: >-
+          Identical native MXFP4 weights on both engines — the clean engine
+          A/B; all other pairs also compare different quant artifacts.
+    verdicts:
+      - id: prefill-advantage
+        description: Engine is meaningfully faster at prefill for the same weights.
+        metric: median_prefill_tokens_per_second
+        threshold: 1.10
+        unit: ratio
+      - id: decode-advantage
+        description: Engine is meaningfully faster at decode for the same weights.
+        metric: median_decode_tokens_per_second
+        threshold: 1.10
+        unit: ratio
+
+  - id: architecture
+    title: "Architecture: dense vs MoE vs sparse-MoE"
+    description: >-
+      The headline thesis check — does MoE move prefill, or only decode, so
+      agentic coding remains prefill-bound?
+    pairing_key: suite_context
+    cohorts:
+      - name: dense
+        names:
+          - local-mlx-qwen
+          - local-ollama-qwen
+          - local-mlx-devstral-24b
+          - local-ollama-devstral-24b
+      - name: moe
+        names:
+          - local-mlx-qwen3.6-35b-a3b-4bit
+          - local-mlx-qwen3.6-35b-a3b-8bit
+          - local-ollama-qwen3.6-35b-a3b-q4
+          - local-ollama-qwen3.6-35b-a3b-q8
+          - local-mlx-qwen3-coder-30b
+          - local-ollama-qwen3-coder-30b
+          - local-mlx-ornith-35b
+          - local-ollama-ornith-35b
+          - local-mlx-gpt-oss-20b
+          - local-ollama-gpt-oss-20b
+      - name: sparse-moe
+        names:
+          - local-mlx-qwen3-coder-next-3bit
+          - local-ollama-qwen3-coder-next-3bit
+    highlighted_pairs:
+      - models: [local-mlx-qwen, local-mlx-qwen3.6-35b-a3b-4bit]
+        reason: >-
+          Same-generation controlled pair: Qwen3.6-27B dense vs
+          Qwen3.6-35B-A3B MoE isolates the architecture within one training
+          generation.
+    verdicts:
+      - id: moe-decode-gain
+        description: MoE moves decode by at least this factor over dense.
+        metric: median_decode_tokens_per_second
+        threshold: 1.50
+        unit: ratio
+      - id: moe-prefill-gain
+        description: >-
+          MoE moves prefill by at least this factor — below it, agentic coding
+          remains prefill-bound.
+        metric: median_prefill_tokens_per_second
+        threshold: 1.10
+        unit: ratio
+
+  - id: size-ladder
+    title: "Size / capability ladder"
+    description: >-
+      From the 9B lower anchor through ~20B, 24B, 27B dense and 30B/35B MoE to
+      the 80B-A3B stretch: where pass@1 saturates vs where tok/s collapses.
+    pairing_key: suite_context
+    cohorts:
+      - name: 9b
+        names: [local-mlx-ornith-9b, local-ollama-ornith-9b]
+      - name: 20b
+        names: [local-mlx-gpt-oss-20b, local-ollama-gpt-oss-20b]
+      - name: 24b
+        names: [local-mlx-devstral-24b, local-ollama-devstral-24b]
+      - name: 27b-dense
+        names: [local-mlx-qwen, local-ollama-qwen]
+      - name: 30b-35b-moe
+        names:
+          - local-mlx-qwen3-coder-30b
+          - local-ollama-qwen3-coder-30b
+          - local-mlx-qwen3.6-35b-a3b-4bit
+          - local-ollama-qwen3.6-35b-a3b-q4
+          - local-mlx-ornith-35b
+          - local-ollama-ornith-35b
+      - name: 80b-a3b
+        names:
+          - local-mlx-qwen3-coder-next-3bit
+          - local-ollama-qwen3-coder-next-3bit
+    verdicts:
+      - id: quality-bar
+        description: >-
+          Smallest model clearing the quality bar — pass@1 within this many
+          percentage points of the best local model on the same suite.
+        metric: pass_at_1
+        threshold: 5.0
+        unit: pp
+        settings_key: benchmark_dashboard.quality_bar
+
+  - id: quant
+    title: "Quantization: q4 vs q8 (and 3-bit stretch)"
+    description: >-
+      What q8 buys over q4 on the purpose-built Qwen3.6-35B-A3B pairs, and
+      whether aggressive 3-bit degradation is visible on HumanEval/MBPP.
+    pairing_key: base_model_engine
+    cohorts:
+      - name: q4
+        names: [local-mlx-qwen3.6-35b-a3b-4bit, local-ollama-qwen3.6-35b-a3b-q4]
+      - name: q8
+        names: [local-mlx-qwen3.6-35b-a3b-8bit, local-ollama-qwen3.6-35b-a3b-q8]
+    highlighted_pairs:
+      - models: [local-mlx-qwen3.6-35b-a3b-4bit, local-mlx-qwen3.6-35b-a3b-8bit]
+        reason: Same model, same engine, only the quant changes — the clean q4/q8 A/B.
+      - models: [local-mlx-qwen3-coder-next-3bit, local-mlx-qwen3-coder-30b]
+        reason: Aggressive-quant big MoE vs clean-quant small MoE.
+    verdicts:
+      - id: q8-quality-gain
+        description: q8 buys at least this many percentage points of pass@1 over q4.
+        metric: pass_at_1
+        threshold: 1.0
+        unit: pp
+      - id: q8-decode-cost
+        description: q8 keeps at least this fraction of q4's decode speed.
+        metric: median_decode_tokens_per_second
+        threshold: 0.90
+        unit: ratio
+
+  - id: context-scaling
+    title: "Context scaling (prefill-vs-context)"
+    description: >-
+      TTFT and prefill tok/s as context grows, from Epic-05 sweep runs per
+      model/engine — which setups stay usable at agentic context sizes.
+    pairing_key: base_model
+    cohorts:
+      - name: mlx-lm
+        inferencer: mlx-lm
+      - name: ollama
+        inferencer: ollama
+    verdicts:
+      - id: ttft-growth
+        description: >-
+          TTFT grows meaningfully faster on one engine as context scales
+          (the reference articles' curve, reproduced per model).
+        metric: median_ttft_seconds
+        threshold: 1.50
+        unit: ratio
+
+  - id: specialized-vs-general
+    title: "Specialized vs general"
+    description: >-
+      Whether coding specialization is worth measurable pass@1 at equal speed.
+    pairing_key: suite_context
+    cohorts:
+      - name: coding-tuned
+        names:
+          - local-mlx-qwen3-coder-30b
+          - local-ollama-qwen3-coder-30b
+          - local-mlx-devstral-24b
+          - local-ollama-devstral-24b
+      - name: general
+        names:
+          - local-mlx-qwen3.6-35b-a3b-4bit
+          - local-ollama-qwen3.6-35b-a3b-q4
+          - local-mlx-qwen
+          - local-ollama-qwen
+    highlighted_pairs:
+      - models: [local-mlx-qwen3-coder-30b, local-mlx-qwen3.6-35b-a3b-4bit]
+        reason: Coding-tuned vs general MoE of the same class.
+      - models: [local-mlx-devstral-24b, local-mlx-qwen]
+        reason: The dense pair — SWE-agent specialist vs general baseline.
+    verdicts:
+      - id: specialization-premium
+        description: >-
+          Coding specialization is worth at least this many percentage points
+          of pass@1 at equal speed.
+        metric: pass_at_1
+        threshold: 2.0
+        unit: pp
+
+  - id: local-vs-cloud
+    title: "Local vs cloud frontier"
+    description: >-
+      Best local setups vs the cloud frontier, including $/solved-task
+      (local $0 plus wall-time vs cloud dollars).
+    pairing_key: suite_context
+    cohorts:
+      - name: local
+        name_globs: ["local-mlx-*", "local-ollama-*"]
+      - name: cloud
+        names:
+          - openrouter-glm-4.6
+          - openrouter-kimi-k2
+          - openrouter-qwen3.6-27b
+          - anthropic-claude-baseline
+    verdicts:
+      - id: frontier-gap
+        description: The cloud frontier leads local by at least this many pass@1 points.
+        metric: pass_at_1
+        threshold: 5.0
+        unit: pp
+      - id: cloud-premium
+        description: The cloud premium per solved task exceeds this many dollars.
+        metric: cost_per_task_usd
+        threshold: 0.05
+        unit: usd
