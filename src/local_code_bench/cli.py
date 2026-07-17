@@ -21,6 +21,7 @@ from local_code_bench.config import (
     load_external_repo,
     load_inferencers,
     load_models,
+    load_optimizers,
 )
 from local_code_bench.engine_provenance import (
     EngineProvenance,
@@ -61,6 +62,8 @@ from local_code_bench.opencode.scorecard import (
     variance_note,
 )
 from local_code_bench.opencode.sweep import read_model_list
+from local_code_bench.optimizers.abrun import render_ab_report, run_ab_comparison
+from local_code_bench.optimizers.manager import OptimizerError
 from local_code_bench.opencode.taskb import score_task_b
 from local_code_bench.power import PowerSampler
 from local_code_bench.provider import ChatRequest, ProviderError, provider_for_model
@@ -154,6 +157,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cache-dir", default=settings.cache_dir, help="benchmark dataset cache")
     parser.add_argument("--agent", help="configured agent name for agent mode")
     parser.add_argument("--agents-config", default="configs/agents.yaml", help="path to agents YAML")
+    parser.add_argument(
+        "--ab-proxy",
+        help=(
+            "agent mode: run each task twice — bare (agent -> engine) and proxied "
+            "(agent -> named optimizer -> engine) — and print the A/B comparison report"
+        ),
+    )
+    parser.add_argument(
+        "--optimizers-config",
+        default="configs/optimizers.yaml",
+        help="path to context-optimization proxy YAML (used with --ab-proxy)",
+    )
+    parser.add_argument(
+        "--optimizer-state-dir",
+        default=settings.optimizer_state_dir,
+        help="directory holding optimizer proxy process state files",
+    )
     parser.add_argument("--input", nargs="*", help="input JSONL files for leaderboard/sweep summaries")
     parser.add_argument("--output", help="output file for generated leaderboard")
     parser.add_argument(
@@ -534,6 +554,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.mode == "agent":
             if not args.agent or not args.suite:
                 parser.error("--mode agent requires --agent and --suite")
+            if args.ab_proxy and args.resume:
+                parser.error("--resume is not supported with --ab-proxy")
             result_path = Path(args.run_file) if args.run_file else new_run_path(args.results_dir, prefix=args.agent)
             agents = load_agents(args.agents_config)
             if args.agent not in agents:
@@ -544,6 +566,29 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.resume and result_path.exists() and agent_engine is not None:
                 _validate_agent_resume_provenance(result_path, agent, agent_engine)
             tasks = limit_tasks(load_suite(args.suite, cache_dir=args.cache_dir), args.limit)
+            if args.ab_proxy:
+                optimizers = load_optimizers(args.optimizers_config)
+                if args.ab_proxy not in optimizers:
+                    available = ", ".join(sorted(optimizers)) or "(none)"
+                    raise ConfigError(
+                        f"unknown optimizer '{args.ab_proxy}'. Available optimizers: {available}"
+                    )
+                records = run_ab_comparison(
+                    agent=agent,
+                    tasks=tasks,
+                    proxy=optimizers[args.ab_proxy],
+                    state_dir=args.optimizer_state_dir,
+                    result_path=result_path,
+                    runner=run_agent_task,
+                    progress=lambda message: print(message, flush=True),
+                    engine_provenance=agent_engine,
+                )
+                print(render_ab_report(records, agent_name=agent.name))
+                print(
+                    f"agent={args.agent} ab_proxy={args.ab_proxy} "
+                    f"tasks={len(tasks)} results={result_path}"
+                )
+                return 0
             done = completed_agent_pairs(result_path) if args.resume else set()
             for index, task in enumerate(tasks, start=1):
                 if (args.agent, task.task_id) in done:
@@ -591,7 +636,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"suite={args.suite} results={result_path} summary={summary}")
             return 0
 
-    except (ConfigError, ProviderError, TaskLoadError, ValueError, InferencerError) as exc:
+    except (
+        ConfigError,
+        ProviderError,
+        TaskLoadError,
+        ValueError,
+        InferencerError,
+        OptimizerError,
+    ) as exc:
         print(f"bench: error: {exc}", file=sys.stderr)
         return 2
 
