@@ -277,6 +277,25 @@ def test_scan_hf_cache_decodes_repo_names(tmp_path) -> None:
     assert models[0].size_bytes == 50
 
 
+def test_scan_hf_cache_counts_symlinked_blob_once(tmp_path) -> None:
+    store = tmp_path / "hub"
+    repo = store / "models--mlx-community--Qwen3.6-27B-4bit"
+    snapshot = repo / "snapshots" / "abc"
+    blobs = repo / "blobs"
+    snapshot.mkdir(parents=True)
+    blobs.mkdir()
+    blob = blobs / "weights"
+    blob.write_bytes(b"w" * 50)
+    (snapshot / "model.safetensors").symlink_to(blob)
+    (snapshot / "duplicate.safetensors").symlink_to(blob)
+
+    cfg = _base("mlx-lm", model_store=(str(store),), store_format="hf-safetensors")
+    models = scan_inferencer(cfg)
+
+    assert len(models) == 1
+    assert models[0].size_bytes == 50
+
+
 def test_scan_hf_cache_skips_incomplete_indexed_snapshot(tmp_path) -> None:
     store = tmp_path / "hub"
     repo = store / "models--mlx-community--Broken" / "snapshots" / "abc"
