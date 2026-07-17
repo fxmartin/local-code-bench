@@ -258,3 +258,74 @@ models:
     price_per_1k_tokens:
       input: 0.0
       output: 0.0
+  # --- Qwen3.6-35B-A3B quant-sensitivity pairs (added 2026-07-16) ----------------
+  # Same-generation MoE sibling of the Qwen3.6-27B dense baseline: isolates the
+  # dense-vs-MoE question within one training generation (the Coder-30B pair
+  # crosses generations, so quant + generation effects are confounded there).
+  # Run at BOTH 4-bit and 8-bit — 48 GB fits either — to add a quant-sensitivity
+  # axis: same model, same engine, only the quant changes. Hybrid thinking model,
+  # so thinking is disabled to match the 27B baseline entries.
+  - name: local-mlx-qwen3.6-35b-a3b-4bit
+    type: openai
+    base_url: http://localhost:8080/v1
+    # ~20 GB. Converted with mlx-vlm (the model is multimodal): if mlx_lm.server
+    # refuses the arch, serve it with mlx-vlm's OpenAI-compatible server instead
+    # and keep prompts text-only.
+    model_id: mlx-community/Qwen3.6-35B-A3B-4bit
+    pinned_revision: manual-2026-07-16
+    concurrency: 1
+    inferencer: mlx-lm
+    max_tokens: 2048
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
+    price_per_1k_tokens:
+      input: 0.0
+      output: 0.0
+  - name: local-mlx-qwen3.6-35b-a3b-8bit
+    type: openai
+    base_url: http://localhost:8080/v1
+    # ~37 GB — needs the raised GPU wired limit (`sudo sysctl
+    # iogpu.wired_limit_mb=44000`) and other GPU work closed. Same mlx-vlm
+    # conversion caveat as the 4-bit entry.
+    model_id: mlx-community/Qwen3.6-35B-A3B-8bit
+    pinned_revision: manual-2026-07-16
+    concurrency: 1
+    inferencer: mlx-lm
+    max_tokens: 2048
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
+    price_per_1k_tokens:
+      input: 0.0
+      output: 0.0
+  - name: local-ollama-qwen3.6-35b-a3b-q4
+    type: openai
+    base_url: http://localhost:11434/v1
+    # GGUF Q4_K_M, 24 GB. `ollama pull qwen3.6:35b-a3b-q4_K_M`.
+    model_id: qwen3.6:35b-a3b-q4_K_M
+    pinned_revision: manual-2026-07-16
+    concurrency: 1
+    inferencer: ollama
+    max_tokens: 2048
+    extra_body:
+      reasoning_effort: none
+    price_per_1k_tokens:
+      input: 0.0
+      output: 0.0
+  - name: local-ollama-qwen3.6-35b-a3b-q8
+    type: openai
+    base_url: http://localhost:11434/v1
+    # GGUF Q8_0, 39 GB — the tightest fit in the matrix. Close other GPU work;
+    # if Ollama falls back to partial CPU offload the speed numbers will show it.
+    # `ollama pull qwen3.6:35b-a3b-q8_0`.
+    model_id: qwen3.6:35b-a3b-q8_0
+    pinned_revision: manual-2026-07-16
+    concurrency: 1
+    inferencer: ollama
+    max_tokens: 2048
+    extra_body:
+      reasoning_effort: none
+    price_per_1k_tokens:
+      input: 0.0
+      output: 0.0
