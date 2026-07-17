@@ -318,6 +318,50 @@ def test_scan_hf_cache_skips_incomplete_indexed_snapshot(tmp_path) -> None:
     assert scan_inferencer(cfg) == []
 
 
+def test_scan_hf_cache_skips_snapshot_with_malformed_index_json(tmp_path) -> None:
+    # A truncated/corrupt index.json (write interrupted mid-download, or on-disk
+    # corruption) must not be mistaken for a complete snapshot.
+    store = tmp_path / "hub"
+    repo = store / "models--mlx-community--Corrupt" / "snapshots" / "abc"
+    repo.mkdir(parents=True)
+    (repo / "model.safetensors").write_bytes(b"w" * 50)
+    (repo / "model.safetensors.index.json").write_text("{not valid json", encoding="utf-8")
+
+    cfg = _base("mlx-lm", model_store=(str(store),), store_format="hf-safetensors")
+
+    assert scan_inferencer(cfg) == []
+
+
+def test_scan_hf_cache_skips_snapshot_with_non_dict_index_json(tmp_path) -> None:
+    # A well-formed but unexpectedly-shaped index.json (e.g. a bare JSON list)
+    # is treated the same as a missing weight map: not a complete snapshot.
+    store = tmp_path / "hub"
+    repo = store / "models--mlx-community--ListIndex" / "snapshots" / "abc"
+    repo.mkdir(parents=True)
+    (repo / "model.safetensors").write_bytes(b"w" * 50)
+    (repo / "model.safetensors.index.json").write_text("[]", encoding="utf-8")
+
+    cfg = _base("mlx-lm", model_store=(str(store),), store_format="hf-safetensors")
+
+    assert scan_inferencer(cfg) == []
+
+
+def test_scan_hf_cache_skips_snapshot_with_non_dict_weight_map(tmp_path) -> None:
+    # A weight_map that isn't a dict (e.g. accidentally serialised as a list)
+    # can't be resolved to shard files, so the snapshot is treated as incomplete.
+    store = tmp_path / "hub"
+    repo = store / "models--mlx-community--ListWeightMap" / "snapshots" / "abc"
+    repo.mkdir(parents=True)
+    (repo / "model.safetensors").write_bytes(b"w" * 50)
+    (repo / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": ["not", "a", "dict"]}), encoding="utf-8"
+    )
+
+    cfg = _base("mlx-lm", model_store=(str(store),), store_format="hf-safetensors")
+
+    assert scan_inferencer(cfg) == []
+
+
 def test_scan_hf_local_dir_decodes_provider_model_layout(tmp_path) -> None:
     store = tmp_path / "models" / "mlx"
     repo = store / "mlx-community" / "Ornith-1.0-9B-4bit"
