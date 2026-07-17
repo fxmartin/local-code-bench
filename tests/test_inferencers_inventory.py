@@ -318,6 +318,50 @@ def test_scan_hf_cache_skips_incomplete_indexed_snapshot(tmp_path) -> None:
     assert scan_inferencer(cfg) == []
 
 
+def test_scan_hf_cache_skips_snapshot_with_malformed_index_json(tmp_path) -> None:
+    # A truncated/corrupt index.json (write interrupted mid-download, or on-disk
+    # corruption) must not be mistaken for a complete snapshot.
+    store = tmp_path / "hub"
+    repo = store / "models--mlx-community--Corrupt" / "snapshots" / "abc"
+    repo.mkdir(parents=True)
+    (repo / "model.safetensors").write_bytes(b"w" * 50)
+    (repo / "model.safetensors.index.json").write_text("{not valid json", encoding="utf-8")
+
+    cfg = _base("mlx-lm", model_store=(str(store),), store_format="hf-safetensors")
+
+    assert scan_inferencer(cfg) == []
+
+
+def test_scan_hf_cache_skips_snapshot_with_non_dict_index_json(tmp_path) -> None:
+    # A well-formed but unexpectedly-shaped index.json (e.g. a bare JSON list)
+    # is treated the same as a missing weight map: not a complete snapshot.
+    store = tmp_path / "hub"
+    repo = store / "models--mlx-community--ListIndex" / "snapshots" / "abc"
+    repo.mkdir(parents=True)
+    (repo / "model.safetensors").write_bytes(b"w" * 50)
+    (repo / "model.safetensors.index.json").write_text("[]", encoding="utf-8")
+
+    cfg = _base("mlx-lm", model_store=(str(store),), store_format="hf-safetensors")
+
+    assert scan_inferencer(cfg) == []
+
+
+def test_scan_hf_cache_skips_snapshot_with_non_dict_weight_map(tmp_path) -> None:
+    # A weight_map that isn't a dict (e.g. accidentally serialised as a list)
+    # can't be resolved to shard files, so the snapshot is treated as incomplete.
+    store = tmp_path / "hub"
+    repo = store / "models--mlx-community--ListWeightMap" / "snapshots" / "abc"
+    repo.mkdir(parents=True)
+    (repo / "model.safetensors").write_bytes(b"w" * 50)
+    (repo / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": ["not", "a", "dict"]}), encoding="utf-8"
+    )
+
+    cfg = _base("mlx-lm", model_store=(str(store),), store_format="hf-safetensors")
+
+    assert scan_inferencer(cfg) == []
+
+
 def test_scan_hf_local_dir_decodes_provider_model_layout(tmp_path) -> None:
     store = tmp_path / "models" / "mlx"
     repo = store / "mlx-community" / "Ornith-1.0-9B-4bit"
@@ -332,6 +376,62 @@ def test_scan_hf_local_dir_decodes_provider_model_layout(tmp_path) -> None:
     assert models[0].name == "mlx-community/Ornith-1.0-9B-4bit"
     assert models[0].path == str(repo)
     assert models[0].size_bytes > 0
+
+
+def test_scan_hf_cache_skips_snapshot_with_incomplete_blob(tmp_path) -> None:
+    # Hub-cache in-flight download: an `.incomplete` marker lives under the repo's
+    # blobs/ dir while some shard symlinks already resolve (and index.json may
+    # still be missing). The authoritative marker means the snapshot is partial.
+    store = tmp_path / "hub"
+    repo = store / "models--mlx-community--Downloading"
+    snapshot = repo / "snapshots" / "abc"
+    blobs = repo / "blobs"
+    snapshot.mkdir(parents=True)
+    blobs.mkdir()
+    shard = blobs / "sha256-shard"
+    shard.write_bytes(b"w" * 50)
+    (snapshot / "model-00001-of-00002.safetensors").symlink_to(shard)
+    # The second shard (and the index.json) are still downloading.
+    (blobs / "sha256-inflight.incomplete").write_bytes(b"partial")
+
+    cfg = _base("mlx-lm", model_store=(str(store),), store_format="hf-safetensors")
+
+    assert scan_inferencer(cfg) == []
+
+
+def test_scan_hf_cache_skips_dangling_safetensors_symlink(tmp_path) -> None:
+    # A no-index single-file model whose only *.safetensors entry is a dangling
+    # symlink (target blob absent) must not be offered — a glob-name match is not
+    # enough; the entry has to resolve.
+    store = tmp_path / "hub"
+    repo = store / "models--mlx-community--Dangling"
+    snapshot = repo / "snapshots" / "abc"
+    blobs = repo / "blobs"
+    snapshot.mkdir(parents=True)
+    blobs.mkdir()
+    (snapshot / "model.safetensors").symlink_to(blobs / "sha256-absent")
+
+    cfg = _base("mlx-lm", model_store=(str(store),), store_format="hf-safetensors")
+
+    assert scan_inferencer(cfg) == []
+
+
+def test_scan_hf_local_dir_skips_incomplete_download_marker(tmp_path) -> None:
+    # Shelf/local-dir layout: an in-flight `hf download --local-dir` leaves an
+    # `.incomplete` marker under .cache/huggingface/download/ even after a shard
+    # has landed. Exclude the repo until the download finishes.
+    store = tmp_path / "models" / "mlx"
+    repo = store / "mlx-community" / "Partial-9B-4bit"
+    repo.mkdir(parents=True)
+    (repo / "config.json").write_text("{}", encoding="utf-8")
+    (repo / "model-00001-of-00002.safetensors").write_bytes(b"w" * 50)
+    download_cache = repo / ".cache" / "huggingface" / "download"
+    download_cache.mkdir(parents=True)
+    (download_cache / "model-00002-of-00002.safetensors.incomplete").write_bytes(b"x")
+
+    cfg = _base("mlx-lm", model_store=(str(store),), store_format="hf-safetensors")
+
+    assert scan_inferencer(cfg) == []
 
 
 # --- Ollama blob store strategy --------------------------------------------
@@ -369,7 +469,10 @@ def test_scan_ollama_sums_blob_sizes(tmp_path) -> None:
     assert models[0].store_format == "ollama"
 
 
-def test_scan_ollama_includes_config_blob_and_declared_size(tmp_path) -> None:
+def test_scan_ollama_excludes_model_with_missing_layer_blob(tmp_path) -> None:
+    # A manifest that references a layer blob still absent on disk is a partial
+    # pull: exclude it entirely rather than reporting the declared phantom size
+    # (loading it would hang the engine).
     store = tmp_path / "ollama"
     manifest_dir = store / "manifests" / "registry.ollama.ai" / "library" / "qwen"
     manifest_dir.mkdir(parents=True)
@@ -379,7 +482,7 @@ def test_scan_ollama_includes_config_blob_and_declared_size(tmp_path) -> None:
     doc = {
         "layers": [
             {"digest": "sha256:layer", "size": 7},
-            # Missing blob falls back to the declared size.
+            # Blob absent on disk -> the whole model is a partial pull.
             {"digest": "sha256:missing", "size": 100},
         ],
         "config": {"digest": "sha256:cfg", "size": 3},
@@ -388,10 +491,28 @@ def test_scan_ollama_includes_config_blob_and_declared_size(tmp_path) -> None:
     (blobs / "sha256-cfg").write_bytes(b"c" * 3)
 
     cfg = _base("ollama", model_store=(str(store),), store_format="ollama")
-    models = scan_inferencer(cfg)
 
-    # 7 (on-disk layer) + 100 (declared, blob missing) + 3 (config blob) = 110.
-    assert models[0].size_bytes == 110
+    assert scan_inferencer(cfg) == []
+
+
+def test_scan_ollama_excludes_model_with_missing_config_blob(tmp_path) -> None:
+    # The config blob is referenced too: a missing config blob is just as much a
+    # partial pull as a missing layer, so the model is excluded.
+    store = tmp_path / "ollama"
+    manifest_dir = store / "manifests" / "registry.ollama.ai" / "library" / "gemma"
+    manifest_dir.mkdir(parents=True)
+    blobs = store / "blobs"
+    blobs.mkdir()
+    (blobs / "sha256-weights").write_bytes(b"w" * 20)
+    doc = {
+        "layers": [{"digest": "sha256:weights", "size": 20}],
+        "config": {"digest": "sha256:cfg-missing", "size": 3},
+    }
+    (manifest_dir / "2b").write_text(json.dumps(doc), encoding="utf-8")
+
+    cfg = _base("ollama", model_store=(str(store),), store_format="ollama")
+
+    assert scan_inferencer(cfg) == []
 
 
 def test_scan_ollama_skips_malformed_manifest(tmp_path) -> None:
@@ -515,17 +636,24 @@ def test_scan_ollama_manifest_at_root_uses_filename(tmp_path) -> None:
     assert models[0].size_bytes == 0
 
 
-def test_scan_ollama_ignores_non_dict_layer_and_missing_blob(tmp_path) -> None:
+def test_scan_ollama_ignores_non_dict_and_undigested_layers(tmp_path) -> None:
+    # A complete pull whose manifest also carries a non-dict layer entry and a
+    # dict layer without a digest: both are ignored for presence and sizing, and
+    # the present blobs are summed. The model is still offered.
     store = tmp_path / "ollama"
     manifest_dir = store / "manifests" / "library" / "qwen"
     manifest_dir.mkdir(parents=True)
-    (store / "blobs").mkdir()
+    blobs = store / "blobs"
+    blobs.mkdir()
+    (blobs / "sha256-weights").write_bytes(b"w" * 5)
+    (blobs / "sha256-cfg").write_bytes(b"c" * 2)
     doc = {
         "layers": [
             "not-a-dict",  # skipped
-            {"digest": "sha256:gone"},  # missing blob, no declared size -> +0
-            {"digest": "sha256:gone2", "size": 5},  # missing blob -> declared 5
-        ]
+            {"mediaType": "application/vnd.ollama.image.license"},  # no digest -> skipped
+            {"digest": "sha256:weights", "size": 5},
+        ],
+        "config": {"digest": "sha256:cfg", "size": 2},
     }
     (manifest_dir / "7b").write_text(json.dumps(doc), encoding="utf-8")
 
@@ -533,7 +661,8 @@ def test_scan_ollama_ignores_non_dict_layer_and_missing_blob(tmp_path) -> None:
     models = scan_inferencer(cfg)
 
     assert models[0].name == "qwen:7b"
-    assert models[0].size_bytes == 5
+    # 5 (weights) + 2 (config); the non-dict / undigested entries add nothing.
+    assert models[0].size_bytes == 7
 
 
 def test_iter_dirs_swallows_oserror(monkeypatch, tmp_path) -> None:

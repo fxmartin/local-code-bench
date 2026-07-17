@@ -531,7 +531,9 @@ def _scan_hf_cache(base: Path) -> Iterator[_Found]:
         name = repo_dir.name[len("models--") :].replace("--", "/")
         snapshots = repo_dir / "snapshots"
         for snapshot in sorted(_iter_dirs(snapshots)):
-            if _is_complete_hf_model_dir(snapshot):
+            # The hub-cache download markers live under the repo's blobs/ dir, a
+            # level above the snapshot, so pass the repo root alongside it.
+            if _is_complete_hf_model_dir(snapshot, repo_root=repo_dir):
                 yield name, snapshot, _dir_size(snapshot)
     if saw_hub_layout:
         return
@@ -542,11 +544,26 @@ def _scan_hf_cache(base: Path) -> Iterator[_Found]:
                 yield f"{provider_dir.name}/{repo_dir.name}", repo_dir, _dir_size(repo_dir)
 
 
-def _is_complete_hf_model_dir(path: Path) -> bool:
-    if not any(path.glob("*.safetensors")):
+def _is_complete_hf_model_dir(model_dir: Path, *, repo_root: Path | None = None) -> bool:
+    """True when ``model_dir`` holds a fully-downloaded HuggingFace snapshot.
+
+    ``model_dir`` is the snapshot dir (hub-cache layout) or the repo dir
+    (shelf/local-dir layout); ``repo_root`` is the repo dir housing ``blobs/`` in
+    the hub-cache layout and defaults to ``model_dir`` for the shelf layout. Any
+    in-flight ``*.incomplete`` download marker, an unresolved ``*.safetensors``
+    entry, or a missing referenced shard makes the snapshot incomplete.
+    """
+
+    root = repo_root if repo_root is not None else model_dir
+    if _has_incomplete_download(root, model_dir):
         return False
 
-    index = path / "model.safetensors.index.json"
+    # Match by name *and* require the entry to resolve — a dangling symlink named
+    # ``*.safetensors`` (its blob not yet materialised) must not count.
+    if not any(entry.is_file() for entry in model_dir.glob("*.safetensors")):
+        return False
+
+    index = model_dir / "model.safetensors.index.json"
     if not index.is_file():
         return True
 
@@ -562,7 +579,22 @@ def _is_complete_hf_model_dir(path: Path) -> bool:
         return False
 
     shard_names = {name for name in weight_map.values() if isinstance(name, str)}
-    return bool(shard_names) and all((path / name).is_file() for name in shard_names)
+    return bool(shard_names) and all((model_dir / name).is_file() for name in shard_names)
+
+
+def _has_incomplete_download(repo_root: Path, model_dir: Path) -> bool:
+    """True when an in-flight HuggingFace download marker is present.
+
+    HF's download client writes ``blobs/<hash>.incomplete`` (hub-cache layout) or
+    ``.cache/huggingface/download/**/*.incomplete`` (shelf/local-dir layout) and
+    only renames/symlinks the file once it completes, so either marker is an
+    authoritative signal that the repo is still downloading.
+    """
+
+    if any((repo_root / "blobs").glob("*.incomplete")):
+        return True
+    download_cache = model_dir / ".cache" / "huggingface" / "download"
+    return any(download_cache.rglob("*.incomplete"))
 
 
 def _scan_ollama(base: Path) -> Iterator[_Found]:
@@ -582,6 +614,10 @@ def _scan_ollama(base: Path) -> Iterator[_Found]:
             continue
         layers = doc.get("layers")
         if not isinstance(layers, list):
+            continue
+        # A manifest referencing a blob still absent on disk is a partial pull;
+        # offering it would hang the engine on load, so exclude it entirely.
+        if not _ollama_blobs_present(base, doc):
             continue
         name = _ollama_name(manifest, manifests)
         size = _ollama_size(base, doc)
@@ -637,25 +673,43 @@ def _ollama_name(manifest: Path, manifests_root: Path) -> str:
     return rel.name
 
 
-def _ollama_size(base: Path, doc: dict) -> int:
-    """Sum blob sizes for a manifest, preferring on-disk size over the declared one."""
+def _ollama_referenced_digests(doc: dict) -> list[str]:
+    """Collect the blob digests a manifest references (all layers + the config).
 
-    total = 0
-    blobs = base / "blobs"
+    Non-dict layer entries and entries without a string ``digest`` are skipped so
+    only real blob references are returned.
+    """
+
     entries = list(doc.get("layers") or [])
     config = doc.get("config")
     if isinstance(config, dict):
         entries.append(config)
+    digests: list[str] = []
     for entry in entries:
         if not isinstance(entry, dict):
             continue
         digest = entry.get("digest")
-        blob = _blob_path(blobs, digest) if isinstance(digest, str) else None
-        if blob is not None and blob.is_file():
-            total += _file_size(blob)
-        elif isinstance(entry.get("size"), int):
-            total += entry["size"]
-    return total
+        if isinstance(digest, str):
+            digests.append(digest)
+    return digests
+
+
+def _ollama_blobs_present(base: Path, doc: dict) -> bool:
+    """True when every blob a manifest references exists on disk."""
+
+    blobs = base / "blobs"
+    return all(_blob_path(blobs, digest).is_file() for digest in _ollama_referenced_digests(doc))
+
+
+def _ollama_size(base: Path, doc: dict) -> int:
+    """Sum the on-disk sizes of the blobs a manifest references.
+
+    Only called for manifests whose blobs are all present (see
+    :func:`_ollama_blobs_present`), so every referenced blob resolves to a file.
+    """
+
+    blobs = base / "blobs"
+    return sum(_file_size(_blob_path(blobs, digest)) for digest in _ollama_referenced_digests(doc))
 
 
 def _blob_path(blobs: Path, digest: str) -> Path:
