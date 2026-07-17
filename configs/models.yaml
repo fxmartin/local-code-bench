@@ -198,17 +198,37 @@ models:
     price_per_1k_tokens:
       input: 0.0
       output: 0.0
+  - name: local-mlx-ornith-9b
+    type: openai
+    base_url: http://localhost:8080/v1
+    # Dense 9B lower anchor. The exact MLX revision is pinned so the local
+    # artifact can be reproduced even if the Hugging Face main branch moves.
+    model_id: mlx-community/Ornith-1.0-9B-4bit
+    pinned_revision: 1e980b9742a9e554a4d57e90b4c597811fb2fc4e
+    concurrency: 1
+    inferencer: mlx-lm
+    max_tokens: 4096
+    price_per_1k_tokens:
+      input: 0.0
+      output: 0.0
+  - name: local-ollama-ornith-9b
+    type: openai
+    base_url: http://localhost:11434/v1
+    model_id: ornith:9b
+    pinned_revision: manual-2026-07-16
+    concurrency: 1
+    inferencer: ollama
+    max_tokens: 4096
+    price_per_1k_tokens:
+      input: 0.0
+      output: 0.0
   - name: local-mlx-ornith-35b
     type: openai
     base_url: http://localhost:8080/v1
-    # Ornith 1.0 (DeepReinforce, 2026-06-25): 35B MoE / ~3B active, MIT, trained
-    # to self-scaffold agentic runs. mlx-community only publishes 8-bit (~37 GB)
-    # and bf16 as of 2026-07, so this is a third-party community 4-bit (~20 GB) —
-    # sanity-check output quality before trusting scores. Watch endpoint-mode
-    # output for scaffold preamble around the code block; the higher cap keeps
-    # it from truncating the actual solution.
+    # Use the text-only MLX-LM conversion. The mlx-community 35B artifact is an
+    # mlx-vlm conversion and produces invalid output through mlx_lm.server.
     model_id: AtomicChat/ornith-35b-MLX-4bit
-    pinned_revision: manual-2026-07-16
+    pinned_revision: 49d5fcdcd26b5cd9174098f1f7ae3cc7775e4ae5
     concurrency: 1
     inferencer: mlx-lm
     max_tokens: 4096
