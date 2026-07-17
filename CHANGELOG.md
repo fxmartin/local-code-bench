@@ -2,6 +2,17 @@
 
 <!-- version list -->
 
+## v0.64.0 (2026-07-17)
+
+### Features
+
+- **context-optimization-proxy**: Bare-vs-proxied a/b run (#13.3-001)
+  ([`8848442`](https://github.com/fxmartin/local-code-bench/commit/8848442863a043501a3135b9889bdad0dbd46556))
+
+- **ui-theme-revamp**: Designed light and dark modes with (#16.1-002)
+  ([`fac0c8b`](https://github.com/fxmartin/local-code-bench/commit/fac0c8be374299756f7fe1f437a74979baada6b2))
+
+
 ## v0.63.0 (2026-07-17)
 
 ### Features
