@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Literal
 
@@ -671,3 +674,302 @@ def _required_number(
     if not isinstance(value, int | float) or isinstance(value, bool) or value < 0:
         raise ConfigError(f"models[{index}].{parent}.{field} must be a non-negative number")
     return float(value)
+
+
+# ---------------------------------------------------------------------------
+# comparison-axis catalog (Epic-17, story 17.1-002)
+# ---------------------------------------------------------------------------
+
+PairingKey = Literal["base_model", "base_model_engine", "suite_context"]
+
+#: How an axis pairs configurations across its cohorts: same base model (the
+#: Epic-11 normalization), same base model on the same engine, or any
+#: configurations sharing a (suite, suite version, hardware tag) context.
+PAIRING_KEYS: frozenset[str] = frozenset({"base_model", "base_model_engine", "suite_context"})
+
+#: Metrics a verdict rule may threshold — the keys of the compare module's
+#: per-cohort verdict inputs, so every declared rule is computable from the
+#: aggregates the dashboard already serves.
+VERDICT_METRICS: frozenset[str] = frozenset(
+    {
+        "pass_at_1",
+        "median_ttft_seconds",
+        "p95_ttft_seconds",
+        "median_prefill_tokens_per_second",
+        "median_decode_tokens_per_second",
+        "median_latency_seconds",
+        "p95_latency_seconds",
+        "cost_per_task_usd",
+        "memory_bytes",
+    }
+)
+
+
+@dataclass(frozen=True)
+class CohortFilter:
+    """One side of a comparison: the models a cohort is drawn from.
+
+    Criteria combine with AND; at least one must be declared. ``name_globs``
+    match the configured model name, ``names`` is an explicit allow-list,
+    ``inferencer`` matches the model's declared engine, and ``quant`` is a
+    quant token (``q4``, ``4bit``) matched on a token boundary against the
+    configuration's quant or its model name.
+    """
+
+    name: str
+    name_globs: tuple[str, ...] = ()
+    names: tuple[str, ...] = ()
+    inferencer: str | None = None
+    quant: str | None = None
+
+    def matches(
+        self,
+        model_name: str,
+        *,
+        inferencer: str | None = None,
+        quant: str | None = None,
+    ) -> bool:
+        """Whether a model belongs to this cohort; every set criterion must hold."""
+
+        if self.names and model_name not in self.names:
+            return False
+        if self.name_globs and not any(
+            fnmatchcase(model_name.lower(), glob.lower()) for glob in self.name_globs
+        ):
+            return False
+        if self.inferencer is not None and inferencer != self.inferencer:
+            return False
+        if self.quant is not None and not (
+            (quant is not None and _has_quant_token(quant, self.quant))
+            or _has_quant_token(model_name, self.quant)
+        ):
+            return False
+        return True
+
+
+def _has_quant_token(text: str, token: str) -> bool:
+    """Whether ``token`` appears in ``text`` on a token boundary (``q4`` in ``Q4_K_M``,
+    ``4bit`` in ``...-4bit`` — but never ``4bit`` inside ``14bit``)."""
+
+    return re.search(rf"(?<![a-z0-9]){re.escape(token.lower())}(?![a-z0-9])", text.lower()) is not None
+
+
+@dataclass(frozen=True)
+class HighlightedPair:
+    """A controlled comparison the axis calls out, with the reason it is clean."""
+
+    models: tuple[str, ...]
+    reason: str
+
+
+@dataclass(frozen=True)
+class VerdictRule:
+    """A deterministic conclusion rule: a thresholded metric over cohort aggregates.
+
+    ``settings_key`` names the Epic-15 settings entry that overrides
+    ``threshold`` once the settings layer lands; until then the shipped
+    threshold is the default (story 17.1-002 technical notes).
+    """
+
+    id: str
+    metric: str
+    threshold: float
+    unit: str | None = None
+    description: str | None = None
+    settings_key: str | None = None
+
+
+@dataclass(frozen=True)
+class ComparisonAxis:
+    """One declared comparison: cohort filters, pairing key, pairs, verdicts."""
+
+    id: str
+    title: str
+    pairing_key: PairingKey
+    cohorts: tuple[CohortFilter, ...]
+    description: str | None = None
+    highlighted_pairs: tuple[HighlightedPair, ...] = ()
+    verdicts: tuple[VerdictRule, ...] = ()
+
+
+@dataclass(frozen=True)
+class ComparisonCatalog:
+    """The loaded catalog: valid axes plus the errors for any rejected ones."""
+
+    axes: tuple[ComparisonAxis, ...]
+    errors: tuple[str, ...] = ()
+
+    def axis(self, axis_id: str) -> ComparisonAxis | None:
+        """The axis with ``axis_id``, or ``None`` when not declared (or rejected)."""
+
+        return next((axis for axis in self.axes if axis.id == axis_id), None)
+
+
+def load_comparisons(path: str | Path) -> ComparisonCatalog:
+    """Load the comparison-axis catalog from YAML.
+
+    File-level failures (missing file, invalid YAML, wrong top-level shape)
+    raise :class:`ConfigError` like the other loaders. A malformed *axis* is
+    instead rejected individually — its error names the offending field and is
+    collected on :attr:`ComparisonCatalog.errors` — so valid axes still load.
+    """
+
+    config_path = Path(path)
+    try:
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ConfigError(f"comparison config not found: {config_path}") from exc
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"invalid YAML in {config_path}: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ConfigError("comparisons.yaml must contain a top-level mapping")
+    entries = raw.get("comparisons")
+    if not isinstance(entries, list):
+        raise ConfigError("comparisons.yaml field 'comparisons' must be a list")
+
+    axes: list[ComparisonAxis] = []
+    errors: list[str] = []
+    seen: set[str] = set()
+    for index, entry in enumerate(entries):
+        try:
+            axis = _parse_comparison_axis(entry, index)
+            if axis.id in seen:
+                raise ConfigError(f"comparisons[{index}].id duplicates '{axis.id}'")
+        except ConfigError as exc:
+            errors.append(str(exc))
+            continue
+        seen.add(axis.id)
+        axes.append(axis)
+    return ComparisonCatalog(axes=tuple(axes), errors=tuple(errors))
+
+
+def cohort_model_names(
+    cohort: CohortFilter, models: Mapping[str, ModelConfig]
+) -> tuple[str, ...]:
+    """Configured model names a cohort filter selects, in registry order.
+
+    This is what populates an axis's "no comparable runs yet" state: the models
+    (and thereby suites to run) that would fill each side once results exist.
+    """
+
+    return tuple(
+        model.name
+        for model in models.values()
+        if cohort.matches(model.name, inferencer=model.inferencer, quant=model.quant)
+    )
+
+
+def _parse_comparison_axis(entry: Any, index: int) -> ComparisonAxis:
+    if not isinstance(entry, dict):
+        raise ConfigError(f"comparisons[{index}] must be a mapping")
+
+    pairing_key = _required_str(entry, "pairing_key", index, root="comparisons")
+    if pairing_key not in PAIRING_KEYS:
+        allowed = " | ".join(sorted(PAIRING_KEYS))
+        raise ConfigError(f"comparisons[{index}].pairing_key must be one of: {allowed}")
+
+    return ComparisonAxis(
+        id=_required_str(entry, "id", index, root="comparisons"),
+        title=_required_str(entry, "title", index, root="comparisons"),
+        pairing_key=pairing_key,  # type: ignore[arg-type]
+        cohorts=_parse_cohorts(entry.get("cohorts"), index),
+        description=_optional_str(entry, "description", index, root="comparisons"),
+        highlighted_pairs=_parse_highlighted_pairs(entry.get("highlighted_pairs"), index),
+        verdicts=_parse_verdicts(entry.get("verdicts"), index),
+    )
+
+
+def _parse_cohorts(value: Any, index: int) -> tuple[CohortFilter, ...]:
+    if not isinstance(value, list) or len(value) < 2:
+        raise ConfigError(f"comparisons[{index}].cohorts must be a list of two or more cohorts")
+    root = f"comparisons[{index}].cohorts"
+    cohorts: list[CohortFilter] = []
+    for position, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ConfigError(f"{root}[{position}] must be a mapping")
+        cohort = CohortFilter(
+            name=_required_str(item, "name", position, root=root),
+            name_globs=_optional_str_tuple(item, "name_globs", position, root=root),
+            names=_optional_str_tuple(item, "names", position, root=root),
+            inferencer=_optional_str(item, "inferencer", position, root=root),
+            quant=_optional_str(item, "quant", position, root=root),
+        )
+        if not (cohort.name_globs or cohort.names or cohort.inferencer or cohort.quant):
+            raise ConfigError(
+                f"{root}[{position}] must declare at least one of"
+                " name_globs/names/inferencer/quant"
+            )
+        if any(cohort.name == other.name for other in cohorts):
+            raise ConfigError(f"{root}[{position}].name duplicates '{cohort.name}'")
+        cohorts.append(cohort)
+    return tuple(cohorts)
+
+
+def _parse_highlighted_pairs(value: Any, index: int) -> tuple[HighlightedPair, ...]:
+    if value is None:
+        return ()
+    root = f"comparisons[{index}].highlighted_pairs"
+    if not isinstance(value, list):
+        raise ConfigError(f"{root} must be a list when set")
+    pairs: list[HighlightedPair] = []
+    for position, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ConfigError(f"{root}[{position}] must be a mapping")
+        models = _optional_str_tuple(item, "models", position, root=root)
+        if len(models) < 2:
+            raise ConfigError(f"{root}[{position}].models must list at least two model names")
+        pairs.append(
+            HighlightedPair(
+                models=models,
+                reason=_required_str(item, "reason", position, root=root),
+            )
+        )
+    return tuple(pairs)
+
+
+def _parse_verdicts(value: Any, index: int) -> tuple[VerdictRule, ...]:
+    if value is None:
+        return ()
+    root = f"comparisons[{index}].verdicts"
+    if not isinstance(value, list):
+        raise ConfigError(f"{root} must be a list when set")
+    verdicts: list[VerdictRule] = []
+    for position, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ConfigError(f"{root}[{position}] must be a mapping")
+        metric = _required_str(item, "metric", position, root=root)
+        if metric not in VERDICT_METRICS:
+            allowed = " | ".join(sorted(VERDICT_METRICS))
+            raise ConfigError(f"{root}[{position}].metric must be one of: {allowed}")
+        threshold = item.get("threshold")
+        if isinstance(threshold, bool) or not isinstance(threshold, int | float):
+            raise ConfigError(f"{root}[{position}].threshold must be a number")
+        verdict = VerdictRule(
+            id=_required_str(item, "id", position, root=root),
+            metric=metric,
+            threshold=float(threshold),
+            unit=_optional_str(item, "unit", position, root=root),
+            description=_optional_str(item, "description", position, root=root),
+            settings_key=_optional_str(item, "settings_key", position, root=root),
+        )
+        if any(verdict.id == other.id for other in verdicts):
+            raise ConfigError(f"{root}[{position}].id duplicates '{verdict.id}'")
+        verdicts.append(verdict)
+    return tuple(verdicts)
+
+
+def _optional_str_tuple(
+    entry: dict[str, Any],
+    field: str,
+    index: int,
+    *,
+    root: str,
+) -> tuple[str, ...]:
+    value = entry.get(field)
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not all(
+        isinstance(item, str) and item.strip() for item in value
+    ):
+        raise ConfigError(f"{root}[{index}].{field} must be a list of non-empty strings when set")
+    return tuple(value)
