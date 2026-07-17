@@ -657,6 +657,18 @@ path. When the SSD is unplugged its models are marked offline and every move/app
 is disabled with an explanation; the tier endpoints project only model-identity fields —
 never an on-disk path — and bind localhost only.
 
+A `GET /api/compare?axis=<id>` endpoint aggregates the raw `results/*.jsonl` into
+paired, comparable per-configuration statistics for the benchmark-comparison views:
+for each model/engine/quant configuration it reports median and p95 TTFT, prefill
+tok/s, decode tok/s, and total latency, pass@1 per suite, cost per task, and the
+memory footprint from the local inventory where known — with the contributing run
+IDs, suite version, and hardware tag attached to every number. Configurations of
+the same nominal model pair up via the Epic-11 `base_model_key` normalization
+(axes: `engine`, `quant`, and the controlled `gpt-oss` identical-weights pair),
+and runs from different suites, suite versions, or hardware tags are excluded from
+a comparison with an explicit reason instead of being silently averaged. An unknown
+axis returns 404 with the list of available axes.
+
 ## Verification Status
 
 Last automated verification: 2026-06-27.
