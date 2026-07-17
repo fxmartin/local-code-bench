@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.58.0 (2026-07-17)
+
+### Documentation
+
+- **stories**: Lock open decisions for epics 15, 17, 18
+  ([`c457a24`](https://github.com/fxmartin/local-code-bench/commit/c457a24f506ba78057dc901baac54e1608d003bb))
+
+### Features
+
+- **context-optimization-proxy**: Optimizer config and (#13.1-001)
+  ([`01bbf26`](https://github.com/fxmartin/local-code-bench/commit/01bbf268bf15a6a6b88f088c66351543d1f03f97))
+
+
 ## v0.57.1 (2026-07-17)
 
 ### Bug Fixes
