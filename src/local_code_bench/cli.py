@@ -336,6 +336,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="path to optional custom-suite registry YAML for the Run launcher",
     )
     dashboard.add_argument(
+        "--agents",
+        default="configs/agents.yaml",
+        help="path to agent registry YAML shown in the Settings tab",
+    )
+    dashboard.add_argument(
         "--state-dir",
         default=settings.inferencer_state_dir,
         help="directory holding per-engine PID/state files",
@@ -761,6 +766,7 @@ def run_unified_dashboard_command(args: argparse.Namespace) -> int:
             args.state_dir,
             _resolve_dashboard_inputs(args),
             models_path=args.models,
+            agents_path=args.agents,
             results_dir=args.results_dir,
             suites_path=args.suites,
             host=args.host,

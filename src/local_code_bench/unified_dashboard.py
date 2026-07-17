@@ -39,6 +39,7 @@ from . import compare
 from . import dashboard_lifecycle
 from . import dashboard_server as results_panel
 from . import launch
+from . import settings_panel
 from .config import (
     AutoTierConfig,
     ConfigError,
@@ -289,6 +290,12 @@ class DashboardContext:
     # Story 12.6-003: single background worker for promote/demote so a multi-GB
     # copy never blocks the (single-threaded) request loop or freezes the UI.
     move_worker: MoveWorker = field(default_factory=MoveWorker)
+    # Story 15.1-001: source files behind the read-only Settings tab. The tab
+    # re-reads them per ``/api/settings`` request, so YAML edits show up on refresh
+    # and a broken file degrades to that one group's inline error.
+    models_path: str | Path = "configs/models.yaml"
+    agents_path: str | Path = "configs/agents.yaml"
+    inferencers_path: str | Path = "configs/inferencers.yaml"
 
 
 @dataclass(frozen=True)
@@ -325,6 +332,24 @@ def catalog_action(ctx: DashboardContext) -> tuple[int, dict]:
     inferencers = [{"name": cfg.name, "lifecycle": cfg.lifecycle} for cfg in ctx.configs.values()]
     suites = catalog_payload(cache_dir=ctx.cache_dir, suites_path=ctx.suites_path)["suites"]
     return 200, {"models": models, "inferencers": inferencers, "suites": suites}
+
+
+def settings_action(ctx: DashboardContext) -> tuple[int, dict]:
+    """Return the aggregated read-only settings document (story 15.1-001).
+
+    Delegates to :func:`settings.settings_payload`, which re-reads every config
+    surface per request and degrades a missing/broken file to that group's inline
+    error. Env-var indicators carry the variable *name* plus set/unset only, so
+    the payload survives the 09.6-001 sanitize seam with no secret to strip.
+    """
+
+    return 200, settings_panel.settings_payload(
+        models_path=ctx.models_path,
+        inferencers_path=ctx.inferencers_path,
+        agents_path=ctx.agents_path,
+        suites_path=ctx.suites_path,
+        cache_dir=ctx.cache_dir,
+    )
 
 
 def _inventory_chat_models(ctx: DashboardContext) -> list[inventory.LocalModel]:
@@ -969,6 +994,8 @@ def handle_request(
         )
     if method == "GET" and route == "/api/catalog":
         return _json(*catalog_action(ctx))
+    if method == "GET" and route == "/api/settings":
+        return _json(*settings_action(ctx))
     if method == "GET" and route == "/api/chat/catalog":
         return _json(*chat_catalog_action(ctx))
     if method == "GET" and route == "/api/inventory":
@@ -1109,6 +1136,7 @@ def serve_dashboard(
     result_paths: list[str | Path],
     *,
     models_path: str | Path = "configs/models.yaml",
+    agents_path: str | Path = "configs/agents.yaml",
     results_dir: str | Path = DEFAULT_RESULTS_DIR,
     cache_dir: str | Path = DEFAULT_CACHE_DIR,
     suites_path: str | Path = "configs/suites.yaml",
@@ -1158,6 +1186,9 @@ def serve_dashboard(
             results_dir=results_dir,
             external_cfg=external_cfg,
             autotier_cfg=autotier_cfg,
+            models_path=models_path,
+            agents_path=agents_path,
+            inferencers_path=config_path,
         )
         server = make_server(ctx, host=host, port=port)
         if progress is not None:
@@ -1281,6 +1312,10 @@ _PAGE = """<!DOCTYPE html>
     max-width: 46rem; }
   #chat-input { flex: 1; resize: vertical; min-height: 2.4rem; }
   #chat-err { color: var(--err-fg); font-weight: 600; min-height: 1.2rem; }
+  .settings-source { color: var(--text-muted); font-size: var(--text-xs); font-weight: 400;
+    margin-left: var(--space-2); font-family: var(--font-mono); }
+  .lock-note { color: var(--warn-fg); }
+  .flag-set { color: var(--ok-fg); } .flag-unset { color: var(--warn-fg); }
 </style>
 </head>
 <body>
@@ -1293,6 +1328,7 @@ _PAGE = """<!DOCTYPE html>
     <button data-section="inventory">Inventory</button>
     <button data-section="run">Run</button>
     <button data-section="chat">Chat</button>
+    <button data-section="settings">Settings</button>
   </nav>
 </header>
 <main>
@@ -1501,6 +1537,17 @@ _PAGE = """<!DOCTYPE html>
   <p id="chat-err"></p>
 </section>
 
+<section id="section-settings" class="section" hidden>
+  <h2>Settings</h2>
+  <p class="note">Every harness config surface in one read-only view — models, inferencers,
+    storage tiering, suites, and agents — each group labelled with the file it comes from.
+    Env-var entries show only the variable name and whether it is currently set. Values
+    marked read-only are fixed by the benchmark protocol; edit the YAML files to change
+    everything else (there is no editor here yet).</p>
+  <p id="settings-err" class="err"></p>
+  <div id="settings-groups"></div>
+</section>
+
 </main>
 
 <div id="modal">
@@ -1522,6 +1569,7 @@ _PAGE = """<!DOCTYPE html>
     inventory: document.getElementById("section-inventory"),
     run: document.getElementById("section-run"),
     chat: document.getElementById("section-chat"),
+    settings: document.getElementById("section-settings"),
   };
   function show(name) {
     for (const key in sections) sections[key].hidden = key !== name;
@@ -2703,6 +2751,100 @@ _PAGE = """<!DOCTYPE html>
   // watchMove resumes progress if a move is already running (page reload
   // mid-move) and falls through to the initial refresh otherwise.
   watchMove();
+})();
+
+// Settings section: read-only aggregate over /api/settings (story 15.1-001).
+// Renders whatever groups/items/fields the server sends — all interpretation
+// (env indicators, protocol locks, per-group load errors) happens server-side.
+(function () {
+  const host = document.getElementById("settings-groups");
+  const err = document.getElementById("settings-err");
+
+  function valueCell(f) {
+    const td = document.createElement("td");
+    td.textContent = f.value === null || f.value === undefined ? "-" : String(f.value);
+    if (f.is_set === true || f.is_set === false) {
+      const badge = document.createElement("span");
+      badge.className = f.is_set ? "flag-set" : "flag-unset";
+      badge.textContent = f.is_set ? " (set)" : " (unset)";
+      td.appendChild(badge);
+    }
+    return td;
+  }
+
+  function noteCell(f) {
+    const td = document.createElement("td");
+    if (f.locked) {
+      td.className = "lock-note";
+      td.textContent = "read-only \\u2014 " + (f.rationale || "");
+    }
+    return td;
+  }
+
+  function renderGroup(g) {
+    const title = document.createElement("h3");
+    title.textContent = g.label;
+    const src = document.createElement("span");
+    src.className = "settings-source";
+    src.textContent = "from " + g.source;
+    title.appendChild(src);
+    host.appendChild(title);
+    if (g.error) {
+      const p = document.createElement("p");
+      p.className = "err";
+      p.textContent = g.source + ": " + g.error;
+      host.appendChild(p);
+      return;
+    }
+    const table = document.createElement("table");
+    const thead = document.createElement("thead");
+    const htr = document.createElement("tr");
+    for (const label of ["Item", "Setting", "Value", ""]) {
+      const th = document.createElement("th");
+      th.textContent = label;
+      htr.appendChild(th);
+    }
+    thead.appendChild(htr);
+    table.appendChild(thead);
+    const tbody = document.createElement("tbody");
+    for (const item of g.items || []) {
+      (item.fields || []).forEach((f, i) => {
+        const tr = document.createElement("tr");
+        const nameTd = document.createElement("td");
+        nameTd.textContent = i === 0 ? item.name : "";
+        const settingTd = document.createElement("td");
+        settingTd.textContent = f.label;
+        tr.append(nameTd, settingTd, valueCell(f), noteCell(f));
+        tbody.appendChild(tr);
+      });
+    }
+    if (!(g.items || []).length) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 4;
+      td.className = "empty";
+      td.textContent = "Nothing configured.";
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    host.appendChild(table);
+  }
+
+  async function refresh() {
+    try {
+      const res = await fetch("/api/settings");
+      const data = await res.json();
+      host.innerHTML = "";
+      (data.groups || []).forEach(renderGroup);
+      err.textContent = "";
+    } catch (e) {
+      err.textContent = "settings unavailable: " + e;
+    }
+  }
+
+  refresh();
+  setInterval(refresh, 10000);
 })();
 </script>
 </body>

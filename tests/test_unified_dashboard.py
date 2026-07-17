@@ -112,6 +112,9 @@ def _ctx(
     orchestrator: object | None = None,
     cache_dir: str | Path = ".cache/does-not-exist",
     suites_path: str | Path = "configs/does-not-exist.yaml",
+    models_path: str | Path = "configs/does-not-exist-models.yaml",
+    agents_path: str | Path = "configs/does-not-exist-agents.yaml",
+    inferencers_path: str | Path = "configs/does-not-exist-inferencers.yaml",
 ) -> ud.DashboardContext:
     return ud.DashboardContext(
         configs=_configs(),
@@ -121,6 +124,9 @@ def _ctx(
         orchestrator=orchestrator,
         cache_dir=cache_dir,
         suites_path=suites_path,
+        models_path=models_path,
+        agents_path=agents_path,
+        inferencers_path=inferencers_path,
     )
 
 
@@ -2517,3 +2523,125 @@ def test_find_local_skips_non_matching_models(monkeypatch) -> None:
     found = ud._find_local(_tier_ctx(), "m", "gguf")
 
     assert found is not None and found.name == "m"
+
+
+# ---------------------------------------------------------------------------
+# settings section: read-only aggregate over every config surface (15.1-001)
+# ---------------------------------------------------------------------------
+
+
+_SETTINGS_MODELS_YAML = """\
+models:
+  - name: local-mlx
+    type: openai
+    base_url: http://localhost:8080/v1
+    model_id: mlx-model
+    pinned_revision: manual
+    concurrency: 1
+    price_per_1k_tokens:
+      input: 0.0
+      output: 0.0
+  - name: cloud-coder
+    type: openai
+    base_url: http://api.example.test/v1
+    model_id: cloud-model
+    pinned_revision: r1
+    api_key_env: EXAMPLE_API_KEY
+    concurrency: 8
+    price_per_1k_tokens:
+      input: 0.001
+      output: 0.002
+"""
+
+_SETTINGS_INFERENCERS_YAML = """\
+inferencers:
+  - name: mlx-lm
+    lifecycle: server
+    detect:
+      module: mlx_lm
+    port: 8080
+    health_url: http://127.0.0.1:{port}/v1/models
+    start: ["mlx_lm.server"]
+"""
+
+_SETTINGS_AGENTS_YAML = """\
+agents:
+  - name: codex
+    type: codex
+    command: codex
+    sandbox: workspace-write
+    timeout_seconds: 600
+"""
+
+
+def _settings_ctx(tmp_path: Path) -> ud.DashboardContext:
+    models_path = tmp_path / "models.yaml"
+    inferencers_path = tmp_path / "inferencers.yaml"
+    agents_path = tmp_path / "agents.yaml"
+    models_path.write_text(_SETTINGS_MODELS_YAML, encoding="utf-8")
+    inferencers_path.write_text(_SETTINGS_INFERENCERS_YAML, encoding="utf-8")
+    agents_path.write_text(_SETTINGS_AGENTS_YAML, encoding="utf-8")
+    return _ctx(
+        models_path=models_path,
+        inferencers_path=inferencers_path,
+        agents_path=agents_path,
+        suites_path=tmp_path / "suites.yaml",
+        cache_dir=tmp_path / "no-cache",
+    )
+
+
+def test_page_has_settings_section() -> None:
+    body = ud.render_page()
+    assert 'data-section="settings"' in body
+    assert 'id="section-settings"' in body
+    # the section is a thin client over the aggregated settings endpoint
+    assert "/api/settings" in body
+
+
+def test_api_settings_returns_one_grouped_document(tmp_path: Path) -> None:
+    resp = ud.handle_request("GET", "/api/settings", _settings_ctx(tmp_path))
+
+    assert resp.status == 200
+    assert resp.content_type.startswith("application/json")
+    payload = json.loads(resp.body)
+    assert [group["id"] for group in payload["groups"]] == [
+        "models",
+        "inferencers",
+        "storage",
+        "suites",
+        "agents",
+    ]
+
+
+def test_api_settings_env_indicator_survives_the_sanitizer(tmp_path: Path) -> None:
+    # the response ships through the 09.6-001 sanitize seam; the env-var *name*
+    # + set/unset indicator must survive it while no secret value appears
+    payload = json.loads(ud.handle_request("GET", "/api/settings", _settings_ctx(tmp_path)).body)
+    models = next(group for group in payload["groups"] if group["id"] == "models")
+    cloud = next(item for item in models["items"] if item["name"] == "cloud-coder")
+    key_field = next(field for field in cloud["fields"] if field["value"] == "EXAMPLE_API_KEY")
+
+    assert key_field["is_set"] in (True, False)
+
+
+def test_api_settings_leaks_no_secret_values_or_base_urls(tmp_path: Path) -> None:
+    body = ud.handle_request("GET", "/api/settings", _settings_ctx(tmp_path)).body.decode().lower()
+    for leak in ("api.example.test", "localhost:8080", "/users/"):
+        assert leak not in body
+
+
+def test_api_settings_degrades_a_broken_group_inline(tmp_path: Path) -> None:
+    ctx = _settings_ctx(tmp_path)
+    Path(ctx.models_path).write_text("models: [broken", encoding="utf-8")
+
+    payload = json.loads(ud.handle_request("GET", "/api/settings", ctx).body)
+    models = next(group for group in payload["groups"] if group["id"] == "models")
+    agents = next(group for group in payload["groups"] if group["id"] == "agents")
+
+    assert models["error"] is not None and "models.yaml" in models["error"]
+    assert agents["error"] is None
+
+
+def test_post_to_settings_route_is_404() -> None:
+    # the settings surface is strictly read-only (no write path yet)
+    assert ud.handle_request("POST", "/api/settings", _ctx()).status == 404
