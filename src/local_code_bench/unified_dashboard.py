@@ -46,17 +46,20 @@ from .config import (
     ExternalRepoConfig,
     InferencerConfig,
     ModelConfig,
+    OptimizerConfig,
     TokenPrices,
     load_autotier,
     load_external_repo,
     load_inferencers,
     load_models,
+    load_optimizers,
 )
 from .inferencers import autotier
 from .inferencers import dashboard as inferencer_panel
 from .inferencers import inventory
 from .inferencers import tiered, tiering
 from .inferencers.external import check_availability
+from .optimizers import manager as optimizer_manager
 from .settings import get_settings
 from .suite_catalog import catalog_payload
 from .theme import THEME_CSS, THEME_HEAD_SNIPPET, THEME_TOGGLE_SNIPPET
@@ -296,6 +299,11 @@ class DashboardContext:
     models_path: str | Path = "configs/models.yaml"
     agents_path: str | Path = "configs/agents.yaml"
     inferencers_path: str | Path = "configs/inferencers.yaml"
+    # Epic-13 (story 13.4-001): the context-optimization proxy registry drives the
+    # read-only Optimizers section — a distinct panel, never mixed into the
+    # Inferencers one. Lifecycle stays on the CLI (`bench optimizer start/stop`).
+    optimizer_configs: dict[str, OptimizerConfig] = field(default_factory=dict)
+    optimizer_state_dir: str | Path = ".runtime/optimizers"
 
 
 @dataclass(frozen=True)
@@ -350,6 +358,34 @@ def settings_action(ctx: DashboardContext) -> tuple[int, dict]:
         suites_path=ctx.suites_path,
         cache_dir=ctx.cache_dir,
     )
+
+
+def optimizers_action(ctx: DashboardContext) -> tuple[int, dict]:
+    """Status rows for the Optimizers section (Epic-13, story 13.4-001).
+
+    Read-only: the panel shows installed/running/healthy/upstream per registered
+    proxy; starting and stopping stays on the CLI (`bench optimizer start/stop`)
+    so the dashboard never races the 13.2 lifecycle state files.
+    """
+
+    rows = []
+    for name, cfg in ctx.optimizer_configs.items():
+        st = optimizer_manager.status(cfg, ctx.optimizer_state_dir)
+        rows.append(
+            {
+                "name": name,
+                "installed": st.installed,
+                "running": st.running,
+                "healthy": st.healthy,
+                "port": st.port,
+                "pid": st.pid,
+                "upstream": st.upstream,
+                "url": cfg.url,
+                "detail": st.detail,
+            }
+        )
+    return 200, {"optimizers": rows}
+
 
 
 def _inventory_chat_models(ctx: DashboardContext) -> list[inventory.LocalModel]:
@@ -982,6 +1018,8 @@ def handle_request(
         )
     if method == "POST" and route == "/api/stop":
         return _json(*inferencer_panel.stop_action(name, ctx.configs, ctx.state_dir))
+    if method == "GET" and route == "/api/optimizers":
+        return _json(*optimizers_action(ctx))
     if method == "GET" and route == "/api/data":
         return _json(*results_panel.data_action(_resolve_result_paths(ctx)))
     if method == "GET" and route == "/api/compare":
@@ -1140,6 +1178,8 @@ def serve_dashboard(
     results_dir: str | Path = DEFAULT_RESULTS_DIR,
     cache_dir: str | Path = DEFAULT_CACHE_DIR,
     suites_path: str | Path = "configs/suites.yaml",
+    optimizers_path: str | Path = "configs/optimizers.yaml",
+    optimizer_state_dir: str | Path = ".runtime/optimizers",
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
     progress: Callable[[str], None] | None = None,
@@ -1168,6 +1208,7 @@ def serve_dashboard(
         configs = load_inferencers(config_path)
         models = _load_models_safe(models_path, progress)
         external_cfg, autotier_cfg = _load_tier_configs_safe(config_path, progress)
+        optimizer_configs = _load_optimizers_safe(optimizers_path, progress)
         orchestrator = launch.RunOrchestrator(
             models=models,
             inferencers=configs,
@@ -1189,6 +1230,8 @@ def serve_dashboard(
             models_path=models_path,
             agents_path=agents_path,
             inferencers_path=config_path,
+            optimizer_configs=optimizer_configs,
+            optimizer_state_dir=optimizer_state_dir,
         )
         server = make_server(ctx, host=host, port=port)
         if progress is not None:
@@ -1216,6 +1259,19 @@ def _load_models_safe(
     except ConfigError as exc:
         if progress is not None:
             progress(f"chat disabled: {exc}")
+        return {}
+
+
+def _load_optimizers_safe(
+    optimizers_path: str | Path, progress: Callable[[str], None] | None
+) -> dict[str, OptimizerConfig]:
+    """Load the proxy registry, degrading to an empty Optimizers panel on failure."""
+
+    try:
+        return load_optimizers(optimizers_path)
+    except ConfigError as exc:
+        if progress is not None:
+            progress(f"optimizers panel empty: {exc}")
         return {}
 
 
@@ -1321,6 +1377,7 @@ _PAGE = """<!DOCTYPE html>
   <h1>local-code-bench</h1>
   <nav id="nav">
     <button data-section="inferencers" class="active">Inferencers</button>
+    <button data-section="optimizers">Optimizers</button>
     <button data-section="results">Results</button>
     <button data-section="inventory">Inventory</button>
     <button data-section="run">Run</button>
@@ -1338,6 +1395,20 @@ _PAGE = """<!DOCTYPE html>
       <tr><th></th><th>Engine</th><th>Version</th><th>Lifecycle</th><th>Port</th><th>PID</th><th>State</th><th></th></tr>
     </thead>
     <tbody id="rows"></tbody>
+  </table>
+</section>
+
+<section id="section-optimizers" class="section" hidden>
+  <h2>Context-Optimization Proxies</h2>
+  <p class="note">Proxies chained in front of an engine (Epic-13). This panel is
+    read-only: drive the lifecycle from the CLI with <code>bench optimizer start/stop</code>;
+    installation is manual via each proxy's reference URL.</p>
+  <p id="opt-err"></p>
+  <table>
+    <thead>
+      <tr><th></th><th>Proxy</th><th>Installed</th><th>Port</th><th>Upstream</th><th>State</th><th>URL</th></tr>
+    </thead>
+    <tbody id="opt-rows"></tbody>
   </table>
 </section>
 
@@ -1562,6 +1633,7 @@ _PAGE = """<!DOCTYPE html>
   const buttons = document.querySelectorAll("#nav button");
   const sections = {
     inferencers: document.getElementById("section-inferencers"),
+    optimizers: document.getElementById("section-optimizers"),
     results: document.getElementById("section-results"),
     inventory: document.getElementById("section-inventory"),
     run: document.getElementById("section-run"),
@@ -1681,6 +1753,41 @@ _PAGE = """<!DOCTYPE html>
     if (start) startEngine(start, false);
     if (stop) post("/api/stop?name=" + encodeURIComponent(stop)).then(refresh);
   });
+
+  refresh();
+  setInterval(refresh, 2000);
+})();
+
+// Optimizers section: read-only status over Epic-13's /api/optimizers — a
+// distinct panel from Inferencers; lifecycle stays on the CLI (bench optimizer).
+(function () {
+  const rows = document.getElementById("opt-rows");
+  const err = document.getElementById("opt-err");
+
+  async function refresh() {
+    try {
+      const res = await fetch("/api/optimizers");
+      const data = await res.json();
+      render(data.optimizers || []);
+      err.textContent = "";
+    } catch (e) {
+      err.textContent = "optimizer status unavailable: " + e;
+    }
+  }
+
+  function render(items) {
+    rows.innerHTML = "";
+    for (const it of items) {
+      const tr = document.createElement("tr");
+      const dot = it.running ? (it.healthy ? "up" : "warn") : "down";
+      tr.innerHTML =
+        `<td><span class="dot ${dot}"></span></td>` +
+        `<td>${it.name}</td><td>${it.installed ? "yes" : "no"}</td>` +
+        `<td>${it.port}</td><td>${it.upstream || "-"}</td>` +
+        `<td>${it.detail}</td><td>${it.url || "-"}</td>`;
+      rows.appendChild(tr);
+    }
+  }
 
   refresh();
   setInterval(refresh, 2000);

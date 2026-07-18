@@ -16,6 +16,7 @@ from local_code_bench.config import (
     ConfigError,
     InferencerConfig,
     ModelConfig,
+    OptimizerConfig,
     load_agents,
     load_autotier,
     load_external_repo,
@@ -62,8 +63,9 @@ from local_code_bench.opencode.scorecard import (
     variance_note,
 )
 from local_code_bench.opencode.sweep import read_model_list
+from local_code_bench.optimizers import manager as optimizer_manager
 from local_code_bench.optimizers.abrun import render_ab_report, run_ab_comparison
-from local_code_bench.optimizers.manager import OptimizerError
+from local_code_bench.optimizers.manager import OptimizerError, OptimizerStatus
 from local_code_bench.opencode.taskb import score_task_b
 from local_code_bench.power import PowerSampler
 from local_code_bench.provider import ChatRequest, ProviderError, provider_for_model
@@ -312,6 +314,72 @@ def build_parser() -> argparse.ArgumentParser:
         help="tier: only show the auto-tiering plan (the default; moves nothing)",
     )
 
+    optimizer = subparsers.add_parser(
+        "optimizer",
+        help="detect and control context-optimization proxies",
+        description=(
+            "List, inspect, start, stop, and A/B-test the context-optimization proxies "
+            "registered in configs/optimizers.yaml, chained in front of a local "
+            "inference engine."
+        ),
+    )
+    optimizer.add_argument(
+        "action",
+        choices=["list", "status", "start", "stop", "ab"],
+        help="optimizer operation to perform",
+    )
+    optimizer.add_argument(
+        "name",
+        nargs="?",
+        help="proxy name (start/stop)",
+    )
+    optimizer.add_argument(
+        "--config",
+        default="configs/optimizers.yaml",
+        help="path to optimizer proxy YAML config",
+    )
+    optimizer.add_argument(
+        "--state-dir",
+        default=settings.optimizer_state_dir,
+        help="directory holding per-proxy PID/state files",
+    )
+    optimizer.add_argument(
+        "--inferencer",
+        help=(
+            "start: engine to chain the proxy in front of (default: the single active "
+            "engine); ab: cross-checked against the agent's declared engine"
+        ),
+    )
+    optimizer.add_argument(
+        "--proxy",
+        help="ab: proxy to route the proxied condition through",
+    )
+    optimizer.add_argument(
+        "--task",
+        help="ab: benchmark suite to run (same ids as --suite)",
+    )
+    optimizer.add_argument(
+        "--agent",
+        help="ab: configured agent that drives both conditions",
+    )
+    optimizer.add_argument(
+        "--limit",
+        type=int,
+        help="ab: limit benchmark tasks",
+    )
+    optimizer.add_argument(
+        "--run-file",
+        help="ab: explicit JSONL run file",
+    )
+    optimizer.add_argument(
+        "--yes",
+        action="store_true",
+        help=(
+            "auto-confirm prompts (parity with 'bench inferencer'; optimizer commands "
+            "currently prompt for nothing)"
+        ),
+    )
+
     dashboard = subparsers.add_parser(
         "dashboard",
         help="serve the unified Inferencers / Results / Run dashboard",
@@ -344,6 +412,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--state-dir",
         default=settings.inferencer_state_dir,
         help="directory holding per-engine PID/state files",
+    )
+    dashboard.add_argument(
+        "--optimizers",
+        default="configs/optimizers.yaml",
+        help="path to optimizer proxy registry YAML for the Optimizers panel",
+    )
+    dashboard.add_argument(
+        "--optimizer-state-dir",
+        default=settings.optimizer_state_dir,
+        help="directory holding optimizer proxy state files",
     )
     dashboard.add_argument(
         "--input",
@@ -487,6 +565,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if getattr(args, "command", None) == "inferencer":
             return run_inferencer_command(args)
+
+        if getattr(args, "command", None) == "optimizer":
+            return run_optimizer_command(args)
 
         if getattr(args, "command", None) == "dashboard":
             return run_unified_dashboard_command(args)
@@ -769,6 +850,8 @@ def run_unified_dashboard_command(args: argparse.Namespace) -> int:
             agents_path=args.agents,
             results_dir=args.results_dir,
             suites_path=args.suites,
+            optimizers_path=args.optimizers,
+            optimizer_state_dir=args.optimizer_state_dir,
             host=args.host,
             port=args.port,
             progress=lambda message: print(message, flush=True),
@@ -1037,6 +1120,110 @@ def run_inferencer_command(args: argparse.Namespace) -> int:
         progress=progress,
     )
     print(f"started {status.name}: {status.detail}")
+    return 0
+
+
+def run_optimizer_command(args: argparse.Namespace) -> int:
+    """Dispatch `bench optimizer <action>` (Epic-13, Story 13.4-001).
+
+    `list`/`status` inspect the registry, `start`/`stop` drive the 13.2 proxy
+    lifecycle (chained in front of a real engine), and `ab` runs the 13.3
+    bare-vs-proxied comparison. Config/lifecycle failures raise and surface via
+    main's shared handler as `bench: error: ...` on stderr with exit 2.
+    """
+
+    if args.action == "ab":
+        return _run_optimizer_ab(args)
+
+    configs = load_optimizers(args.config)
+
+    if args.action == "list":
+        _print_optimizer_list(configs)
+        return 0
+
+    if args.action == "status":
+        statuses = [optimizer_manager.status(cfg, args.state_dir) for cfg in configs.values()]
+        _print_optimizer_status_table(statuses)
+        return 0
+
+    # start / stop both need a named proxy.
+    cfg = _select_optimizer(configs, args.name, args.action)
+
+    def progress(message: str) -> None:
+        print(message, flush=True)
+
+    if args.action == "stop":
+        optimizer_manager.stop(cfg, args.state_dir, progress=progress)
+        print(f"stopped {cfg.name}")
+        return 0
+
+    inferencer_configs = load_inferencers(args.inferencers_config)
+    if args.inferencer:
+        upstream = optimizer_manager.named_inferencer_base_url(
+            args.inferencer, inferencer_configs, args.inferencer_state_dir
+        )
+        status = optimizer_manager.start(cfg, upstream, args.state_dir, progress=progress)
+    else:
+        status = optimizer_manager.start_chained(
+            cfg,
+            inferencer_configs,
+            args.inferencer_state_dir,
+            args.state_dir,
+            progress=progress,
+        )
+    print(f"started {status.name}: {status.detail}")
+    return 0
+
+
+def _run_optimizer_ab(args: argparse.Namespace) -> int:
+    """Run the 13.3-001 bare-vs-proxied comparison from `bench optimizer ab`.
+
+    Mirrors the `--mode agent --ab-proxy` path: same orchestrator, same report.
+    `--inferencer` is only a guard here — when the chosen agent declares an
+    engine, a conflicting name is refused rather than comparing against the
+    wrong engine.
+    """
+
+    for flag, value in (("--proxy", args.proxy), ("--task", args.task), ("--agent", args.agent)):
+        if not value:
+            raise ConfigError(f"optimizer ab requires {flag}")
+
+    agents = load_agents(args.agents_config)
+    if args.agent not in agents:
+        available = ", ".join(sorted(agents)) or "(none)"
+        raise ConfigError(f"unknown agent '{args.agent}'. Available agents: {available}")
+    agent = agents[args.agent]
+
+    optimizers = load_optimizers(args.config)
+    if args.proxy not in optimizers:
+        available = ", ".join(sorted(optimizers)) or "(none)"
+        raise ConfigError(f"unknown optimizer '{args.proxy}'. Available optimizers: {available}")
+
+    if args.inferencer and agent.inferencer and args.inferencer != agent.inferencer:
+        raise ConfigError(
+            f"--inferencer '{args.inferencer}' conflicts with agent '{agent.name}', "
+            f"which declares inferencer '{agent.inferencer}'"
+        )
+
+    agent_engine = _capture_agent_engine_provenance(args, agent)
+    tasks = limit_tasks(load_suite(args.task, cache_dir=args.cache_dir), args.limit)
+    result_path = (
+        Path(args.run_file)
+        if args.run_file
+        else new_run_path(args.results_dir, prefix=f"ab-{args.proxy}")
+    )
+    records = run_ab_comparison(
+        agent=agent,
+        tasks=tasks,
+        proxy=optimizers[args.proxy],
+        state_dir=args.state_dir,
+        result_path=result_path,
+        runner=run_agent_task,
+        progress=lambda message: print(message, flush=True),
+        engine_provenance=agent_engine,
+    )
+    print(render_ab_report(records, agent_name=agent.name))
+    print(f"agent={args.agent} proxy={args.proxy} tasks={len(tasks)} results={result_path}")
     return 0
 
 
@@ -1445,6 +1632,51 @@ def _print_inferencer_list(configs: dict[str, InferencerConfig]) -> None:
         rows.append((name, installed, cfg.lifecycle, str(cfg.port), cfg.url or "-"))
     _print_rows(rows)
     print(_MANUAL_INSTALL_NOTE)
+
+
+_MANUAL_PROXY_INSTALL_NOTE = (
+    "Note: the harness never installs proxies — installation is manual. "
+    "Install a proxy yourself from its URL above, then it is detected here."
+)
+
+
+def _select_optimizer(
+    configs: dict[str, OptimizerConfig], name: str | None, action: str
+) -> OptimizerConfig:
+    if not name:
+        raise ConfigError(f"optimizer {action} requires a proxy name")
+    try:
+        return configs[name]
+    except KeyError as exc:
+        available = ", ".join(sorted(configs)) or "(none)"
+        raise ConfigError(f"unknown optimizer '{name}'. Available: {available}") from exc
+
+
+def _print_optimizer_list(configs: dict[str, OptimizerConfig]) -> None:
+    rows = [("PROXY", "INSTALLED", "PORT", "URL")]
+    for name, cfg in configs.items():
+        installed = "yes" if detect.is_installed(cfg) else "no"
+        rows.append((name, installed, str(cfg.port), cfg.url or "-"))
+    _print_rows(rows)
+    print(_MANUAL_PROXY_INSTALL_NOTE)
+
+
+def _print_optimizer_status_table(statuses: Sequence[OptimizerStatus]) -> None:
+    rows = [("PROXY", "INSTALLED", "RUNNING", "HEALTHY", "PID", "UPSTREAM", "DETAIL")]
+    for st in statuses:
+        rows.append(
+            (
+                st.name,
+                "yes" if st.installed else "no",
+                "yes" if st.running else "no",
+                "yes" if st.healthy else "no",
+                str(st.pid) if st.pid is not None else "-",
+                st.upstream or "-",
+                st.detail,
+            )
+        )
+    _print_rows(rows)
+    print(_MANUAL_PROXY_INSTALL_NOTE)
 
 
 def _print_status_table(

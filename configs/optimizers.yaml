@@ -18,6 +18,8 @@
 #              when one is not installed it points you to this URL to install
 #              it manually. See docs/INFERENCER-INSTALLATION.md.
 optimizers:
+  # Headroom's own `--learn` flag is an optional manual tuning step (run it
+  # yourself if wanted); the harness neither triggers nor depends on it.
   - name: headroom
     detect:
       binary: headroom

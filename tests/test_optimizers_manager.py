@@ -430,3 +430,39 @@ def test_await_health_sleeps_then_succeeds(tmp_path, monkeypatch) -> None:
     )
 
     assert status.healthy is True
+
+
+# --- named_inferencer_base_url ------------------------------------------------
+
+
+def test_named_upstream_resolved_from_running_engine(monkeypatch) -> None:
+    statuses = {
+        "dflash": _engine_status("dflash", running=True, port=8000),
+        "mlx-lm": _engine_status("mlx-lm", running=True, port=8080),
+    }
+    monkeypatch.setattr(manager, "status_all", lambda configs, sd: statuses)
+
+    upstream = manager.named_inferencer_base_url("mlx-lm", {}, "/state")
+
+    assert upstream == "http://127.0.0.1:8080/v1"
+
+
+def test_named_upstream_refuses_unknown_engine(monkeypatch) -> None:
+    statuses = {"mlx-lm": _engine_status("mlx-lm", running=True)}
+    monkeypatch.setattr(manager, "status_all", lambda configs, sd: statuses)
+
+    with pytest.raises(OptimizerError) as exc:
+        manager.named_inferencer_base_url("ghost", {}, "/state")
+
+    assert "ghost" in str(exc.value)
+    assert "mlx-lm" in str(exc.value)
+
+
+def test_named_upstream_refuses_stopped_engine(monkeypatch) -> None:
+    statuses = {"mlx-lm": _engine_status("mlx-lm", running=False)}
+    monkeypatch.setattr(manager, "status_all", lambda configs, sd: statuses)
+
+    with pytest.raises(OptimizerError) as exc:
+        manager.named_inferencer_base_url("mlx-lm", {}, "/state")
+
+    assert "not running" in str(exc.value)
