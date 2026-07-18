@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.71.0 (2026-07-18)
+
+### Features
+
+- **benchmark-comparison-dashboard**: Report-style (#17.2-001)
+  ([`726309d`](https://github.com/fxmartin/local-code-bench/commit/726309d017987fb09733c3260d01dd9428e9539b))
+
+
 ## v0.70.0 (2026-07-18)
 
 ### Features
