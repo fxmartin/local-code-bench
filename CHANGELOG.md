@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## v0.78.0 (2026-07-18)
+
+### Features
+
+- **macos-native-app**: Menu-bar status and native (#18.2-001)
+  ([`18a01d9`](https://github.com/fxmartin/local-code-bench/commit/18a01d98b01824d1b5ba8c3e86c99f32035925b8))
+
+- **macos-native-app**: Reproducible signed build pipeline (#18.3-001)
+  ([`72c600f`](https://github.com/fxmartin/local-code-bench/commit/72c600fb9eb8ff73c8db80ecf2f628826ffd1cc8))
+
+### Testing
+
+- **macos-native-app**: Menu-bar status and native (#18.2-001)
+  ([`25df10c`](https://github.com/fxmartin/local-code-bench/commit/25df10cfe6571fcea0085fc137735128b96c5342))
+
+
 ## v0.77.0 (2026-07-18)
 
 ### Features
