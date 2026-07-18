@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.68.0 (2026-07-18)
+
+### Features
+
+- **ui-theme-revamp**: Charts in the (#16.2-002)
+  ([`1481b76`](https://github.com/fxmartin/local-code-bench/commit/1481b76392b73c35028b30a7ec62ec994b6a9fe3))
+
+
 ## v0.67.0 (2026-07-18)
 
 ### Features
