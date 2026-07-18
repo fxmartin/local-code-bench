@@ -36,6 +36,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import chat
 from . import compare
+from . import compare_report
 from . import dashboard_lifecycle
 from . import dashboard_server as results_panel
 from . import launch
@@ -54,6 +55,7 @@ from .config import (
     load_models,
     load_optimizers,
 )
+from .dashboard_model import load_dashboard_data
 from .inferencers import autotier
 from .inferencers import dashboard as inferencer_panel
 from .inferencers import inventory
@@ -299,6 +301,10 @@ class DashboardContext:
     models_path: str | Path = "configs/models.yaml"
     agents_path: str | Path = "configs/agents.yaml"
     inferencers_path: str | Path = "configs/inferencers.yaml"
+    # Story 17.2-001: the comparison-axis catalog behind the Benchmarks tab. It is
+    # re-read per request like the settings sources, so a catalog edit (an eighth
+    # comparison) shows up on refresh and a broken file degrades to a picker error.
+    comparisons_path: str | Path = "configs/comparisons.yaml"
     # Epic-13 (story 13.4-001): the context-optimization proxy registry drives the
     # read-only Optimizers section — a distinct panel, never mixed into the
     # Inferencers one. Lifecycle stays on the CLI (`bench optimizer start/stop`).
@@ -963,6 +969,45 @@ def tier_apply_action(ctx: DashboardContext) -> tuple[int, dict]:
     }
 
 
+def compare_axes_action(ctx: DashboardContext) -> tuple[int, dict]:
+    """Return the Benchmarks tab's axis picker: the catalog with data-readiness.
+
+    A thin seam over :func:`compare_report.axes_action` — catalog and results are
+    re-read per request, so a new run (or a catalog edit) reorders the picker on
+    refresh without a restart.
+    """
+
+    catalog = compare_report.load_catalog_safe(ctx.comparisons_path)
+    stats = compare.build_configuration_stats(
+        [Path(p) for p in _resolve_result_paths(ctx)]
+    )
+    return compare_report.axes_action(catalog, stats, ctx.models)
+
+
+def compare_report_action(ctx: DashboardContext, axis_id: str) -> tuple[int, dict]:
+    """Return one axis rendered as report data (story 17.2-001).
+
+    Bundles everything the report view shows for the selected axis: the paired
+    member stats (memory footprints from the live local scan for the size-scaled
+    frontier points), each contributing run's metadata header for the methodology
+    chips, and the sweep observations for the context-scaling section.
+    """
+
+    paths = [Path(p) for p in _resolve_result_paths(ctx)]
+    catalog = compare_report.load_catalog_safe(ctx.comparisons_path)
+    stats = compare.build_configuration_stats(
+        paths, memory=compare.memory_index(_scan_local(ctx))
+    )
+    return compare_report.report_action(
+        catalog,
+        stats,
+        axis_id,
+        models=ctx.models,
+        sweep_points=load_dashboard_data(paths).sweep_points,
+        metadata_by_run=compare_report.read_run_metadata(paths),
+    )
+
+
 def _resolve_result_paths(ctx: DashboardContext) -> list[str | Path]:
     """Explicit ``--input`` files plus any ``*.jsonl`` under ``results_dir``.
 
@@ -1030,6 +1075,10 @@ def handle_request(
                 memory=compare.memory_index(_scan_local(ctx)),
             )
         )
+    if method == "GET" and route == "/api/compare/axes":
+        return _json(*compare_axes_action(ctx))
+    if method == "GET" and route == "/api/compare/report":
+        return _json(*compare_report_action(ctx, query.get("axis", [""])[0]))
     if method == "GET" and route == "/api/catalog":
         return _json(*catalog_action(ctx))
     if method == "GET" and route == "/api/settings":
@@ -1365,6 +1414,48 @@ _PAGE = """<!DOCTYPE html>
   .chat-compose { display: flex; gap: var(--space-2); margin-top: var(--space-3);
     max-width: 46rem; }
   #chat-input { flex: 1; resize: vertical; min-height: 2.4rem; }
+  /* Report idiom (story 17.2-001): reusable hero / kicker / chip / stat-tile
+     primitives for the Benchmarks report view — the shapes future report
+     surfaces (and the PDF export) reuse. Side colors resolve only through the
+     --cmp-side-* tokens; cohorts past the fourth cycle the classes. */
+  #bench-axis { min-width: 22rem; max-width: 100%; margin-left: var(--space-2); }
+  .side-1 { --side-color: var(--cmp-side-1); }
+  .side-2 { --side-color: var(--cmp-side-2); }
+  .side-3 { --side-color: var(--cmp-side-3); }
+  .side-4 { --side-color: var(--cmp-side-4); }
+  .report-kicker { font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--text-muted); margin: var(--space-5) 0 0; }
+  .report-hero { display: flex; align-items: baseline; gap: var(--space-3);
+    flex-wrap: wrap; margin: var(--space-1) 0 var(--space-2); }
+  .report-hero .hero-side { font-size: var(--text-xl); font-weight: 650;
+    letter-spacing: -0.015em; color: var(--side-color, var(--text)); }
+  .report-hero .hero-vs { color: var(--text-muted); font-size: var(--text-lg); }
+  .report-subtitle { color: var(--text-muted); max-width: 46rem; margin: 0 0 var(--space-3); }
+  .chip-row { display: flex; gap: var(--space-2); flex-wrap: wrap; margin: 0 0 var(--space-4); }
+  .chip b { color: var(--text); font-weight: 600; }
+  .panel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+    gap: var(--space-3); max-width: 80rem; }
+  .stat-panel { border: 1px solid var(--border); border-radius: var(--radius-md);
+    padding: var(--space-3); }
+  .stat-panel h4 { margin: 0; font-size: var(--text-sm); font-weight: 600;
+    color: var(--side-color, var(--text)); overflow-wrap: anywhere; }
+  .stat-panel .panel-meta { font-size: var(--text-xs); color: var(--text-muted);
+    margin: 0 0 var(--space-2); }
+  .stat-row { display: grid; grid-template-columns: 6.5rem 1fr auto; gap: var(--space-2);
+    align-items: center; font-size: var(--text-xs); margin-top: var(--space-1); }
+  .stat-row .num { font-variant-numeric: tabular-nums; }
+  .stat-bar { height: 0.45rem; border-radius: var(--radius-sm); background: var(--surface-hover); }
+  .stat-bar i { display: block; height: 100%; border-radius: inherit;
+    background: var(--side-color, var(--chart-grey-1)); }
+  .cmp-badge { border-color: var(--accent); color: var(--accent); }
+  .chart-svg { width: 100%; max-width: 520px; height: auto; display: block; }
+  .chart-svg .axis { stroke: var(--chart-axis); stroke-width: 1; }
+  .chart-svg .grid { stroke: var(--chart-grid); stroke-width: 1; }
+  .chart-svg .tick { fill: var(--chart-label); font-size: 10px; }
+  .chart-svg .axis-title { fill: var(--chart-label); font-size: 11px; }
+  .legend { list-style: none; padding: 0; margin: var(--space-2) 0 0; display: flex;
+    flex-wrap: wrap; gap: var(--space-3); font-size: var(--text-xs); color: var(--text-muted); }
+  .legend .swatch { margin-right: var(--space-1); }
   .settings-source { color: var(--text-muted); font-size: var(--text-xs); font-weight: 400;
     margin-left: var(--space-2); font-family: var(--font-mono); }
   .lock-note { color: var(--warn-fg); }
@@ -1379,6 +1470,7 @@ _PAGE = """<!DOCTYPE html>
     <button data-section="inferencers" class="active">Inferencers</button>
     <button data-section="optimizers">Optimizers</button>
     <button data-section="results">Results</button>
+    <button data-section="benchmarks">Benchmarks</button>
     <button data-section="inventory">Inventory</button>
     <button data-section="run">Run</button>
     <button data-section="chat">Chat</button>
@@ -1461,6 +1553,20 @@ _PAGE = """<!DOCTYPE html>
 
   <h3 id="warnings-title" hidden>Data-quality warnings</h3>
   <ul id="warnings"></ul>
+</section>
+
+<section id="section-benchmarks" class="section" hidden>
+  <h2>Benchmarks</h2>
+  <p class="note">A finished run matrix read as evidence: pick a comparison axis from the
+    catalog (configs/comparisons.yaml) to render it as a report — paired stat panels per
+    cohort member, the cross-cutting Pareto frontier, and context scaling where sweep data
+    exists. Axes without comparable runs yet list which models to run.</p>
+  <p id="bench-err" class="err"></p>
+  <p>
+    <label for="bench-axis">Comparison axis</label>
+    <select id="bench-axis"></select>
+  </p>
+  <div id="bench-report"></div>
 </section>
 
 <section id="section-inventory" class="section" hidden>
@@ -1635,6 +1741,7 @@ _PAGE = """<!DOCTYPE html>
     inferencers: document.getElementById("section-inferencers"),
     optimizers: document.getElementById("section-optimizers"),
     results: document.getElementById("section-results"),
+    benchmarks: document.getElementById("section-benchmarks"),
     inventory: document.getElementById("section-inventory"),
     run: document.getElementById("section-run"),
     chat: document.getElementById("section-chat"),
@@ -2954,6 +3061,276 @@ _PAGE = """<!DOCTYPE html>
 
   refresh();
   setInterval(refresh, 10000);
+})();
+
+// Benchmarks section (story 17.2-001): a thin client over /api/compare/axes
+// (the picker) and /api/compare/report (one axis as report data). The hero /
+// kicker / chip / stat-tile builders are the reusable "report idiom" primitives;
+// charts are inline SVG painted only through the chart tokens, so they re-color
+// live when the theme toggles.
+(function () {
+  const picker = document.getElementById("bench-axis");
+  const host = document.getElementById("bench-report");
+  const err = document.getElementById("bench-err");
+  const SIDE_CLASSES = 4;
+  const METRICS = [
+    ["prefill_tokens_per_second", "prefill", fmtSpeed],
+    ["decode_tokens_per_second", "decode", fmtSpeed],
+    ["ttft_seconds", "TTFT", fmtSecs],
+    ["pass_at_1", "pass@1", fmtPct],
+    ["cost_per_task_usd", "$/task", fmtCost],
+  ];
+
+  function fmtPct(v) { return (v * 100).toFixed(0) + "%"; }
+  function fmtSpeed(v) { return v.toFixed(0) + " tok/s"; }
+  function fmtSecs(v) { return v.toFixed(2) + " s"; }
+  function fmtCost(v) { return "$" + v.toFixed(4); }
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function sideClass(side) {
+    if (side === null || side === undefined) return "";
+    return "side-" + ((side % SIDE_CLASSES) + 1);
+  }
+  function sidePaint(side) {
+    if (side === null || side === undefined) return "var(--chart-grey-3)";
+    return "var(--cmp-side-" + ((side % SIDE_CLASSES) + 1) + ")";
+  }
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  // --- report idiom primitives (reused by future report surfaces) ---
+  function kicker(text) { return el("p", "report-kicker", text); }
+  function hero(sides) {
+    const row = el("div", "report-hero");
+    sides.forEach((side, i) => {
+      if (i > 0) row.appendChild(el("span", "hero-vs", "vs"));
+      row.appendChild(el("span", "hero-side " + sideClass(side.index), side.name));
+    });
+    return row;
+  }
+  function subtitle(text) { return el("p", "report-subtitle", text); }
+  function chipRow(chips) {
+    const row = el("div", "chip-row");
+    for (const chip of chips) {
+      const node = el("span", "chip");
+      node.appendChild(el("b", "", chip.label));
+      node.appendChild(document.createTextNode(" " + chip.value));
+      row.appendChild(node);
+    }
+    return row;
+  }
+  function statTile(member, maxima) {
+    const panel = el("div", "stat-panel " + sideClass(member.side));
+    const heading = el("h4", "", member.model + " [" + member.engine_label + "]");
+    if (member.controlled) {
+      const badge = el("span", "badge cmp-badge", "controlled pair");
+      badge.title = member.controlled.reason || "";
+      heading.appendChild(document.createTextNode(" "));
+      heading.appendChild(badge);
+    }
+    panel.appendChild(heading);
+    let meta = member.side_name;
+    if (member.suite) {
+      meta += " · " + member.suite + (member.suite_version ? " v" + member.suite_version : "");
+    }
+    panel.appendChild(el("p", "panel-meta", meta));
+    for (const [key, label, fmt] of METRICS) {
+      const value = member.stats[key];
+      const row = el("div", "stat-row");
+      row.appendChild(el("span", "", label));
+      const bar = el("div", "stat-bar");
+      const fill = el("i");
+      const max = maxima[key];
+      const has = value !== null && value !== undefined;
+      fill.style.width = has && max ? Math.max(2, (value / max) * 100) + "%" : "0";
+      bar.appendChild(fill);
+      row.appendChild(bar);
+      row.appendChild(el("span", "num", has ? fmt(value) : "—"));
+      panel.appendChild(row);
+    }
+    return panel;
+  }
+
+  // --- SVG charts (geometry mirrors the static dashboard's chart module) ---
+  const W = 480, H = 300, L = 62, R = W - 16, T = 18, B = H - 46;
+  function scale(v, lo, hi, loPx, hiPx) {
+    if (hi === lo) return (loPx + hiPx) / 2;
+    return loPx + ((v - lo) / (hi - lo)) * (hiPx - loPx);
+  }
+  function bounds(values) {
+    let lo = Math.min.apply(null, values), hi = Math.max.apply(null, values);
+    if (lo === hi) { const pad = Math.abs(lo) * 0.1 || 1.0; return [lo - pad, hi + pad]; }
+    return [lo, hi];
+  }
+  function axesSvg(xTitle, yTitle, xLo, xHi, yLo, yHi, xFmt, yFmt) {
+    const midY = ((T + B) / 2).toFixed(0);
+    return [
+      '<line x1="' + L + '" y1="' + T + '" x2="' + R + '" y2="' + T + '" class="grid"/>',
+      '<line x1="' + L + '" y1="' + midY + '" x2="' + R + '" y2="' + midY + '" class="grid"/>',
+      '<line x1="' + L + '" y1="' + B + '" x2="' + R + '" y2="' + B + '" class="axis"/>',
+      '<line x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + B + '" class="axis"/>',
+      '<text x="' + L + '" y="' + (B + 14) + '" class="tick">' + esc(xFmt(xLo)) + "</text>",
+      '<text x="' + R + '" y="' + (B + 14) + '" class="tick" text-anchor="end">' + esc(xFmt(xHi)) + "</text>",
+      '<text x="' + (L - 6) + '" y="' + B + '" class="tick" text-anchor="end">' + esc(yFmt(yLo)) + "</text>",
+      '<text x="' + (L - 6) + '" y="' + (T + 8) + '" class="tick" text-anchor="end">' + esc(yFmt(yHi)) + "</text>",
+      '<text x="' + ((L + R) / 2).toFixed(0) + '" y="' + (H - 8) + '" class="axis-title" text-anchor="middle">' + esc(xTitle) + "</text>",
+      '<text x="14" y="' + ((T + B) / 2).toFixed(0) + '" class="axis-title" text-anchor="middle" ' +
+        'transform="rotate(-90 14 ' + ((T + B) / 2).toFixed(0) + ')">' + esc(yTitle) + "</text>",
+    ];
+  }
+  function svgChart(parts, label) {
+    const wrap = el("div");
+    wrap.innerHTML = '<svg viewBox="0 0 ' + W + " " + H + '" class="chart-svg" role="img" aria-label="' +
+      esc(label) + '">' + parts.join("") + "</svg>";
+    return wrap.firstChild;
+  }
+
+  function frontierChart(points) {
+    const [xLo, xHi] = bounds(points.map((p) => p.decode_tokens_per_second));
+    const yLo = 0, yHi = 1;
+    const parts = axesSvg("Median decode (tok/s)", "pass@1", xLo, xHi, yLo, yHi, fmtSpeed, fmtPct);
+    // Accent-marked frontier: connect the Pareto-optimal points, then draw
+    // every configuration as a memory-sized, side-colored point.
+    const optimal = points.filter((p) => p.frontier)
+      .sort((a, b) => a.decode_tokens_per_second - b.decode_tokens_per_second);
+    if (optimal.length > 1) {
+      const line = optimal.map((p) =>
+        scale(p.decode_tokens_per_second, xLo, xHi, L, R).toFixed(2) + "," +
+        scale(p.pass_at_1, yLo, yHi, B, T).toFixed(2)).join(" ");
+      parts.push('<polyline points="' + line + '" fill="none" style="stroke:var(--accent)" ' +
+        'stroke-width="1.5" stroke-dasharray="4 3"/>');
+    }
+    const maxMem = Math.max.apply(null, points.map((p) => p.memory_bytes || 0));
+    for (const p of points) {
+      const cx = scale(p.decode_tokens_per_second, xLo, xHi, L, R).toFixed(2);
+      const cy = scale(p.pass_at_1, yLo, yHi, B, T).toFixed(2);
+      const r = p.memory_bytes && maxMem ? 4 + 6 * Math.sqrt(p.memory_bytes / maxMem) : 4;
+      const tip = p.label + ": " + fmtSpeed(p.decode_tokens_per_second) + ", " + fmtPct(p.pass_at_1);
+      parts.push('<circle cx="' + cx + '" cy="' + cy + '" r="' + r.toFixed(1) +
+        '" style="fill:' + sidePaint(p.side) + '"><title>' + esc(tip) + "</title></circle>");
+      if (p.frontier) {
+        parts.push('<circle cx="' + cx + '" cy="' + cy + '" r="' + (r + 2.5).toFixed(1) +
+          '" fill="none" style="stroke:var(--accent)" stroke-width="1.5"/>');
+      }
+    }
+    return svgChart(parts, "Pareto frontier — pass@1 vs decode tok/s");
+  }
+
+  function contextChart(series) {
+    const all = series.flatMap((s) => s.points).filter((p) => p.prefill_tokens_per_second !== null);
+    const [xLo, xHi] = bounds(all.map((p) => p.context_tokens));
+    const yHi = Math.max.apply(null, all.map((p) => p.prefill_tokens_per_second)) || 1;
+    const parts = axesSvg("Context tokens", "Prefill (tok/s)", xLo, xHi, 0, yHi,
+      (v) => Math.round(v).toLocaleString(), fmtSpeed);
+    const legend = el("ul", "legend");
+    for (const s of series) {
+      const coords = s.points.filter((p) => p.prefill_tokens_per_second !== null).map((p) => [
+        scale(p.context_tokens, xLo, xHi, L, R),
+        scale(p.prefill_tokens_per_second, 0, yHi, B, T),
+      ]);
+      if (coords.length > 1) {
+        parts.push('<polyline points="' +
+          coords.map((c) => c[0].toFixed(2) + "," + c[1].toFixed(2)).join(" ") +
+          '" fill="none" style="stroke:' + sidePaint(s.side) + '" stroke-width="2"/>');
+      }
+      for (const c of coords) {
+        parts.push('<circle cx="' + c[0].toFixed(2) + '" cy="' + c[1].toFixed(2) +
+          '" r="3.5" style="fill:' + sidePaint(s.side) + '"/>');
+      }
+      const item = el("li");
+      const swatch = el("span", "swatch", "●");
+      swatch.style.color = sidePaint(s.side);
+      item.appendChild(swatch);
+      item.appendChild(document.createTextNode(s.label));
+      legend.appendChild(item);
+    }
+    const wrap = el("div");
+    wrap.appendChild(svgChart(parts, "Context scaling — prefill tok/s by context size"));
+    wrap.appendChild(legend);
+    return wrap;
+  }
+
+  function renderReport(data) {
+    host.innerHTML = "";
+    host.appendChild(kicker(data.axis.title));
+    host.appendChild(hero(data.sides));
+    host.appendChild(subtitle(data.subtitle));
+    if (data.axis.description) host.appendChild(el("p", "note", data.axis.description));
+    if (data.chips.length) host.appendChild(chipRow(data.chips));
+
+    if (!data.data_ready) {
+      host.appendChild(el("h3", "", "No comparable runs yet"));
+      for (const side of data.sides) {
+        if (!side.models_to_run.length) continue;
+        host.appendChild(el("p", "empty " + sideClass(side.index),
+          side.name + ": run " + side.models_to_run.join(", ")));
+      }
+    }
+
+    if (data.members.length) {
+      host.appendChild(el("h3", "", "Paired stats"));
+      const maxima = {};
+      for (const [key] of METRICS) {
+        maxima[key] = Math.max.apply(null,
+          data.members.map((m) => m.stats[key]).filter((v) => v !== null && v !== undefined).concat(0));
+      }
+      const grid = el("div", "panel-grid");
+      for (const member of data.members) grid.appendChild(statTile(member, maxima));
+      host.appendChild(grid);
+    }
+
+    if (data.frontier.length) {
+      host.appendChild(el("h3", "", "Pareto frontier — pass@1 vs decode tok/s"));
+      host.appendChild(el("p", "empty",
+        "Every configuration with data; point size tracks memory footprint, the accent ring marks the frontier."));
+      host.appendChild(frontierChart(data.frontier));
+    }
+
+    if (data.context_scaling.length) {
+      host.appendChild(el("h3", "", "Context scaling"));
+      host.appendChild(contextChart(data.context_scaling));
+    }
+  }
+
+  async function renderAxis(id) {
+    if (!id) return;
+    try {
+      const res = await fetch("/api/compare/report?axis=" + encodeURIComponent(id));
+      const data = await res.json();
+      if (!res.ok) { err.textContent = data.error || "report unavailable"; return; }
+      err.textContent = "";
+      renderReport(data);
+    } catch (e) {
+      err.textContent = "report unavailable: " + e;
+    }
+  }
+
+  async function loadAxes() {
+    try {
+      const res = await fetch("/api/compare/axes");
+      const data = await res.json();
+      picker.innerHTML = "";
+      for (const axis of data.axes || []) {
+        const option = document.createElement("option");
+        option.value = axis.id;
+        option.textContent = axis.title + (axis.data_ready ? "" : " — no data yet");
+        picker.appendChild(option);
+      }
+      err.textContent = (data.errors || []).join("; ");
+      if (picker.value) renderAxis(picker.value);
+    } catch (e) {
+      err.textContent = "axis catalog unavailable: " + e;
+    }
+  }
+
+  picker.addEventListener("change", () => renderAxis(picker.value));
+  loadAxes();
 })();
 </script>
 </body>

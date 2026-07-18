@@ -132,6 +132,14 @@ TOKENS_CSS = f"""\
   --chart-grey-2: light-dark(var(--grey-6), var(--grey-3));
   --chart-grey-3: light-dark(var(--grey-5), var(--grey-4));
 
+  /* Comparison side colors (story 17.2-001) — the report view's "sides" speak
+     the same accent-leads, greys-support language as the charts; cohorts past
+     the fourth cycle these stops client-side. */
+  --cmp-side-1: var(--chart-accent);
+  --cmp-side-2: var(--chart-grey-1);
+  --cmp-side-3: var(--chart-grey-2);
+  --cmp-side-4: var(--chart-grey-3);
+
   /* Type scale. */
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
