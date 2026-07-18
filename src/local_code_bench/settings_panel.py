@@ -168,13 +168,12 @@ def _harness_group(settings_path: str | Path, environ: Mapping[str, str]) -> dic
     """
 
     path = Path(settings_path)
+    error: str | None = None
     try:
         items = _harness_items(settings_path, environ)
         hash_value = content_hash(path.read_text(encoding="utf-8")) if path.exists() else None
     except (SettingsError, OSError) as exc:
         items, hash_value, error = [], None, str(exc)
-    else:
-        error = None
     return {
         "id": "harness",
         "label": "Harness",
