@@ -747,7 +747,7 @@ and runs from different suites, suite versions, or hardware tags are excluded fr
 a comparison with an explicit reason instead of being silently averaged. An unknown
 axis returns 404 with the list of available axes.
 
-The comparison axes the Benchmarks tab will render are declared as data in
+The comparison axes the Benchmarks tab renders are declared as data in
 `configs/comparisons.yaml` — the seven proposed comparisons (engine, architecture,
 size ladder, quantization, context scaling, specialized vs general, local vs cloud)
 ship in the catalog, and an eighth is a config edit, not code. Each axis declares an
@@ -763,6 +763,24 @@ defaults; a rule carrying a `settings_key` (e.g. the quality bar at
 lands. An axis whose cohorts have no runs yet is still declared — the loader exposes
 which configured models would populate each cohort, so the tab can say "no comparable
 runs yet" and list what to run.
+
+The **Benchmarks** section renders the selected axis as a designed report rather than
+a table to interpret. The axis picker (`GET /api/compare/axes`) lists the whole
+catalog with data-ready axes first and empty ones marked "no data yet"; selecting an
+axis fetches `GET /api/compare/report?axis=<id>` and renders a two-sided hero (side
+names in the comparison side colors), a subtitle stating the controlled variables,
+and methodology chips built from the contributing runs' metadata — engine versions,
+suite + version, seed/temperature, hardware tag, and run dates. Each cohort member
+gets a stat panel (prefill, decode, TTFT, pass@1, cost/task) with side-colored bars,
+and controlled pairs (identical weights, same generation) are badged with the
+catalog's stated reason. Two cross-cutting sections follow: the Pareto frontier of
+pass@1 vs median decode tok/s over *every* configuration with data (points sized by
+memory footprint, the frontier accent-marked) and, where Epic-05 sweep records exist,
+the context-scaling curve of prefill throughput by context size. The comparison side
+colors are theme tokens (`--cmp-side-1..4`, resolving through the chart palette), so
+the report renders in both light and dark modes with no raw color literals; the
+catalog is re-read per request, so a `configs/comparisons.yaml` edit shows up on
+refresh, and a broken catalog degrades to an inline picker error.
 
 The **Settings** section (`GET /api/settings`) aggregates every harness config surface
 into one read-only view, so you can see the whole configuration without opening four

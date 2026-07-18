@@ -115,6 +115,7 @@ def _ctx(
     models_path: str | Path = "configs/does-not-exist-models.yaml",
     agents_path: str | Path = "configs/does-not-exist-agents.yaml",
     inferencers_path: str | Path = "configs/does-not-exist-inferencers.yaml",
+    comparisons_path: str | Path = "configs/does-not-exist-comparisons.yaml",
 ) -> ud.DashboardContext:
     return ud.DashboardContext(
         configs=_configs(),
@@ -127,6 +128,7 @@ def _ctx(
         models_path=models_path,
         agents_path=agents_path,
         inferencers_path=inferencers_path,
+        comparisons_path=comparisons_path,
     )
 
 
@@ -341,6 +343,98 @@ def test_api_compare_unknown_axis_is_404(tmp_path: Path) -> None:
     assert resp.status == 404
     payload = json.loads(resp.body)
     assert "unknown axis" in payload["error"]
+
+
+# ---------------------------------------------------------------------------
+# Benchmarks tab (story 17.2-001): axis picker + report endpoints + section
+# ---------------------------------------------------------------------------
+
+
+_COMPARISONS_YAML = """\
+comparisons:
+  - id: engine
+    title: "Engine A/B"
+    pairing_key: base_model
+    cohorts:
+      - name: local
+        names: [local-coder]
+      - name: cloud
+        names: [cloud-coder]
+"""
+
+
+def _benchmarks_ctx(tmp_path: Path, *, with_data: bool = True) -> ud.DashboardContext:
+    catalog = tmp_path / "comparisons.yaml"
+    catalog.write_text(_COMPARISONS_YAML, encoding="utf-8")
+    run = tmp_path / "run.jsonl"
+    if with_data:
+        append_jsonl(run, _endpoint_record("local-coder", "HumanEval/0", passed=True))
+        append_jsonl(run, _endpoint_record("cloud-coder", "HumanEval/0", passed=False))
+    return _ctx([run] if with_data else [], comparisons_path=catalog)
+
+
+def test_api_compare_axes_lists_catalog_with_readiness(tmp_path: Path) -> None:
+    resp = ud.handle_request("GET", "/api/compare/axes", _benchmarks_ctx(tmp_path))
+
+    assert resp.status == 200
+    payload = json.loads(resp.body)
+    axis = payload["axes"][0]
+    assert axis["id"] == "engine"
+    assert axis["data_ready"] is True
+    assert payload["errors"] == []
+
+
+def test_api_compare_axes_degrades_on_missing_catalog() -> None:
+    resp = ud.handle_request("GET", "/api/compare/axes", _ctx())
+
+    assert resp.status == 200
+    payload = json.loads(resp.body)
+    assert payload["axes"] == []
+    assert len(payload["errors"]) == 1
+
+
+def test_api_compare_report_renders_the_selected_axis(tmp_path: Path) -> None:
+    resp = ud.handle_request(
+        "GET", "/api/compare/report?axis=engine", _benchmarks_ctx(tmp_path)
+    )
+
+    assert resp.status == 200
+    payload = json.loads(resp.body)
+    assert payload["axis"]["id"] == "engine"
+    assert [side["name"] for side in payload["sides"]] == ["local", "cloud"]
+    members = {member["model"]: member for member in payload["members"]}
+    assert members["local-coder"]["side"] == 0
+    assert members["cloud-coder"]["side"] == 1
+    assert "chips" in payload
+    assert "frontier" in payload
+
+
+def test_api_compare_report_unknown_axis_is_404(tmp_path: Path) -> None:
+    resp = ud.handle_request(
+        "GET", "/api/compare/report?axis=bogus", _benchmarks_ctx(tmp_path)
+    )
+
+    assert resp.status == 404
+    payload = json.loads(resp.body)
+    assert "unknown axis" in payload["error"]
+    assert payload["axes"] == ["engine"]
+
+
+def test_page_has_benchmarks_section_with_axis_picker() -> None:
+    body = ud.render_page()
+    assert 'data-section="benchmarks"' in body
+    assert 'id="section-benchmarks"' in body
+    assert 'id="bench-axis"' in body
+    assert "/api/compare/axes" in body
+    assert "/api/compare/report" in body
+
+
+def test_page_styles_comparison_sides_from_tokens() -> None:
+    body = ud.render_page()
+    # The side colors resolve through the theme tokens (AC4) — the token block
+    # defines them and the report rules reference them; no raw literals.
+    assert "--cmp-side-1: var(--chart-accent);" in body
+    assert "var(--cmp-side-2)" in body
 
 
 # ---------------------------------------------------------------------------
