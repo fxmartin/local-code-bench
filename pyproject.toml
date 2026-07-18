@@ -1,6 +1,6 @@
 [project]
 name = "local-code-bench"
-version = "0.68.0"
+version = "0.69.0"
 description = "Benchmark harness for local, cloud, and agentic coding models on Apple Silicon"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.69.0 (2026-07-18)
+
+### Features
+
+- **settings-management**: Validated, atomic, (#15.2-001)
+  ([`bc50f2f`](https://github.com/fxmartin/local-code-bench/commit/bc50f2fd969f48d5e6178d83056762e8c9380398))
+
+
 ## v0.68.0 (2026-07-18)
 
 ### Features
