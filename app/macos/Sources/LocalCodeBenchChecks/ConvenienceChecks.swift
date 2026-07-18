@@ -61,6 +61,8 @@ import LocalCodeBenchKit
         RecentReports.list(in: dir, limit: 2).map(\.lastPathComponent),
         ["new.pdf", "Mid.PDF"],
         "limit caps the recents list")
+    expectEqual(RecentReports.list(in: dir, limit: 0), [], "zero limit lists nothing")
+    expectEqual(RecentReports.list(in: dir, limit: -3), [], "negative limit lists nothing")
 }
 
 // MARK: - ReportDownload
@@ -83,6 +85,8 @@ import LocalCodeBenchKit
         ReportDownload.sanitizedFilename("/"), "report.pdf", "bare slash falls back")
     expectEqual(
         ReportDownload.sanitizedFilename("a/.."), "report.pdf", "dot-dot falls back")
+    expectEqual(
+        ReportDownload.sanitizedFilename("."), "report.pdf", "bare dot falls back")
 
     let dir = try makeTempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -104,6 +108,15 @@ import LocalCodeBenchKit
         ReportDownload.destination(suggestedFilename: "compare.pdf", in: dir).lastPathComponent,
         "compare-3.pdf",
         "counter keeps climbing past further collisions")
+
+    // Extensionless names must still get collision counters, without a
+    // trailing dot.
+    let bare = dir.appendingPathComponent("summary")
+    try "x".write(to: bare, atomically: true, encoding: .utf8)
+    expectEqual(
+        ReportDownload.destination(suggestedFilename: "summary", in: dir).lastPathComponent,
+        "summary-2",
+        "extensionless collision appends a bare counter")
 }
 
 // MARK: - DownloadNotification
