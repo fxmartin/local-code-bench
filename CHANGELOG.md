@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.70.0 (2026-07-18)
+
+### Features
+
+- **macos-native-app**: Bundled harness as a supervised (#18.1-002)
+  ([`c5b3aa4`](https://github.com/fxmartin/local-code-bench/commit/c5b3aa4bb3d1cff97a7e1659ce6dd1418760b49a))
+
+
 ## v0.69.0 (2026-07-18)
 
 ### Features
