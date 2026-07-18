@@ -16,11 +16,12 @@ Contract under test:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 from pathlib import Path
 
-from local_code_bench import compare, compare_report, theme
+from local_code_bench import compare, compare_report, compare_verdicts, theme
 from local_code_bench.config import (
     CohortFilter,
     ComparisonAxis,
@@ -28,6 +29,7 @@ from local_code_bench.config import (
     HighlightedPair,
     ModelConfig,
     TokenPrices,
+    VerdictRule,
 )
 from local_code_bench.dashboard_model import SweepPoint
 from local_code_bench.results import append_jsonl
@@ -368,6 +370,86 @@ def test_report_subtitle_states_controlled_variables(tmp_path: Path) -> None:
     subtitle = payload["subtitle"]
     assert "humaneval v1.0" in subtitle
     assert "M3 Max 48 GB" in subtitle
+
+
+# ---------------------------------------------------------------------------
+# conclusion callouts (story 17.2-002)
+# ---------------------------------------------------------------------------
+
+
+def _engine_axis_with_verdict() -> ComparisonAxis:
+    axis = _engine_axis()
+    return dataclasses.replace(
+        axis,
+        verdicts=(
+            VerdictRule(
+                id="prefill-advantage",
+                metric="median_prefill_tokens_per_second",
+                threshold=1.10,
+                unit="ratio",
+            ),
+        ),
+    )
+
+
+def test_report_carries_conclusions_from_verdict_rules(tmp_path: Path) -> None:
+    catalog = ComparisonCatalog(axes=(_engine_axis_with_verdict(),))
+    _status, payload = compare_report.report_action(
+        catalog, _paired_stats(tmp_path), "engine", models=_registry()
+    )
+
+    assert len(payload["conclusions"]) == 1
+    callout = payload["conclusions"][0]
+    assert callout["rule_id"] == "prefill-advantage"
+    assert callout["status"] == "holds"  # 150 vs 90 median prefill = 1.67×
+    assert "1.10×" in callout["text"]
+    assert callout["run_ids"] == ["run.jsonl"]
+
+
+def test_report_without_verdict_rules_has_no_conclusions(tmp_path: Path) -> None:
+    _status, payload = compare_report.report_action(
+        _catalog(), _paired_stats(tmp_path), "engine", models=_registry()
+    )
+
+    assert payload["conclusions"] == []
+
+
+def test_report_conclusions_use_canary_history(tmp_path: Path) -> None:
+    axis = ComparisonAxis(
+        id="canary",
+        title="Canary drift",
+        pairing_key="suite_context",
+        cohorts=(
+            CohortFilter(name="mlx-lm", inferencer="mlx-lm"),
+            CohortFilter(name="ollama", inferencer="ollama"),
+        ),
+        verdicts=(
+            VerdictRule(
+                id="canary-drift",
+                metric="pass_at_1",
+                threshold=5.0,
+                unit="pp",
+                kind="canary_drift",
+            ),
+        ),
+    )
+    history = {
+        "local-mlx-alpha [mlx_lm.server]": [
+            compare_verdicts.CanaryObservation(
+                run_id="old.jsonl", date="2026-07-01", pass_at_1=0.9, attempts=10
+            ),
+            compare_verdicts.CanaryObservation(
+                run_id="new.jsonl", date="2026-07-15", pass_at_1=0.7, attempts=10
+            ),
+        ]
+    }
+    _status, payload = compare_report.report_action(
+        ComparisonCatalog(axes=(axis,)), (), "canary", models=_registry(), canary_history=history
+    )
+
+    callout = payload["conclusions"][0]
+    assert callout["status"] == "holds"
+    assert "2026-07-01" in callout["text"] and "2026-07-15" in callout["text"]
 
 
 # ---------------------------------------------------------------------------

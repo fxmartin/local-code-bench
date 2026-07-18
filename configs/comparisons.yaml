@@ -18,6 +18,18 @@
 #
 # Verdict thresholds are shipped defaults; a rule with a settings_key is
 # overridden by that entry of the Epic-15 settings layer once it lands.
+#
+# Verdict rules (story 17.2-002) render deterministic conclusion callouts.
+# Each rule declares:
+#   kind       pair (default: one cohort's aggregate thresholded against
+#              another's), quality_bar (smallest configuration within
+#              `threshold` pp of the best), or canary_drift (latest canary
+#              run vs the previous one)
+#   margin     the declared noise band around the threshold — a computed value
+#              inside it renders "inconclusive — within noise margin", never a
+#              confident verdict
+#   sides      for pair rules on axes with more than two cohorts: the two
+#              cohort names to compare, in order (value = first vs second)
 comparisons:
   - id: engine
     title: "Engine: mlx-lm vs Ollama"
@@ -45,11 +57,13 @@ comparisons:
         metric: median_prefill_tokens_per_second
         threshold: 1.10
         unit: ratio
+        margin: 0.05
       - id: decode-advantage
         description: Engine is meaningfully faster at decode for the same weights.
         metric: median_decode_tokens_per_second
         threshold: 1.10
         unit: ratio
+        margin: 0.05
 
   - id: architecture
     title: "Architecture: dense vs MoE vs sparse-MoE"
@@ -92,6 +106,8 @@ comparisons:
         metric: median_decode_tokens_per_second
         threshold: 1.50
         unit: ratio
+        margin: 0.10
+        sides: [moe, dense]
       - id: moe-prefill-gain
         description: >-
           MoE moves prefill by at least this factor — below it, agentic coding
@@ -99,6 +115,8 @@ comparisons:
         metric: median_prefill_tokens_per_second
         threshold: 1.10
         unit: ratio
+        margin: 0.05
+        sides: [moe, dense]
 
   - id: size-ladder
     title: "Size / capability ladder"
@@ -135,6 +153,8 @@ comparisons:
         metric: pass_at_1
         threshold: 5.0
         unit: pp
+        kind: quality_bar
+        margin: 1.0
         settings_key: benchmark_dashboard.quality_bar
 
   - id: quant
@@ -159,11 +179,15 @@ comparisons:
         metric: pass_at_1
         threshold: 1.0
         unit: pp
+        margin: 0.5
+        sides: [q8, q4]
       - id: q8-decode-cost
         description: q8 keeps at least this fraction of q4's decode speed.
         metric: median_decode_tokens_per_second
         threshold: 0.90
         unit: ratio
+        margin: 0.05
+        sides: [q8, q4]
 
   - id: context-scaling
     title: "Context scaling (prefill-vs-context)"
@@ -184,6 +208,7 @@ comparisons:
         metric: median_ttft_seconds
         threshold: 1.50
         unit: ratio
+        margin: 0.10
 
   - id: specialized-vs-general
     title: "Specialized vs general"
@@ -216,6 +241,7 @@ comparisons:
         metric: pass_at_1
         threshold: 2.0
         unit: pp
+        margin: 1.0
 
   - id: local-vs-cloud
     title: "Local vs cloud frontier"
@@ -238,8 +264,35 @@ comparisons:
         metric: pass_at_1
         threshold: 5.0
         unit: pp
+        margin: 1.0
+        sides: [cloud, local]
       - id: cloud-premium
         description: The cloud premium per solved task exceeds this many dollars.
         metric: cost_per_task_usd
         threshold: 0.05
         unit: usd
+        margin: 0.01
+        sides: [cloud, local]
+
+  - id: canary
+    title: "Canary drift watch"
+    description: >-
+      The fixed HumanEval anchor subset over time: pass@1 of each
+      configuration's latest canary run against its previous one — the fast
+      quality signal that a serving-stack or quant change moved correctness.
+    pairing_key: suite_context
+    cohorts:
+      - name: mlx-lm
+        inferencer: mlx-lm
+      - name: ollama
+        inferencer: ollama
+    verdicts:
+      - id: canary-drift
+        description: >-
+          Pass@1 drift beyond this tolerance versus the previous canary run is
+          called out with both values and dates.
+        metric: pass_at_1
+        threshold: 5.0
+        unit: pp
+        kind: canary_drift
+        margin: 1.0

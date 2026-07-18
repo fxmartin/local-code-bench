@@ -757,12 +757,18 @@ axis returns 404 with the list of available axes.
 The comparison axes the Benchmarks tab renders are declared as data in
 `configs/comparisons.yaml` — the seven proposed comparisons (engine, architecture,
 size ladder, quantization, context scaling, specialized vs general, local vs cloud)
-ship in the catalog, and an eighth is a config edit, not code. Each axis declares an
+plus the canary drift watch ship in the catalog, and another is a config edit, not
+code. Each axis declares an
 id, a title, two or more **cohort filters** (matching on model-name globs, explicit
 name lists, the model's declared `inferencer`, and/or a quant token such as `q4` or
 `4bit`), a **pairing key** (`base_model`, `base_model_engine`, or `suite_context`),
 the **highlighted controlled pairs** (e.g. the gpt-oss identical-weights engine A/B),
-and deterministic **verdict rules** with their thresholds. A malformed axis is
+and deterministic **verdict rules** with their thresholds. Each rule declares a
+`kind` (`pair` thresholds one cohort's aggregate against another's, `quality_bar`
+finds the smallest configuration within the threshold of the best, `canary_drift`
+thresholds the latest canary run against the previous one), a noise `margin` around
+its threshold, and — for pair rules on axes with more than two cohorts, or where
+direction matters — the two `sides` it compares, in order. A malformed axis is
 rejected with a loader error naming the offending field while the valid axes still
 load, so one bad edit never blanks the catalog. Verdict thresholds are shipped
 defaults; a rule carrying a `settings_key` (e.g. the quality bar at
@@ -777,7 +783,15 @@ catalog with data-ready axes first and empty ones marked "no data yet"; selectin
 axis fetches `GET /api/compare/report?axis=<id>` and renders a two-sided hero (side
 names in the comparison side colors), a subtitle stating the controlled variables,
 and methodology chips built from the contributing runs' metadata — engine versions,
-suite + version, seed/temperature, hardware tag, and run dates. Each cohort member
+suite + version, seed/temperature, hardware tag, and run dates. Below the chips,
+each axis states its **conclusion callouts** — the verdict rules rendered as prose
+with the computed numbers inline ("MoE moved decode 3.4× but prefill only 1.2×:
+still prefill-bound"), each listing its supporting run IDs and the threshold it
+applied. The callouts never overreach: one-sided or missing data states what is
+missing ("needs a q8 run of X") instead of concluding, a value within the rule's
+declared noise margin of its threshold renders as "inconclusive — within noise
+margin", and the canary axis calls out pass@1 drift beyond its declared tolerance
+versus the previous run with both values and dates. Each cohort member
 gets a stat panel (prefill, decode, TTFT, pass@1, cost/task) with side-colored bars,
 and controlled pairs (identical weights, same generation) are badged with the
 catalog's stated reason. Two cross-cutting sections follow: the Pareto frontier of

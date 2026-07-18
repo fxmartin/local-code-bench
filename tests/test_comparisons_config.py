@@ -16,7 +16,8 @@ from local_code_bench.config import (
     load_models,
 )
 
-#: The seven proposition axes the shipped catalog must declare (Epic-17).
+#: The seven proposition axes plus the canary drift watch (story 17.2-002)
+#: the shipped catalog must declare (Epic-17).
 SHIPPED_AXIS_IDS = (
     "engine",
     "architecture",
@@ -25,6 +26,7 @@ SHIPPED_AXIS_IDS = (
     "context-scaling",
     "specialized-vs-general",
     "local-vs-cloud",
+    "canary",
 )
 
 
@@ -78,6 +80,10 @@ def test_load_comparisons_parses_axis(tmp_path) -> None:
     assert verdict.threshold == pytest.approx(1.10)
     assert verdict.unit == "ratio"
     assert verdict.settings_key is None
+    # Story 17.2-002 defaults: pair comparison, no declared noise margin.
+    assert verdict.kind == "pair"
+    assert verdict.margin == 0.0
+    assert verdict.sides is None
 
 
 def test_comparison_axis_is_frozen(tmp_path) -> None:
@@ -306,6 +312,119 @@ comparisons:
 
 
 # ---------------------------------------------------------------------------
+# verdict kind / margin / sides (story 17.2-002)
+# ---------------------------------------------------------------------------
+
+
+THREE_COHORT_AXIS = """
+comparisons:
+  - id: architecture
+    title: Dense vs MoE vs sparse-MoE
+    pairing_key: suite_context
+    cohorts:
+      - name: dense
+        names: [local-mlx-qwen]
+      - name: moe
+        names: [local-mlx-qwen3-coder-30b]
+      - name: sparse-moe
+        names: [local-mlx-qwen3-coder-next-3bit]
+    verdicts:
+      - id: moe-decode-gain
+        metric: median_decode_tokens_per_second
+        threshold: 1.50
+        unit: ratio
+        margin: 0.10
+        sides: [moe, dense]
+"""
+
+
+def test_verdict_parses_margin_and_sides(tmp_path) -> None:
+    catalog = load_comparisons(_write(tmp_path, THREE_COHORT_AXIS))
+
+    assert catalog.errors == ()
+    verdict = catalog.axis("architecture").verdicts[0]
+    assert verdict.kind == "pair"
+    assert verdict.margin == pytest.approx(0.10)
+    assert verdict.sides == ("moe", "dense")
+
+
+def test_verdict_kind_must_be_known(tmp_path) -> None:
+    path = _write(
+        tmp_path,
+        VALID_AXIS.replace("unit: ratio", "unit: ratio\n        kind: vibes"),
+    )
+
+    catalog = load_comparisons(path)
+
+    assert catalog.axes == ()
+    assert "comparisons[0].verdicts[0].kind" in catalog.errors[0]
+
+
+def test_verdict_margin_must_be_non_negative(tmp_path) -> None:
+    path = _write(
+        tmp_path,
+        VALID_AXIS.replace("unit: ratio", "unit: ratio\n        margin: -0.1"),
+    )
+
+    catalog = load_comparisons(path)
+
+    assert catalog.axes == ()
+    assert "comparisons[0].verdicts[0].margin" in catalog.errors[0]
+
+
+def test_verdict_sides_must_name_declared_cohorts(tmp_path) -> None:
+    path = _write(tmp_path, THREE_COHORT_AXIS.replace("[moe, dense]", "[moe, gigantic]"))
+
+    catalog = load_comparisons(path)
+
+    assert catalog.axes == ()
+    assert "comparisons[0].verdicts[0].sides" in catalog.errors[0]
+    assert "gigantic" in catalog.errors[0]
+
+
+def test_verdict_sides_must_be_exactly_two(tmp_path) -> None:
+    path = _write(
+        tmp_path, THREE_COHORT_AXIS.replace("[moe, dense]", "[moe, dense, sparse-moe]")
+    )
+
+    catalog = load_comparisons(path)
+
+    assert catalog.axes == ()
+    assert "comparisons[0].verdicts[0].sides" in catalog.errors[0]
+
+
+def test_pair_verdict_on_multi_cohort_axis_requires_sides(tmp_path) -> None:
+    # Without declared sides a pair rule over three cohorts is ambiguous —
+    # rejected at load time rather than guessed at render time.
+    path = _write(
+        tmp_path,
+        THREE_COHORT_AXIS.replace("        margin: 0.10\n", "").replace(
+            "        sides: [moe, dense]\n", ""
+        ),
+    )
+
+    catalog = load_comparisons(path)
+
+    assert catalog.axes == ()
+    assert "comparisons[0].verdicts[0].sides" in catalog.errors[0]
+
+
+def test_non_pair_verdict_rejects_sides(tmp_path) -> None:
+    path = _write(
+        tmp_path,
+        THREE_COHORT_AXIS.replace(
+            "        sides: [moe, dense]",
+            "        sides: [moe, dense]\n        kind: quality_bar",
+        ),
+    )
+
+    catalog = load_comparisons(path)
+
+    assert catalog.axes == ()
+    assert "comparisons[0].verdicts[0].sides" in catalog.errors[0]
+
+
+# ---------------------------------------------------------------------------
 # file-level failures raise like the other loaders
 # ---------------------------------------------------------------------------
 
@@ -430,11 +549,11 @@ def test_verdict_metrics_match_compare_verdict_inputs() -> None:
 
 
 # ---------------------------------------------------------------------------
-# the shipped catalog: seven proposition axes, all populated from the matrix
+# the shipped catalog: the proposition axes, all populated from the matrix
 # ---------------------------------------------------------------------------
 
 
-def test_shipped_catalog_declares_the_seven_axes() -> None:
+def test_shipped_catalog_declares_the_expected_axes() -> None:
     catalog = load_comparisons("configs/comparisons.yaml")
 
     assert catalog.errors == ()
@@ -500,3 +619,26 @@ def test_shipped_verdicts_have_unique_ids_per_axis() -> None:
     for axis in catalog.axes:
         ids = [verdict.id for verdict in axis.verdicts]
         assert len(ids) == len(set(ids)), axis.id
+
+
+def test_shipped_canary_axis_declares_a_drift_tolerance() -> None:
+    # Story 17.2-002 AC: the canary axis view calls out drift beyond a
+    # *declared* tolerance versus the previous run.
+    axis = load_comparisons("configs/comparisons.yaml").axis("canary")
+
+    assert axis is not None
+    drift = [v for v in axis.verdicts if v.kind == "canary_drift"]
+    assert drift
+    assert drift[0].metric == "pass_at_1"
+    assert drift[0].threshold > 0
+    assert drift[0].unit == "pp"
+
+
+def test_shipped_verdicts_declare_noise_margins() -> None:
+    # Every shipped rule must state the margin inside which its conclusion is
+    # phrased as inconclusive — silence over spin near the threshold.
+    catalog = load_comparisons("configs/comparisons.yaml")
+
+    for axis in catalog.axes:
+        for verdict in axis.verdicts:
+            assert verdict.margin > 0, (axis.id, verdict.id)
