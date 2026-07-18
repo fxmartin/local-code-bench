@@ -529,9 +529,10 @@ def settings_write_action(ctx: DashboardContext, body: bytes) -> tuple[int, dict
     conflict-then-validate ordering, so a stale submission is refused with 409
     (blocked until the group reloads) before any validation noise. A landed
     write appends one change-log line — file, domain, and a summary naming key
-    paths only, never values — and the response carries the changed domains
-    plus the dashboard panels that consume them, which is all a client needs
-    to refresh without a restart (the panels re-read config per request).
+    paths only, never values — then reloads the in-memory registry the write
+    invalidated (:func:`_adopt_landed_write`) so the running dashboard serves
+    post-edit values, and the response carries the changed domains plus the
+    dashboard panels that consume them so a client knows what to re-poll.
     """
 
     if ctx.settings_store is None:
@@ -577,6 +578,7 @@ def settings_write_action(ctx: DashboardContext, body: bytes) -> tuple[int, dict
             summary=summary,
             backup=result.backup_path.name,
         )
+    _adopt_landed_write(ctx, config_id)
     domains = [config_id]
     return 200, {
         "ok": True,
@@ -588,6 +590,37 @@ def settings_write_action(ctx: DashboardContext, body: bytes) -> tuple[int, dict
         "refresh_panels": settings_changes.affected_panels(domains),
         "change": change,
     }
+
+
+def _adopt_landed_write(ctx: DashboardContext, config_id: str) -> None:
+    """Reload the in-memory registry a landed settings write invalidated (15.4-001).
+
+    The models/inferencers registries are startup snapshots shared by reference
+    between the context and the launch orchestrator, so the reload swaps the
+    dict *contents* in place — every holder (launcher catalog, chat, tier view,
+    inventory, the next ``/api/run`` launch) then serves post-edit values
+    without a restart. The agents/suites surfaces are re-read from disk per
+    request already and need no reload. The store validated the content with
+    these same loaders before writing, so a reload failure here is unexpected;
+    it degrades to keeping the previous snapshot rather than breaking a panel.
+    """
+
+    try:
+        if config_id == "models":
+            reloaded = load_models(ctx.models_path)
+            ctx.models.clear()
+            ctx.models.update(reloaded)
+        elif config_id == "inferencers":
+            reloaded_configs = load_inferencers(ctx.inferencers_path)
+            ctx.configs.clear()
+            ctx.configs.update(reloaded_configs)
+            # The external-tier and auto-tier blocks live in the same file but
+            # sit in scalar frozen fields, so they are replaced, not mutated.
+            external_cfg, autotier_cfg = _load_tier_configs_safe(ctx.inferencers_path, None)
+            object.__setattr__(ctx, "external_cfg", external_cfg)
+            object.__setattr__(ctx, "autotier_cfg", autotier_cfg)
+    except (ConfigError, OSError):
+        return
 
 
 def settings_changelog_action(ctx: DashboardContext) -> tuple[int, dict]:
@@ -1518,6 +1551,10 @@ def serve_dashboard(
         models = _load_models_safe(models_path, progress)
         external_cfg, autotier_cfg = _load_tier_configs_safe(config_path, progress)
         optimizer_configs = _load_optimizers_safe(optimizers_path, progress)
+        # The orchestrator and the context deliberately share these dict
+        # objects: a landed settings write reloads their contents in place
+        # (_adopt_landed_write), which is what lets launches pick up post-edit
+        # model configs without a restart (story 15.4-001).
         orchestrator = launch.RunOrchestrator(
             models=models,
             inferencers=configs,
@@ -1539,11 +1576,15 @@ def serve_dashboard(
             models_path=models_path,
             agents_path=agents_path,
             inferencers_path=config_path,
+            # Story 15.4-001: writes go through the 15.2-001 store (config dir =
+            # where the registered files live) and land in the change log under
+            # the same state dir the tiering stores use. The store assumes all
+            # registered configs sit in models.yaml's directory under their
+            # canonical names; a CLI override pointing a config elsewhere fails
+            # safe (the tab's hash never matches, so writes answer 409).
             settings_store=default_settings_store(Path(models_path).parent),
             optimizer_configs=optimizer_configs,
             optimizer_state_dir=optimizer_state_dir,
-            # Story 15.4-001: every validated write also lands in the change log
-            # under the same state dir the tiering stores use.
             settings_changelog=SettingsChangeLog(state_dir),
         )
         server = make_server(ctx, host=host, port=port)

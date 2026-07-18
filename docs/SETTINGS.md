@@ -96,6 +96,14 @@ simple rotation: once it holds 500 lines it is renamed to
 file starts. The Settings tab shows the recent entries at the bottom of the
 page.
 
+A landed write is applied to the running dashboard immediately: the in-memory
+model/inferencer registries (and the external/auto-tier blocks parsed from
+`inferencers.yaml`) reload in place, so the launcher catalog, chat, tier view,
+inventory, and the next benchmark launch all use the post-edit values without
+a restart. A run already in flight keeps the model config it resolved at
+launch. The write response names the changed domains and the panels a client
+should re-poll.
+
 The Settings tab also polls each config file's content hash; if a file changes
 outside the dashboard while the tab is open, the affected group is flagged
 with a "changed on disk — reload" banner and any submission carrying the stale

@@ -13,9 +13,10 @@ Two small pieces the 15.2-001 write pipeline plugs into:
 
 - :data:`DOMAIN_PANELS` / :func:`affected_panels` — the "which domains
   changed" signal: for each registered config domain, the dashboard panels
-  that consume it and should refresh after a write. The panels already re-read
-  their config surfaces per request, so naming them in the write response is
-  all a client needs to refresh without a restart.
+  that consume it and should refresh after a write. A landed write also
+  reloads the in-memory models/inferencers registries the dashboard serves
+  from (``unified_dashboard._adopt_landed_write``), so a client re-polling
+  the named panels receives post-edit values without a restart.
 """
 
 from __future__ import annotations

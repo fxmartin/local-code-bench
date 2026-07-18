@@ -4,6 +4,7 @@ import json
 import threading
 import urllib.error
 import urllib.request
+from dataclasses import replace
 
 import pytest
 
@@ -285,6 +286,60 @@ def test_lock_is_released_after_a_run_completes(tmp_path, monkeypatch):
     assert code == 202
     assert second["run_id"] != first["run_id"]
     orch.join(timeout=5)
+
+
+def test_launch_uses_the_current_registry_entry_at_launch_time(tmp_path, monkeypatch):
+    # Story 15.4-001: a landed settings write reloads the shared models dict in
+    # place, so the next launch must pick up the post-edit entry.
+    calls: list[str] = []
+    _patch_backends(monkeypatch, calls=calls)
+    seen: list[str] = []
+
+    def _recording_run(*, models, tasks, result_path, progress=None, **kw):
+        seen.extend(m.model_id for m in models)
+        return {"passed": 1, "failed": 0, "infra_failed": 0, "skipped": 0}
+
+    monkeypatch.setattr(launch.runner, "run_endpoint_suite", _recording_run)
+    registry = {"qwen": _model()}
+    orch = _orchestrator(tmp_path, models=registry)
+    registry["qwen"] = replace(_model(), model_id="qwen-v2")
+
+    code, _payload = orch.launch(model="qwen", inferencer="dflash", suites=["humaneval"])
+
+    assert code == 202
+    orch.join(timeout=5)
+    assert seen == ["qwen-v2"]
+
+
+def test_in_flight_run_is_pinned_to_its_launch_time_model_config(tmp_path, monkeypatch):
+    # A settings write landing mid-run must not swap the running benchmark's
+    # model config under it — the run keeps what it resolved at launch.
+    calls: list[str] = []
+    gate = threading.Event()
+    seen: list[str] = []
+    _patch_backends(monkeypatch, calls=calls)
+
+    def _blocking_load(name, *, cache_dir):
+        gate.wait(timeout=5)
+        return [_task(name, f"{name}/0")]
+
+    monkeypatch.setattr(launch.tasks, "load_suite", _blocking_load)
+
+    def _recording_run(*, models, tasks, result_path, progress=None, **kw):
+        seen.extend(m.model_id for m in models)
+        return {"passed": 1, "failed": 0, "infra_failed": 0, "skipped": 0}
+
+    monkeypatch.setattr(launch.runner, "run_endpoint_suite", _recording_run)
+    registry = {"qwen": _model()}
+    orch = _orchestrator(tmp_path, models=registry)
+
+    code, _payload = orch.launch(model="qwen", inferencer="dflash", suites=["humaneval"])
+    assert code == 202
+    registry["qwen"] = replace(_model(), model_id="qwen-v2")  # write lands mid-run
+    gate.set()
+    orch.join(timeout=5)
+
+    assert seen == ["qwen-id"]
 
 
 def test_failed_inferencer_start_releases_the_lock(tmp_path, monkeypatch):

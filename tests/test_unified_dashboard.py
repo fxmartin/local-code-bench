@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from local_code_bench.config import InferencerConfig, ModelConfig, TokenPrices
+from local_code_bench.config import ConfigError, InferencerConfig, ModelConfig, TokenPrices
 from local_code_bench.engine_provenance import EngineProvenance
 from local_code_bench.inferencers import manager
 from local_code_bench.inferencers.manager import InferencerStatus
@@ -3022,6 +3022,70 @@ def test_settings_write_names_changed_domains_and_panels(tmp_path: Path) -> None
     for panel in ("models list", "launcher", "tier view", "inventory"):
         assert panel in payload["refresh_panels"]
     assert (tmp_path / "models.yaml").read_text(encoding="utf-8") == content
+
+
+def test_settings_write_reloads_the_models_registry_in_place(tmp_path: Path) -> None:
+    # AC2: the launcher catalog, chat, tier view, and orchestrator all hold the
+    # startup ``ctx.models`` dict; a landed write must swap its *contents* (same
+    # object) so every holder serves post-edit values without a restart.
+    ctx = _editable_settings_ctx(tmp_path)
+    registry = ctx.models
+    content = _SETTINGS_MODELS_YAML.replace("concurrency: 8", "concurrency: 4")
+
+    resp = _post_write(
+        ctx,
+        {"config": "models", "expected_hash": _current_models_hash(tmp_path), "content": content},
+    )
+
+    assert resp.status == 200
+    assert ctx.models is registry  # same object: holders observe the reload
+    assert set(ctx.models) == {"local-mlx", "cloud-coder"}
+    assert ctx.models["cloud-coder"].concurrency == 4
+    names = {m["name"] for m in ud.catalog_action(ctx)[1]["models"]}
+    assert names == {"local-mlx", "cloud-coder"}
+
+
+def test_settings_write_reloads_inferencers_and_tier_configs(tmp_path: Path) -> None:
+    from local_code_bench.settings_store import content_hash
+
+    ctx = _editable_settings_ctx(tmp_path)
+    registry = ctx.configs
+    expected = content_hash((tmp_path / "inferencers.yaml").read_text(encoding="utf-8"))
+    content = _SETTINGS_INFERENCERS_YAML + "external_repo:\n  root: /Volumes/ext/models\n"
+
+    resp = _post_write(
+        ctx, {"config": "inferencers", "expected_hash": expected, "content": content}
+    )
+
+    assert resp.status == 200
+    assert ctx.configs is registry
+    assert set(ctx.configs) == {"mlx-lm"}
+    # the external/auto-tier blocks live in the same file and refresh with it
+    assert ctx.external_cfg is not None
+    assert ctx.external_cfg.root == "/Volumes/ext/models"
+
+
+def test_settings_write_survives_a_registry_reload_failure(tmp_path: Path, monkeypatch) -> None:
+    ctx = _editable_settings_ctx(tmp_path)
+    before = dict(ctx.models)
+
+    def _boom(path: object) -> None:
+        raise ConfigError("reload failed")
+
+    monkeypatch.setattr(ud, "load_models", _boom)
+    resp = _post_write(
+        ctx,
+        {
+            "config": "models",
+            "expected_hash": _current_models_hash(tmp_path),
+            "content": _SETTINGS_MODELS_YAML + "# tuned\n",
+        },
+    )
+
+    # the write itself landed; a reload failure keeps the previous snapshot
+    # serving instead of surfacing a broken registry
+    assert resp.status == 200
+    assert dict(ctx.models) == before
 
 
 def test_settings_write_appends_one_changelog_line(tmp_path: Path) -> None:
