@@ -34,6 +34,7 @@ from .config import (
     load_models,
     resolve_health_url,
 )
+from .agents import supported_harness_kinds
 from .suite_catalog import suite_catalog
 
 #: Why local endpoint concurrency may not be raised (Benchmark Protocol v1).
@@ -51,6 +52,19 @@ PROTOCOL_SAMPLING_RATIONALE = (
 #: The fixed sampling parameters every benchmark run records (see ``metadata.py``).
 PROTOCOL_TEMPERATURE = 0.0
 PROTOCOL_SEED = 0
+
+#: Editor note per editable group (Story 15.3-003): what the group's source file
+#: does and does not cover, shown next to the edit form.
+EDITABLE_GROUP_NOTES = {
+    "suites": (
+        "built-in suites are code, not config — this file registers custom "
+        "suites only (id, label, dataset source, format)"
+    ),
+    "agents": (
+        "entries configure the harness command, workspace sandbox policy, and "
+        "timeouts; the invocation shape per harness type is fixed in code"
+    ),
+}
 
 #: Hosts that identify a locally served endpoint (protocol-locked concurrency).
 _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -118,17 +132,22 @@ def _group(
 ) -> dict[str, Any]:
     """Build one settings group, degrading load failures to an inline error."""
 
+    group: dict[str, Any] = {
+        "id": group_id,
+        "label": label,
+        "source": str(source),
+        "error": None,
+        "items": [],
+        # Story 15.3-003: groups whose source file has a dashboard editor. The
+        # group id doubles as the settings-store config id the editor targets.
+        "editable": group_id in EDITABLE_GROUP_NOTES,
+        "editable_note": EDITABLE_GROUP_NOTES.get(group_id),
+    }
     try:
-        items = build()
+        group["items"] = build()
     except (ConfigError, OSError) as exc:
-        return {
-            "id": group_id,
-            "label": label,
-            "source": str(source),
-            "error": str(exc),
-            "items": [],
-        }
-    return {"id": group_id, "label": label, "source": str(source), "error": None, "items": items}
+        group["error"] = str(exc)
+    return group
 
 
 def _field(
@@ -296,9 +315,14 @@ def _agent_items(
     agents: dict[str, AgentConfig], environ: Mapping[str, str]
 ) -> list[dict[str, Any]]:
     items = []
+    supported = ", ".join(supported_harness_kinds()) or "(none)"
+    type_rationale = (
+        "the agent runner treats the harness type as fixed — adapters are code; "
+        f"supported types: {supported}"
+    )
     for cfg in agents.values():
         fields = [
-            _field("type", cfg.type),
+            _field("type", cfg.type, locked=True, rationale=type_rationale),
             _field("command", cfg.command),
             _field("sandbox", cfg.sandbox),
             _field("timeout seconds", cfg.timeout_seconds),
