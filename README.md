@@ -958,6 +958,30 @@ signing identity — live in `configs/build.yaml`, and
 app's about panel shows both the app version (`CFBundleShortVersionString`,
 mirroring `pyproject.toml`) and the bundled harness version.
 
+There are two ways to install, functionally identical (same harness, same
+dashboard, same data locations — the app just bundles its own runtime):
+
+- **Download the app**: grab `LocalCodeBench-<version>.dmg` from the GitHub
+  release, open it, drag Local Code Bench to Applications, double-click. The
+  bundle is Developer-ID signed, notarized, and stapled, so a clean machine
+  opens it with no Gatekeeper friction and needs no Python or uv installed.
+- **Run from a checkout**: `uv run bench dashboard` — the same service and UI,
+  using the checkout's environment, configs, and results.
+
+`scripts/distribute-macos-app.sh` produces that DMG from a Developer-ID-signed
+build: it submits via `xcrun notarytool` (keychain profile `notary_profile` in
+`configs/build.yaml`), staples the ticket, packages the drag-install DMG,
+notarizes + staples the DMG too, and verifies both with `spctl --assess`. It
+refuses ad-hoc-signed bundles and enforces that the bundle, the bundled
+harness wheel, and `pyproject.toml` agree on the version, so every published
+DMG corresponds to a tagged harness release (`vX.Y.Z`). It also writes
+`dist/RELEASE-NOTES-<version>.md` stating the bundled harness/CPython versions
+and the externals the app detects but never bundles (inference engines, agent
+CLIs, proxies, uv). On launch the app checks the GitHub releases API for a
+newer version (best-effort, silent offline); if one exists the menu bar shows
+an unobtrusive "Update Available" entry linking to the download — never an
+auto-install.
+
 The testable logic (startup state machine, log tailing, data-location store,
 link/download policy, service launch plan) lives in the `LocalCodeBenchKit`
 library; `LocalCodeBenchChecks` is an assertion-based runner used instead of

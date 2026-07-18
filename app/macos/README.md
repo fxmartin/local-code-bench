@@ -54,6 +54,12 @@ size/position restored across launches, and no browser tab to lose.
   relevant dashboard section (Run / Inventory). Notifications need a real
   `.app` bundle; unbundled `swift run` dev builds skip them (menu-bar status
   still works).
+- **Update hint.** On launch the app asks the GitHub releases API (repo
+  stamped into Info.plist as `LCBGitHubRepo` at build time) whether a newer
+  release exists — best-effort and silent on any failure, so offline launches
+  see nothing. When one exists, the menu bar gains a single
+  "Update Available — Download …" entry that opens the release page in the
+  browser; there is no auto-install. Unbundled dev builds skip the check.
 - **Minimal bridging.** Same-origin navigations render in the web view;
   external links open in the default browser; downloads (e.g. the Epic-17
   comparison PDF) go through the standard save panel. There is no JS↔Swift
@@ -63,7 +69,7 @@ size/position restored across launches, and no browser tab to lose.
 
 | Target | Role |
 |--------|------|
-| `LocalCodeBenchKit` | Pure-Foundation logic: `StartupTracker` (startup state machine), `RestartPolicy` (crash/backoff rules), `StaleServiceState`, `BundledRuntime`, `LogTail`, `DataLocationStore` / `CheckoutValidation`, `NavigationPolicy`, `ServiceLaunchPlan`, the `ServiceController` process/supervision glue, and the status pipeline (`RigSnapshot` parsing, `StatusEventDetector` edge detection, `MenuBarStatus` / `NotificationContent` formatting, `StatusPollSettings`, `StatusPoller`). |
+| `LocalCodeBenchKit` | Pure-Foundation logic: `StartupTracker` (startup state machine), `RestartPolicy` (crash/backoff rules), `StaleServiceState`, `BundledRuntime`, `LogTail`, `DataLocationStore` / `CheckoutValidation`, `NavigationPolicy`, `ServiceLaunchPlan`, the `ServiceController` process/supervision glue, and the status pipeline (`RigSnapshot` parsing, `StatusEventDetector` edge detection, `MenuBarStatus` / `NotificationContent` formatting, `StatusPollSettings`, `StatusPoller`), and `UpdateCheck` (release-hint decision + best-effort fetch). |
 | `LocalCodeBench` | The SwiftUI app: `WindowGroup` + `MenuBarExtra`, `WKWebView` wrapper, loading/failure/first-run views, window-frame autosave, `UNUserNotificationCenter` glue (`StatusNotifier`). |
 | `LocalCodeBenchChecks` | The kit's test suite as an assertion-based executable. |
 
@@ -100,6 +106,33 @@ release mode, downloads a pinned, checksum-verified relocatable CPython
 - `CFBundleShortVersionString` mirrors `pyproject.toml`'s version, and the
   About panel shows both the app version and the bundled harness version
   (read from `Contents/Resources/harness-version`).
+
+## Distribution
+
+`scripts/distribute-macos-app.sh` turns a Developer-ID-signed build into the
+downloadable release artifact (Story 18.3-002):
+
+1. Refuses ad-hoc-signed bundles (they are labeled unsigned-for-distribution
+   by the build script, and Apple would reject them anyway).
+2. Enforces release alignment: the bundle's `CFBundleShortVersionString`, the
+   bundled harness wheel, and `pyproject.toml`'s PSR-managed version must all
+   agree, so every published DMG corresponds to a tagged harness release
+   (`vX.Y.Z`).
+3. Submits the app to Apple with `xcrun notarytool submit --wait` using the
+   `notary_profile` keychain profile from `configs/build.yaml` (create it once
+   with `xcrun notarytool store-credentials`), gating on `status: Accepted`.
+4. Staples the ticket, wraps the app in a drag-install DMG
+   (`dist/LocalCodeBench-<version>.dmg`, with an `/Applications` symlink),
+   then notarizes and staples the DMG too.
+5. Verifies both with Gatekeeper itself: `spctl --assess --type execute` on
+   the app and `spctl --assess --type open` on the DMG — so a clean machine
+   opens the download with a normal double-click.
+6. Writes `dist/RELEASE-NOTES-<version>.md` stating the bundled harness and
+   CPython versions and the detected-not-bundled externals (inference
+   engines, agent CLIs, proxies, `uv`).
+
+`NOTARY_PROFILE` / `GITHUB_REPO` env vars override the config pins, and
+`--print-config` prints the resolved values without touching Apple's servers.
 
 `swift test` is deliberately not used: the XCTest / Swift Testing runtime ships
 only with full Xcode, and the benchmark machine has Command Line Tools only.

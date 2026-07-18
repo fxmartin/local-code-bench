@@ -333,6 +333,107 @@ var passes = 0
         "whitespace-only harness-version file -> nil")
 }
 
+// MARK: - UpdateCheck
+
+@MainActor func checkUpdateCheck() async {
+    // Version comparison: strictly-newer numeric tags hint, everything else
+    // (equal, older, non-numeric, dev builds) stays silent.
+    expect(
+        UpdateCheck.isNewer(remoteTag: "v0.76.0", currentVersion: "0.75.0"),
+        "newer minor tag is newer")
+    expect(
+        UpdateCheck.isNewer(remoteTag: "v0.75.1", currentVersion: "0.75.0"),
+        "newer patch tag is newer")
+    expect(
+        UpdateCheck.isNewer(remoteTag: "v1.0", currentVersion: "0.75.0"),
+        "shorter-but-larger tag is newer")
+    expect(
+        !UpdateCheck.isNewer(remoteTag: "v0.75.0", currentVersion: "0.75.0"),
+        "equal versions do not hint")
+    expect(
+        !UpdateCheck.isNewer(remoteTag: "v0.75", currentVersion: "0.75.0"),
+        "equal versions of different lengths do not hint")
+    expect(
+        !UpdateCheck.isNewer(remoteTag: "v0.74.9", currentVersion: "0.75.0"),
+        "older tag does not hint")
+    expect(
+        !UpdateCheck.isNewer(remoteTag: "nightly", currentVersion: "0.75.0"),
+        "non-numeric tag stays silent")
+    expect(
+        !UpdateCheck.isNewer(remoteTag: "v0.76.0", currentVersion: "dev"),
+        "dev build stays silent")
+
+    // Payload parsing: GitHub's releases/latest JSON, malformed data, and a
+    // 404-style body must all be handled without error.
+    let releaseJSON = #"""
+    {"tag_name": "v0.76.0",
+     "html_url": "https://github.com/fx/lcb/releases/tag/v0.76.0"}
+    """#
+    expectEqual(
+        UpdateCheck.parseLatestRelease(Data(releaseJSON.utf8)),
+        LatestRelease(
+            tag: "v0.76.0",
+            url: URL(string: "https://github.com/fx/lcb/releases/tag/v0.76.0")),
+        "release payload parses tag and html_url")
+    expectEqual(
+        UpdateCheck.parseLatestRelease(Data("not json".utf8)), nil,
+        "malformed payload parses to nil")
+    expectEqual(
+        UpdateCheck.parseLatestRelease(Data(#"{"message": "Not Found"}"#.utf8)), nil,
+        "payload without tag_name parses to nil")
+
+    // Hint decision: only a strictly newer release produces a hint; the link
+    // prefers the payload's html_url, falling back to the releases page.
+    expectEqual(
+        UpdateCheck.hint(
+            currentVersion: "0.75.0", repo: "fx/lcb",
+            releaseData: Data(releaseJSON.utf8)),
+        UpdateHint(
+            version: "0.76.0",
+            url: URL(string: "https://github.com/fx/lcb/releases/tag/v0.76.0")!),
+        "newer release hints with stripped version and release url")
+    expectEqual(
+        UpdateCheck.hint(
+            currentVersion: "0.75.0", repo: "fx/lcb",
+            releaseData: Data(#"{"tag_name": "v0.76.0"}"#.utf8)),
+        UpdateHint(
+            version: "0.76.0",
+            url: URL(string: "https://github.com/fx/lcb/releases/latest")!),
+        "missing html_url falls back to the releases page")
+    expectEqual(
+        UpdateCheck.hint(
+            currentVersion: "0.76.0", repo: "fx/lcb",
+            releaseData: Data(releaseJSON.utf8)),
+        nil, "current version does not hint")
+    expectEqual(
+        UpdateCheck.hint(
+            currentVersion: "0.75.0", repo: nil,
+            releaseData: Data(releaseJSON.utf8)),
+        nil, "no configured repo (dev build) does not hint")
+    expectEqual(
+        UpdateCheck.hint(
+            currentVersion: nil, repo: "fx/lcb",
+            releaseData: Data(releaseJSON.utf8)),
+        nil, "no bundle version (dev build) does not hint")
+
+    expectEqual(
+        UpdateCheck.releasesAPIURL(repo: "fx/lcb"),
+        URL(string: "https://api.github.com/repos/fx/lcb/releases/latest"),
+        "releases API url is built from the repo")
+
+    // The async check must bail out before touching the network for dev
+    // builds — no repo, no version, or a non-release version string.
+    expectEqual(
+        await UpdateCheck.check(currentVersion: "0.75.0", repo: nil), nil,
+        "check without a repo resolves nil")
+    expectEqual(
+        await UpdateCheck.check(currentVersion: nil, repo: "fx/lcb"), nil,
+        "check without a current version resolves nil")
+    expectEqual(
+        await UpdateCheck.check(currentVersion: "dev", repo: "fx/lcb"), nil,
+        "check in a dev build resolves nil")
+}
+
 // MARK: - RestartPolicy
 
 @MainActor func checkRestartPolicy() {
@@ -659,6 +760,7 @@ do {
     try checkServiceLaunchPlan()
     try checkBundledRuntime()
     try checkAboutInfo()
+    await checkUpdateCheck()
     checkRestartPolicy()
     try checkStaleServiceState()
     checkRigSnapshotParsing()
