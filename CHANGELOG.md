@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.81.0 (2026-07-18)
+
+### Features
+
+- **macos-native-app**: Macos conveniences (#18.2-002)
+  ([`02587fc`](https://github.com/fxmartin/local-code-bench/commit/02587fcfe50b1b81e4ff4e313cc06c91e3e8e848))
+
+### Testing
+
+- **macos-native-app**: Macos conveniences (#18.2-002)
+  ([`9d26327`](https://github.com/fxmartin/local-code-bench/commit/9d2632750a26c67dac0ebf47037c1421b5244771))
+
+
 ## v0.80.0 (2026-07-18)
 
 ### Features
