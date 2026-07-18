@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.82.0 (2026-07-18)
+
+### Bug Fixes
+
+- **settings**: Annotate harness panel error value as str | None
+  ([`714aa05`](https://github.com/fxmartin/local-code-bench/commit/714aa05808de1f35a961df3d3efe1e82448c04c7))
+
+### Features
+
+- **settings-management**: Harness defaults group in the (#15.5-002)
+  ([`7cc9c9d`](https://github.com/fxmartin/local-code-bench/commit/7cc9c9dedfd4b8c8addca0637e41c9e169e9600b))
+
+
 ## v0.81.0 (2026-07-18)
 
 ### Features
