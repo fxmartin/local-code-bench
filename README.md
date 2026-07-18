@@ -687,8 +687,11 @@ pass `--input` one or more times to view specific files instead. `--config` and
 localhost only and exposes no API keys, `.env` contents, or host paths. Dashboard
 process state lives at `.runtime/dashboard.json`; override it with `--state-file`.
 Stop validates the saved process identity before sending SIGTERM, so stale state or
-PID reuse cannot kill an unrelated process. This supersedes
-`bench inferencer dashboard`, which remains available.
+PID reuse cannot kill an unrelated process. `--exit-with-parent` (used by the macOS
+app, which runs the dashboard as a supervised child) makes the process terminate
+itself as soon as its parent dies, so a force-quit of the app cannot leave an
+orphaned dashboard. This supersedes `bench inferencer dashboard`, which remains
+available.
 
 A `POST /api/chat` endpoint streams a model reply token-by-token over Server-Sent
 Events, so you can smoke-test a model without writing a benchmark. Post a JSON body
@@ -791,6 +794,15 @@ first run it asks where benchmark data lives: a private
 `~/Library/Application Support/LocalCodeBench` directory, or an existing
 `local-code-bench` checkout so configs and results are shared with the CLI.
 
+The app supervises the service it launches: a crash is restarted with
+exponential backoff, repeated crash-looping surfaces the service log instead of
+restarting forever, and quitting kills the whole process group. App-launched
+services run with `bench dashboard --exit-with-parent`, so even a force-quit of
+the app leaves no orphaned harness process behind. A dashboard already running
+from the CLI is attached to instead of spawning a second one — the menu bar
+labels the mode (`app-managed` vs `CLI-owned`) and quitting the app leaves a
+CLI-owned service untouched.
+
 It is a Swift Package (open `app/macos/Package.swift` in Xcode, or build from
 the CLI — Command Line Tools are enough, no full Xcode required):
 
@@ -800,6 +812,10 @@ swift build                        # compile the app + kit
 swift run LocalCodeBench           # run the shell (unbundled, for development)
 swift run LocalCodeBenchChecks     # run the kit's test suite
 ```
+
+`scripts/build-macos-app.sh` assembles a self-contained `dist/LocalCodeBench.app`
+that embeds a relocatable CPython (python-build-standalone) with the harness
+wheel installed, so the app runs on a Mac with no Python or uv installed.
 
 The testable logic (startup state machine, log tailing, data-location store,
 link/download policy, service launch plan) lives in the `LocalCodeBenchKit`

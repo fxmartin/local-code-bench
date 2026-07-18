@@ -213,27 +213,158 @@ var passes = 0
 // MARK: - ServiceLaunchPlan
 
 @MainActor func checkServiceLaunchPlan() throws {
+    // Every app-launched service gets --exit-with-parent, so a force-quit of
+    // the app can never leave an orphaned dashboard behind.
+    let dashboardArgs = [
+        "dashboard", "--host", "127.0.0.1", "--port", "8765", "--exit-with-parent",
+    ]
+
     let checkout = URL(fileURLWithPath: "/Users/fx/dev/local-code-bench")
     let plan = ServiceLaunchPlan.plan(
         for: .checkout(checkout), host: "127.0.0.1", port: 8765)
     expectEqual(plan.executable, "/usr/bin/env", "checkout plan runs through env")
     expectEqual(
         plan.arguments,
-        ["uv", "run", "bench", "dashboard", "--host", "127.0.0.1", "--port", "8765"],
+        ["uv", "run", "bench"] + dashboardArgs,
         "checkout plan uses uv run inside the checkout")
     expectEqual(plan.workingDirectory, checkout, "checkout plan cwd is the checkout")
     expect(
         plan.logFile.path.hasSuffix("dashboard-service.log"),
         "checkout plan logs to dashboard-service.log")
+    expectEqual(
+        plan.stateFile, checkout.appendingPathComponent(".runtime/dashboard.json"),
+        "plan resolves the dashboard_lifecycle state file against its cwd")
 
     let appSupport = URL(fileURLWithPath: "/tmp/lcb-app-support")
     let defaultPlan = ServiceLaunchPlan.plan(
         for: .appSupportDefault, host: "127.0.0.1", port: 8765, appSupportDirectory: appSupport)
     expectEqual(
         defaultPlan.arguments,
-        ["bench", "dashboard", "--host", "127.0.0.1", "--port", "8765"],
+        ["bench"] + dashboardArgs,
         "app-support plan calls the installed bench CLI directly")
     expectEqual(defaultPlan.workingDirectory, appSupport, "app-support plan cwd is app support")
+
+    // With a bundled runtime the CLI is launched as a module: console-script
+    // shims carry absolute build-time shebangs, `-m` works from anywhere.
+    let runtime = BundledRuntime(
+        python: URL(fileURLWithPath: "/Applications/LCB.app/Contents/Resources/python/bin/python3"))
+    let bundledPlan = ServiceLaunchPlan.plan(
+        for: .checkout(checkout), host: "127.0.0.1", port: 8765,
+        runtime: runtime, appSupportDirectory: appSupport)
+    expectEqual(
+        bundledPlan.executable, runtime.python.path,
+        "bundled plan runs the embedded interpreter")
+    expectEqual(
+        bundledPlan.arguments,
+        ["-m", "local_code_bench"] + dashboardArgs,
+        "bundled plan launches the CLI as a module")
+    expectEqual(
+        bundledPlan.workingDirectory, checkout,
+        "bundled plan keeps the data location's cwd")
+}
+
+// MARK: - BundledRuntime
+
+@MainActor func checkBundledRuntime() throws {
+    expectEqual(
+        BundledRuntime.locate(resourcesDirectory: nil), nil,
+        "no resources directory (dev build) -> no bundled runtime")
+
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    expectEqual(
+        BundledRuntime.locate(resourcesDirectory: dir), nil,
+        "resources without python/bin/python3 -> no bundled runtime")
+
+    let bin = dir.appendingPathComponent("python/bin")
+    try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+    let python = bin.appendingPathComponent("python3")
+    try "#!/bin/sh\n".write(to: python, atomically: true, encoding: .utf8)
+
+    expectEqual(
+        BundledRuntime.locate(resourcesDirectory: dir), nil,
+        "non-executable python3 -> no bundled runtime")
+
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: python.path)
+    expectEqual(
+        BundledRuntime.locate(resourcesDirectory: dir), BundledRuntime(python: python),
+        "executable Resources/python/bin/python3 is located")
+}
+
+// MARK: - RestartPolicy
+
+@MainActor func checkRestartPolicy() {
+    let policy = RestartPolicy(
+        maxConsecutiveCrashes: 3, stabilityWindow: 60, baseDelay: 1, maxDelay: 30)
+    var state = RestartState()
+
+    expectEqual(
+        state.recordCrash(at: 100, policy: policy), .restart(after: 1, attempt: 1),
+        "first crash restarts after the base delay")
+    expectEqual(
+        state.recordCrash(at: 110, policy: policy), .restart(after: 2, attempt: 2),
+        "quick second crash doubles the delay")
+    expectEqual(
+        state.recordCrash(at: 120, policy: policy), .restart(after: 4, attempt: 3),
+        "quick third crash doubles again")
+    expectEqual(
+        state.recordCrash(at: 130, policy: policy), .giveUp,
+        "exceeding maxConsecutiveCrashes gives up (crash loop)")
+
+    var stable = RestartState()
+    _ = stable.recordCrash(at: 100, policy: policy)
+    _ = stable.recordCrash(at: 110, policy: policy)
+    expectEqual(
+        stable.recordCrash(at: 300, policy: policy), .restart(after: 1, attempt: 1),
+        "a crash after a stable run resets the consecutive counter")
+
+    var capped = RestartState()
+    let cappedPolicy = RestartPolicy(
+        maxConsecutiveCrashes: 10, stabilityWindow: 60, baseDelay: 8, maxDelay: 10)
+    _ = capped.recordCrash(at: 100, policy: cappedPolicy)
+    expectEqual(
+        capped.recordCrash(at: 101, policy: cappedPolicy), .restart(after: 10, attempt: 2),
+        "backoff delay is capped at maxDelay")
+}
+
+// MARK: - StaleServiceState
+
+@MainActor func checkStaleServiceState() throws {
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let stateFile = dir.appendingPathComponent("dashboard.json")
+
+    expect(
+        !StaleServiceState.clean(stateFile: stateFile),
+        "missing state file -> nothing to clean")
+
+    try "not json".write(to: stateFile, atomically: true, encoding: .utf8)
+    expect(
+        StaleServiceState.clean(stateFile: stateFile),
+        "unreadable state file is removed")
+    expect(!FileManager.default.fileExists(atPath: stateFile.path), "unreadable file is gone")
+
+    let payload = #"{"pid": 12345, "identity": "x", "host": "127.0.0.1", "port": 8765}"#
+    try payload.write(to: stateFile, atomically: true, encoding: .utf8)
+    expect(
+        !StaleServiceState.clean(stateFile: stateFile, isProcessAlive: { _ in true }),
+        "state for a live pid is left for the Python side's identity check")
+    expect(FileManager.default.fileExists(atPath: stateFile.path), "live-pid file is kept")
+
+    expect(
+        StaleServiceState.clean(stateFile: stateFile, isProcessAlive: { _ in false }),
+        "state for a dead pid is stale and removed")
+    expect(!FileManager.default.fileExists(atPath: stateFile.path), "dead-pid file is gone")
+
+    try #"{"pid": -7}"#.write(to: stateFile, atomically: true, encoding: .utf8)
+    expect(
+        StaleServiceState.clean(stateFile: stateFile, isProcessAlive: { _ in true }),
+        "nonsensical pid is treated as unreadable and removed")
+
+    expect(
+        StaleServiceState.processExists(getpid()),
+        "processExists sees the current process as alive")
 }
 
 // MARK: - ServiceController
@@ -268,8 +399,21 @@ var passes = 0
     return condition()
 }
 
+@MainActor func waitForAsync(
+    timeout: TimeInterval = 20, _ condition: () async -> Bool
+) async -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if await condition() { return true }
+        try? await Task.sleep(for: .milliseconds(100))
+    }
+    return await condition()
+}
+
 /// A service process that prints and dies immediately: the controller must
-/// surface the exit code and expose the captured log for the failure view.
+/// restart it with backoff, then give up on the crash loop with the exit code
+/// and captured log surfaced for the failure view. A stale PID/state file from
+/// a "previous crash" must be cleaned before the launch.
 @MainActor func checkServiceControllerProcessDeath() async throws {
     let dir = try makeTempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -280,7 +424,17 @@ var passes = 0
         arguments: ["-c", "echo boom; exit 7"],
         workingDirectory: dir,
         logFile: dir.appendingPathComponent("logs/service.log"))
-    let controller = ServiceController(plan: plan, host: "127.0.0.1", port: port, timeout: 15)
+
+    // Simulate a crashed previous run: a state file whose pid cannot exist.
+    try FileManager.default.createDirectory(
+        at: dir.appendingPathComponent(".runtime"), withIntermediateDirectories: true)
+    try #"{"pid": 987654, "identity": "x", "host": "127.0.0.1", "port": 8765}"#
+        .write(to: plan.stateFile, atomically: true, encoding: .utf8)
+
+    let controller = ServiceController(
+        plan: plan, host: "127.0.0.1", port: port, timeout: 15,
+        restartPolicy: RestartPolicy(
+            maxConsecutiveCrashes: 1, stabilityWindow: 60, baseDelay: 0.05, maxDelay: 0.1))
 
     expectEqual(
         controller.baseURL.absoluteString, "http://127.0.0.1:\(port)/",
@@ -296,19 +450,65 @@ var passes = 0
         if case .failed = controller.state { return true }
         return false
     }
-    expect(failed, "dead service process -> failed state")
+    expect(failed, "crash-looping service process -> failed state")
     if case let .failed(reason) = controller.state {
         expect(reason.contains("7"), "failure reason carries the exit code")
+        expect(
+            reason.lowercased().contains("crashed repeatedly"),
+            "failure reason names the crash loop")
     }
     expect(controller.logTail().contains("boom"), "failure view can tail the captured log")
+    expect(
+        !FileManager.default.fileExists(atPath: plan.stateFile.path),
+        "stale state file from a previous crash was cleaned before launch")
+    expect(
+        !controller.attachedToExternalService,
+        "a launched (not attached) service is not labeled external")
 
-    // Retry resets the tracker and relaunches; the same doomed plan fails again.
+    // Retry resets the tracker and crash history and relaunches; the same
+    // doomed plan crash-loops to failed again.
     controller.retry()
     let failedAgain = await waitFor {
         if case .failed = controller.state { return true }
         return false
     }
     expect(failedAgain, "retry relaunches and reaches a settled state")
+    controller.shutdown()
+}
+
+/// A service that crashes once and then serves: the controller must restart it
+/// after the crash and reach ready again, clearing the restart marker.
+@MainActor func checkServiceControllerCrashRecovery() async throws {
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try FileManager.default.createDirectory(
+        at: dir.appendingPathComponent("api"), withIntermediateDirectories: true)
+    try "ok".write(
+        to: dir.appendingPathComponent("api/status"), atomically: true, encoding: .utf8)
+
+    let port = freePort()
+    // First launch crashes (no flag yet); the relaunch serves for real.
+    let script = "if [ -f flag ]; then exec python3 -m http.server \(port) --bind 127.0.0.1; "
+        + "else touch flag; exit 9; fi"
+    let plan = ServiceLaunchPlan(
+        executable: "/bin/sh",
+        arguments: ["-c", script],
+        workingDirectory: dir,
+        logFile: dir.appendingPathComponent("service.log"))
+    let controller = ServiceController(
+        plan: plan, host: "127.0.0.1", port: port, timeout: 15,
+        restartPolicy: RestartPolicy(
+            maxConsecutiveCrashes: 3, stabilityWindow: 60, baseDelay: 0.05, maxDelay: 0.1))
+
+    controller.start()
+    let recovered = await waitFor {
+        if case .ready = controller.state { return true }
+        return false
+    }
+    expect(recovered, "service that crashes once is restarted and reaches ready")
+    expectEqual(
+        controller.restartAttempt, nil,
+        "restart marker is cleared once the service is ready again")
     controller.shutdown()
 }
 
@@ -354,8 +554,26 @@ var passes = 0
         return false
     }
     expect(reused, "already-running service is reused, not relaunched")
+    expect(
+        reattached.attachedToExternalService,
+        "reused service is labeled as externally owned (attach mode)")
+    expect(
+        !controller.attachedToExternalService,
+        "the controller that launched the service is not in attach mode")
 
-    reattached.shutdown() // never launched a process: shutdown is a no-op
+    // Quitting the app in attach mode must leave the CLI-owned service
+    // untouched: after shutdown() the service still answers.
+    reattached.shutdown()
+    let stillAnswering = await waitForAsync {
+        var request = URLRequest(url: reattached.healthURL)
+        request.timeoutInterval = 2
+        guard let (_, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse
+        else { return false }
+        return (200..<300).contains(http.statusCode)
+    }
+    expect(stillAnswering, "shutdown in attach mode leaves the external service running")
+
     controller.shutdown() // terminates the stub service
 }
 
@@ -398,7 +616,11 @@ do {
     try checkCheckoutValidation()
     checkNavigationPolicy()
     try checkServiceLaunchPlan()
+    try checkBundledRuntime()
+    checkRestartPolicy()
+    try checkStaleServiceState()
     try await checkServiceControllerProcessDeath()
+    try await checkServiceControllerCrashRecovery()
     try await checkServiceControllerReadyAndReuse()
     try await checkServiceControllerLaunchError()
 } catch {

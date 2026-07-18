@@ -446,6 +446,42 @@ def test_unified_dashboard_missing_results_dir_yields_no_inputs(monkeypatch, tmp
     assert captured["result_paths"] == []
 
 
+def test_unified_dashboard_exit_with_parent_starts_watchdog(monkeypatch) -> None:
+    """--exit-with-parent (used by the macOS app) arms the orphan watchdog."""
+
+    watches: list[bool] = []
+    monkeypatch.setattr(
+        "local_code_bench.parent_watch.start_parent_watch",
+        lambda: watches.append(True),
+    )
+    monkeypatch.setattr(
+        "local_code_bench.unified_dashboard.serve_dashboard",
+        lambda *args, **kwargs: None,
+    )
+
+    exit_code = main(["dashboard", "--exit-with-parent"])
+
+    assert exit_code == 0
+    assert watches == [True]
+
+
+def test_unified_dashboard_serve_does_not_watch_parent_by_default(monkeypatch) -> None:
+    watches: list[bool] = []
+    monkeypatch.setattr(
+        "local_code_bench.parent_watch.start_parent_watch",
+        lambda: watches.append(True),
+    )
+    monkeypatch.setattr(
+        "local_code_bench.unified_dashboard.serve_dashboard",
+        lambda *args, **kwargs: None,
+    )
+
+    exit_code = main(["dashboard"])
+
+    assert exit_code == 0
+    assert watches == []
+
+
 def test_unified_dashboard_config_error_exits_2(monkeypatch, capsys) -> None:
     from local_code_bench.config import ConfigError
 

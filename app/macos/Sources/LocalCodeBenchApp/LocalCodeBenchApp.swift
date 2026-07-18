@@ -73,8 +73,15 @@ private struct MenuBarStatusLabel: View {
     private var statusText: String {
         switch controller.state {
         case .idle: "Service: idle"
-        case .starting: "Service: starting…"
-        case .ready: "Service: running"
+        case .starting:
+            if let attempt = controller.restartAttempt {
+                "Service: restarting (attempt \(attempt))…"
+            } else {
+                "Service: starting…"
+            }
+        case .ready:
+            controller.attachedToExternalService
+                ? "Service: running (CLI-owned)" : "Service: running (app-managed)"
         case .failed: "Service: failed"
         }
     }

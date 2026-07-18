@@ -38,7 +38,10 @@ final class AppModel: ObservableObject {
         if case .appSupportDefault = location {
             prepareAppSupportDirectory()
         }
-        let plan = ServiceLaunchPlan.plan(for: location, host: host, port: port)
+        // In a bundled .app, the relocatable CPython in Contents/Resources
+        // runs the service; dev builds (swift run) fall back to uv / PATH.
+        let runtime = BundledRuntime.locate(resourcesDirectory: Bundle.main.resourceURL)
+        let plan = ServiceLaunchPlan.plan(for: location, host: host, port: port, runtime: runtime)
         let controller = ServiceController(plan: plan, host: host, port: port)
         self.controller = controller
         controller.start()
