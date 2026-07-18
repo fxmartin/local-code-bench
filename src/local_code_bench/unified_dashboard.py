@@ -41,6 +41,7 @@ from . import dashboard_lifecycle
 from . import dashboard_server as results_panel
 from . import launch
 from . import models_editor
+from . import settings_changes
 from . import settings_editor
 from . import settings_panel
 from .config import (
@@ -66,7 +67,15 @@ from .inferencers import tiered, tiering
 from .inferencers.external import check_availability
 from .optimizers import manager as optimizer_manager
 from .settings import get_settings, load_theme_config
-from .settings_store import SettingsStore, default_settings_store
+from .settings_changes import SettingsChangeLog
+from .settings_store import (
+    ConflictError,
+    SettingsStore,
+    SettingsValidationError,
+    UnknownConfigError,
+    WriteFailedError,
+    default_settings_store,
+)
 from .suite_catalog import catalog_payload
 from .theme import THEME_TOGGLE_SNIPPET, theme_css, theme_head_snippet
 
@@ -323,6 +332,10 @@ class DashboardContext:
     # resolves file paths from its own registry, so a request can never name a
     # file outside the registered config set.
     settings_store: SettingsStore | None = None
+    # Story 15.4-001: the append-only settings change log riding every validated
+    # write. Optional so a read-only context (older callers, most tests) keeps
+    # serving every GET route.
+    settings_changelog: SettingsChangeLog | None = None
 
 
 @dataclass(frozen=True)
@@ -505,6 +518,84 @@ def models_editor_action(
     if status == 200:
         _refresh_models(ctx)
     return status, payload
+
+
+def settings_write_action(ctx: DashboardContext, body: bytes) -> tuple[int, dict]:
+    """Validated settings write with change log + refresh signal (story 15.4-001).
+
+    The body names a registered config (``config``), the hash the form was
+    loaded against (``expected_hash``), and exactly one of ``content`` (whole
+    document) or ``updates`` (dotted-path edits). The 15.2-001 store enforces
+    conflict-then-validate ordering, so a stale submission is refused with 409
+    (blocked until the group reloads) before any validation noise. A landed
+    write appends one change-log line — file, domain, and a summary naming key
+    paths only, never values — and the response carries the changed domains
+    plus the dashboard panels that consume them, which is all a client needs
+    to refresh without a restart (the panels re-read config per request).
+    """
+
+    if ctx.settings_store is None:
+        return 503, {"error": "settings editing is unavailable: no settings store wired"}
+    try:
+        parsed = json.loads(body or b"{}")
+    except json.JSONDecodeError:
+        return 400, {"error": "invalid JSON body"}
+    if not isinstance(parsed, dict):
+        return 400, {"error": "request body must be a JSON object"}
+    config_id = parsed.get("config")
+    expected_hash = parsed.get("expected_hash")
+    if not isinstance(config_id, str) or not isinstance(expected_hash, str):
+        return 400, {"error": "'config' and 'expected_hash' are required strings"}
+    content = parsed.get("content")
+    updates = parsed.get("updates")
+    if isinstance(content, str) == isinstance(updates, dict):
+        return 400, {"error": "provide exactly one of 'content' or 'updates'"}
+
+    try:
+        if isinstance(content, str):
+            result = ctx.settings_store.write(config_id, content, expected_hash=expected_hash)
+            summary = settings_changes.FULL_DOCUMENT_SUMMARY
+        else:
+            result = ctx.settings_store.apply_updates(
+                config_id, updates, expected_hash=expected_hash
+            )
+            summary = settings_changes.summarize_updates(updates)
+    except ConflictError as exc:
+        return 409, {"error": str(exc), "current_hash": exc.current_hash}
+    except (UnknownConfigError, SettingsValidationError) as exc:
+        return 400, {"error": str(exc)}
+    except WriteFailedError as exc:
+        return 500, {"error": str(exc)}
+
+    change = None
+    if ctx.settings_changelog is not None:
+        # Backups are linked by snapshot *name* (the backup dir is fixed
+        # configuration), so no absolute host path enters the log or response.
+        change = ctx.settings_changelog.record(
+            file=result.path.name,
+            domain=config_id,
+            summary=summary,
+            backup=result.backup_path.name,
+        )
+    domains = [config_id]
+    return 200, {
+        "ok": True,
+        "config": config_id,
+        "file": result.path.name,
+        "content_hash": result.content_hash,
+        "backup": result.backup_path.name,
+        "changed_domains": domains,
+        "refresh_panels": settings_changes.affected_panels(domains),
+        "change": change,
+    }
+
+
+def settings_changelog_action(ctx: DashboardContext) -> tuple[int, dict]:
+    """Recent settings changes, newest first, for the tab's log view (15.4-001)."""
+
+    if ctx.settings_changelog is None:
+        return 200, {"entries": []}
+    return 200, {"entries": ctx.settings_changelog.entries(limit=50)}
 
 
 def optimizers_action(ctx: DashboardContext) -> tuple[int, dict]:
@@ -1173,11 +1264,11 @@ def handle_request(
 ) -> Response | chat.ChatStreamResponse:
     """Route one request to the unified page or a delegated section action.
 
-    ``body`` carries the raw POST payload; only ``/api/chat``, ``/api/run``, and
-    ``/api/settings/inferencers`` consume it (the other POST actions are driven by
-    query params). A chat launch returns a streaming
-    :class:`chat.ChatStreamResponse`; everything else returns a buffered
-    ``Response``.
+    ``body`` carries the raw POST payload; only ``/api/chat``, ``/api/run``,
+    ``/api/settings/inferencers``, and ``/api/settings/write`` consume it (the
+    other POST actions are driven by query params). A chat launch returns a
+    streaming :class:`chat.ChatStreamResponse`; everything else returns a
+    buffered ``Response``.
     """
 
     parts = urlsplit(path)
@@ -1248,6 +1339,10 @@ def handle_request(
         )
     if method in ("GET", "POST") and route == "/api/settings/models":
         return _json(*models_editor_action(ctx, method, body))
+    if method == "GET" and route == "/api/settings/changelog":
+        return _json(*settings_changelog_action(ctx))
+    if method == "POST" and route == "/api/settings/write":
+        return _json(*settings_write_action(ctx, body))
     if method == "GET" and route == "/api/chat/catalog":
         return _json(*chat_catalog_action(ctx))
     if method == "GET" and route == "/api/inventory":
@@ -1447,6 +1542,9 @@ def serve_dashboard(
             settings_store=default_settings_store(Path(models_path).parent),
             optimizer_configs=optimizer_configs,
             optimizer_state_dir=optimizer_state_dir,
+            # Story 15.4-001: every validated write also lands in the change log
+            # under the same state dir the tiering stores use.
+            settings_changelog=SettingsChangeLog(state_dir),
         )
         server = make_server(ctx, host=host, port=port)
         if progress is not None:
@@ -1923,7 +2021,8 @@ _PAGE = """<!DOCTYPE html>
     duplicated, and removed here; every save is validated by the harness loader and
     written atomically with a backup. Inferencer store paths and the storage tier
     blocks are editable in the editor below — edit the YAML files directly for
-    everything else.</p>
+    everything else. If a file changes on disk while the tab is open, the affected
+    group is flagged until you reload it.</p>
   <p id="settings-err" class="err"></p>
   <div id="model-form" class="model-form" hidden>
     <h3 id="mf-title">Add model</h3>
@@ -1964,6 +2063,13 @@ _PAGE = """<!DOCTYPE html>
   <p id="seditor-msg" class="note"></p>
   <div id="seditor"></div>
   <datalist id="pin-suggestions"></datalist>
+
+  <h3>Change log</h3>
+  <p class="note">One line per settings write — what kind of change landed and when, never
+    a value. Each entry names the backup snapshot (under the settings backup dir) that a
+    manual restore would copy back; see docs/SETTINGS.md for the restore steps.</p>
+  <p id="settings-log-err" class="err"></p>
+  <div id="settings-changelog"></div>
 </section>
 
 </main>
@@ -3224,7 +3330,12 @@ _PAGE = """<!DOCTYPE html>
 // group gets its own form over GET/POST /api/settings/models (story 15.3-001) —
 // the form only pre-validates prices inline and locks local concurrency for UX,
 // while every write authority (duplicate names, loader validation, atomic
-// write + backup) lives server-side.
+// write + backup) lives server-side. External-change detection and the change
+// log (story 15.4-001): each group renders from the last *accepted* payload;
+// when a later poll reports a different source-file hash the group keeps its
+// accepted view and shows a "changed on disk — reload" banner instead of
+// silently swapping content. Stale submissions stay blocked server-side by the
+// 15.2-001 conflict check until the reload picks up the new hash.
 (function () {
   const host = document.getElementById("settings-groups");
   const err = document.getElementById("settings-err");
@@ -3422,6 +3533,12 @@ _PAGE = """<!DOCTYPE html>
     return span;
   }
 
+  const logHost = document.getElementById("settings-changelog");
+  const logErr = document.getElementById("settings-log-err");
+  const accepted = {};  // group id -> last accepted group payload
+  const pending = {};   // group id -> newer payload awaiting an explicit reload
+  let order = [];       // group ids in server order
+
   function valueCell(f) {
     const td = document.createElement("td");
     td.textContent = f.value === null || f.value === undefined ? "-" : String(f.value);
@@ -3577,18 +3694,104 @@ _PAGE = """<!DOCTYPE html>
     });
   }
 
+  function renderBanner(g) {
+    const banner = document.createElement("p");
+    banner.className = "warn changed-banner";
+    banner.textContent = g.source +
+      " changed on disk \\u2014 reload to pick up the new version. " +
+      "Submissions against the stale version are blocked until then. ";
+    const btn = document.createElement("button");
+    btn.className = "act";
+    btn.textContent = "Reload";
+    btn.addEventListener("click", () => {
+      accepted[g.id] = pending[g.id];
+      delete pending[g.id];
+      render();
+    });
+    banner.appendChild(btn);
+    host.appendChild(banner);
+  }
+
+  // Accept a fetched group unless its source-file hash moved after it was
+  // first shown — then park it in `pending` until the user reloads it.
+  function integrate(groups) {
+    order = groups.map((g) => g.id);
+    for (const g of groups) {
+      if (!(g.id in accepted) || accepted[g.id].content_hash === g.content_hash) {
+        accepted[g.id] = g;
+        delete pending[g.id];
+      } else {
+        pending[g.id] = g;
+      }
+    }
+    render();
+  }
+
+  function render() {
+    host.innerHTML = "";
+    for (const id of order) {
+      if (!(id in accepted)) continue;
+      if (id in pending) renderBanner(pending[id]);
+      renderGroup(accepted[id]);
+    }
+  }
+
+  function renderLog(entries) {
+    logHost.innerHTML = "";
+    if (!entries.length) {
+      const p = document.createElement("p");
+      p.className = "empty";
+      p.textContent = "No settings changes recorded yet.";
+      logHost.appendChild(p);
+      return;
+    }
+    const table = document.createElement("table");
+    const thead = document.createElement("thead");
+    const htr = document.createElement("tr");
+    for (const label of ["When", "File", "Domain", "Change", "Backup snapshot"]) {
+      const th = document.createElement("th");
+      th.textContent = label;
+      htr.appendChild(th);
+    }
+    thead.appendChild(htr);
+    table.appendChild(thead);
+    const tbody = document.createElement("tbody");
+    for (const entry of entries) {
+      const tr = document.createElement("tr");
+      for (const key of ["timestamp", "file", "domain", "summary", "backup"]) {
+        const td = document.createElement("td");
+        td.textContent = entry[key] || "-";
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    logHost.appendChild(table);
+  }
+
+  async function refreshLog() {
+    try {
+      const res = await fetch("/api/settings/changelog");
+      const data = await res.json();
+      renderLog(data.entries || []);
+      logErr.textContent = "";
+    } catch (e) {
+      logErr.textContent = "change log unavailable: " + e;
+    }
+  }
+
   async function refresh() {
     // Never re-render over an open editor: it would wipe unsaved edits.
     if (host.querySelector(".settings-editor[open]")) return;
     try {
       const res = await fetch("/api/settings");
       const data = await res.json();
-      host.innerHTML = "";
-      (data.groups || []).forEach(renderGroup);
+      integrate(data.groups || []);
       err.textContent = "";
     } catch (e) {
       err.textContent = "settings unavailable: " + e;
     }
+    refreshLog();
   }
 
   document.getElementById("mf-save").addEventListener("click", save);

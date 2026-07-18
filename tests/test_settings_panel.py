@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from local_code_bench import settings_panel
+from local_code_bench.settings_store import content_hash
 
 # ---------------------------------------------------------------------------
 # fixtures / helpers
@@ -361,3 +362,46 @@ def test_read_only_groups_are_not_flagged_editable(tmp_path: Path) -> None:
         group = _group(payload, group_id)
         assert group["editable"] is False
         assert group["editable_note"] is None
+
+
+# ---------------------------------------------------------------------------
+# story 15.4-001: per-group source-file hash for external-change detection
+# ---------------------------------------------------------------------------
+
+
+def test_each_group_carries_its_source_content_hash(tmp_path: Path) -> None:
+    paths = _write_configs(tmp_path)
+    payload = _payload(tmp_path)
+
+    models = _group(payload, "models")
+    assert models["content_hash"] == content_hash(paths["models"].read_text(encoding="utf-8"))
+    # groups sharing a source file share its hash (inferencers + storage)
+    inferencers = _group(payload, "inferencers")
+    storage = _group(payload, "storage")
+    assert inferencers["content_hash"] == storage["content_hash"] is not None
+
+
+def test_content_hash_changes_when_the_file_changes(tmp_path: Path) -> None:
+    touched = tmp_path / "touched-models.yaml"
+    touched.write_text(_MODELS_YAML + "# touched\n", encoding="utf-8")
+    before = _group(_payload(tmp_path), "models")["content_hash"]
+    after = _group(_payload(tmp_path, models_path=touched), "models")["content_hash"]
+
+    assert before != after
+
+
+def test_missing_source_file_has_no_content_hash(tmp_path: Path) -> None:
+    # suites.yaml is never written by the fixtures — the group still renders
+    suites = _group(_payload(tmp_path), "suites")
+    assert suites["content_hash"] is None
+
+
+def test_broken_group_still_reports_its_content_hash(tmp_path: Path) -> None:
+    # the hash is the poll token even when the loader rejects the file, so the
+    # tab can flag an out-of-band edit that broke the group
+    broken = tmp_path / "broken-models.yaml"
+    broken.write_text("models: [broken", encoding="utf-8")
+    models = _group(_payload(tmp_path, models_path=broken), "models")
+
+    assert models["error"] is not None
+    assert models["content_hash"] == content_hash(broken.read_text(encoding="utf-8"))

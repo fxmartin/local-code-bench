@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import urllib.request
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -117,6 +118,7 @@ def _ctx(
     inferencers_path: str | Path = "configs/does-not-exist-inferencers.yaml",
     comparisons_path: str | Path = "configs/does-not-exist-comparisons.yaml",
     settings_store: object | None = None,
+    settings_changelog: object | None = None,
 ) -> ud.DashboardContext:
     extra = {"settings_store": settings_store} if settings_store is not None else {}
     return ud.DashboardContext(
@@ -131,6 +133,7 @@ def _ctx(
         agents_path=agents_path,
         inferencers_path=inferencers_path,
         comparisons_path=comparisons_path,
+        settings_changelog=settings_changelog,
         **extra,
     )
 
@@ -2743,7 +2746,7 @@ def test_api_settings_degrades_a_broken_group_inline(tmp_path: Path) -> None:
 def test_post_to_settings_route_is_404() -> None:
     # the aggregated settings surface stays read-only; edits go through the
     # dedicated editor routes (/api/settings/models, /api/settings/config,
-    # /api/settings/inferencers)
+    # /api/settings/inferencers) and the generic /api/settings/write pipeline
     assert ud.handle_request("POST", "/api/settings", _ctx()).status == 404
 
 
@@ -2959,3 +2962,226 @@ def test_settings_page_has_editor_affordance() -> None:
     # the editor is a thin client over the shared read/write endpoint
     assert "/api/settings/config" in body
 
+
+# ---------------------------------------------------------------------------
+# settings writes, external-change detection, and the change log (15.4-001)
+# ---------------------------------------------------------------------------
+
+_SETTINGS_SUITES_YAML = "suites: []\n"
+
+_FIXED_NOW = datetime(2026, 7, 18, 9, 15, 30, tzinfo=UTC)
+
+
+def _editable_settings_ctx(tmp_path: Path) -> ud.DashboardContext:
+    from local_code_bench.settings_changes import SettingsChangeLog
+    from local_code_bench.settings_store import SettingsStore
+
+    (tmp_path / "suites.yaml").write_text(_SETTINGS_SUITES_YAML, encoding="utf-8")
+    ctx = _settings_ctx(tmp_path)
+    store = SettingsStore(tmp_path, backup_dir=tmp_path / ".backups", now=lambda: _FIXED_NOW)
+    changelog = SettingsChangeLog(tmp_path / "state", now=lambda: _FIXED_NOW)
+    return ud.DashboardContext(
+        configs=ctx.configs,
+        state_dir=ctx.state_dir,
+        result_paths=ctx.result_paths,
+        models=ctx.models,
+        cache_dir=ctx.cache_dir,
+        suites_path=ctx.suites_path,
+        models_path=ctx.models_path,
+        agents_path=ctx.agents_path,
+        inferencers_path=ctx.inferencers_path,
+        settings_store=store,
+        settings_changelog=changelog,
+    )
+
+
+def _current_models_hash(tmp_path: Path) -> str:
+    from local_code_bench.settings_store import content_hash
+
+    return content_hash((tmp_path / "models.yaml").read_text(encoding="utf-8"))
+
+
+def _post_write(ctx: ud.DashboardContext, payload: dict) -> ud.Response:
+    return ud.handle_request(
+        "POST", "/api/settings/write", ctx, json.dumps(payload).encode("utf-8")
+    )
+
+
+def test_settings_write_names_changed_domains_and_panels(tmp_path: Path) -> None:
+    ctx = _editable_settings_ctx(tmp_path)
+    content = _SETTINGS_MODELS_YAML + "# tuned\n"
+
+    resp = _post_write(
+        ctx,
+        {"config": "models", "expected_hash": _current_models_hash(tmp_path), "content": content},
+    )
+
+    assert resp.status == 200
+    payload = json.loads(resp.body)
+    assert payload["changed_domains"] == ["models"]
+    for panel in ("models list", "launcher", "tier view", "inventory"):
+        assert panel in payload["refresh_panels"]
+    assert (tmp_path / "models.yaml").read_text(encoding="utf-8") == content
+
+
+def test_settings_write_appends_one_changelog_line(tmp_path: Path) -> None:
+    ctx = _editable_settings_ctx(tmp_path)
+    resp = _post_write(
+        ctx,
+        {
+            "config": "models",
+            "expected_hash": _current_models_hash(tmp_path),
+            "content": _SETTINGS_MODELS_YAML + "# tuned\n",
+        },
+    )
+
+    assert resp.status == 200
+    entries = ctx.settings_changelog.entries()
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["file"] == "models.yaml"
+    assert entry["domain"] == "models"
+    assert entry["summary"] == "full-document edit"
+    # AC4: the entry links the 15.2-001 backup snapshot restore would use
+    assert entry["backup"].startswith("models.yaml.")
+    assert (tmp_path / ".backups" / entry["backup"]).exists()
+
+
+def test_settings_write_updates_variant_logs_paths_never_values(tmp_path: Path) -> None:
+    ctx = _editable_settings_ctx(tmp_path)
+    resp = _post_write(
+        ctx,
+        {
+            "config": "models",
+            "expected_hash": _current_models_hash(tmp_path),
+            "updates": {"models.1.pinned_revision": "r2-secret-value"},
+        },
+    )
+
+    assert resp.status == 200
+    entry = ctx.settings_changelog.entries()[0]
+    assert "models.1.pinned_revision" in entry["summary"]
+    assert "r2-secret-value" not in entry["summary"]
+    assert 'pinned_revision: "r2-secret-value"' not in json.dumps(entry)
+
+
+def test_settings_write_stale_hash_is_blocked_with_conflict(tmp_path: Path) -> None:
+    # AC1: a stale submission is refused until the group is reloaded
+    ctx = _editable_settings_ctx(tmp_path)
+    resp = _post_write(
+        ctx,
+        {"config": "models", "expected_hash": "0" * 64, "content": _SETTINGS_MODELS_YAML},
+    )
+
+    assert resp.status == 409
+    payload = json.loads(resp.body)
+    assert payload["current_hash"] == _current_models_hash(tmp_path)
+    assert ctx.settings_changelog.entries() == []
+
+
+def test_settings_write_invalid_edit_is_rejected_and_not_logged(tmp_path: Path) -> None:
+    ctx = _editable_settings_ctx(tmp_path)
+    before = (tmp_path / "models.yaml").read_text(encoding="utf-8")
+    resp = _post_write(
+        ctx,
+        {
+            "config": "models",
+            "expected_hash": _current_models_hash(tmp_path),
+            "content": "models: [broken",
+        },
+    )
+
+    assert resp.status == 400
+    assert (tmp_path / "models.yaml").read_text(encoding="utf-8") == before
+    assert ctx.settings_changelog.entries() == []
+
+
+def test_settings_write_unknown_config_is_rejected(tmp_path: Path) -> None:
+    ctx = _editable_settings_ctx(tmp_path)
+    resp = _post_write(
+        ctx, {"config": "nope", "expected_hash": "0" * 64, "content": "anything"}
+    )
+    assert resp.status == 400
+
+
+def test_settings_write_requires_exactly_one_payload_kind(tmp_path: Path) -> None:
+    ctx = _editable_settings_ctx(tmp_path)
+    hash_ = _current_models_hash(tmp_path)
+
+    neither = _post_write(ctx, {"config": "models", "expected_hash": hash_})
+    both = _post_write(
+        ctx,
+        {"config": "models", "expected_hash": hash_, "content": "x", "updates": {}},
+    )
+
+    assert neither.status == 400
+    assert both.status == 400
+
+
+def test_settings_write_rejects_malformed_body(tmp_path: Path) -> None:
+    ctx = _editable_settings_ctx(tmp_path)
+    resp = ud.handle_request("POST", "/api/settings/write", ctx, b"{not json")
+    assert resp.status == 400
+
+
+def test_settings_write_without_store_is_unavailable() -> None:
+    resp = ud.handle_request("POST", "/api/settings/write", _ctx(), b"{}")
+    assert resp.status == 503
+
+
+def test_settings_write_response_leaks_no_absolute_paths(tmp_path: Path) -> None:
+    ctx = _editable_settings_ctx(tmp_path)
+    resp = _post_write(
+        ctx,
+        {
+            "config": "models",
+            "expected_hash": _current_models_hash(tmp_path),
+            "content": _SETTINGS_MODELS_YAML + "# tuned\n",
+        },
+    )
+
+    assert resp.status == 200
+    assert str(tmp_path) not in resp.body.decode()
+
+
+def test_settings_changelog_endpoint_returns_recent_entries(tmp_path: Path) -> None:
+    ctx = _editable_settings_ctx(tmp_path)
+    for revision in ("r2", "r3"):
+        assert (
+            _post_write(
+                ctx,
+                {
+                    "config": "models",
+                    "expected_hash": _current_models_hash(tmp_path),
+                    "updates": {"models.1.pinned_revision": revision},
+                },
+            ).status
+            == 200
+        )
+
+    resp = ud.handle_request("GET", "/api/settings/changelog", ctx)
+    assert resp.status == 200
+    entries = json.loads(resp.body)["entries"]
+    assert len(entries) == 2
+    # newest first, and every entry names its backup snapshot
+    assert all(entry["backup"].startswith("models.yaml.") for entry in entries)
+
+
+def test_settings_changelog_endpoint_without_log_is_empty() -> None:
+    resp = ud.handle_request("GET", "/api/settings/changelog", _ctx())
+    assert resp.status == 200
+    assert json.loads(resp.body) == {"entries": []}
+
+
+def test_api_settings_groups_carry_content_hash(tmp_path: Path) -> None:
+    # the poll token the tab compares to flag "changed on disk — reload" (AC1)
+    payload = json.loads(ud.handle_request("GET", "/api/settings", _settings_ctx(tmp_path)).body)
+    models = next(group for group in payload["groups"] if group["id"] == "models")
+    assert models["content_hash"] == _current_models_hash(tmp_path)
+
+
+def test_page_has_change_detection_and_changelog_ui() -> None:
+    body = ud.render_page()
+    assert "changed on disk" in body
+    assert 'id="settings-changelog"' in body
+    assert "/api/settings/changelog" in body

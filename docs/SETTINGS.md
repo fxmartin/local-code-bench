@@ -81,6 +81,38 @@ side door around the measurement protocol:
 Changing the protocol means changing the source *and*
 `docs/EVALUATION-METHODOLOGY.md`, deliberately.
 
+## Settings change log & manual restore (15.4-001)
+
+Every write through the dashboard's settings pipeline (`POST
+/api/settings/write`) appends one line to an append-only JSONL change log,
+`settings-changes.jsonl`, under the dashboard's state dir
+(`paths.inferencer_state_dir`, default `.runtime/inferencers`). Each line
+records the timestamp, file, config domain, a summary of *what kind of* change
+landed (key paths for a structured edit, `full-document edit` for a whole-file
+write — never a value, so no secret can enter the log), and the name of the
+15.2-001 backup snapshot taken just before the write. The log is bounded by
+simple rotation: once it holds 500 lines it is renamed to
+`settings-changes.jsonl.1` (replacing the previous generation) and a fresh
+file starts. The Settings tab shows the recent entries at the bottom of the
+page.
+
+The Settings tab also polls each config file's content hash; if a file changes
+outside the dashboard while the tab is open, the affected group is flagged
+with a "changed on disk — reload" banner and any submission carrying the stale
+hash is refused (HTTP 409) until the group is reloaded.
+
+**Restoring a backup is a manual file operation** (deliberately not a
+one-click action in v1):
+
+1. Find the change to undo in the Settings tab's change log (or in
+   `.runtime/inferencers/settings-changes.jsonl`) and note its backup
+   snapshot name, e.g. `models.yaml.20260718T091530`.
+2. Copy the snapshot back over the live file:
+   `cp .runtime/settings-backups/models.yaml.20260718T091530 configs/models.yaml`
+   (the backup dir is `settings_backup.dir`).
+3. Reload the affected group in the Settings tab (the banner appears because
+   the file changed on disk — that is the detection working as intended).
+
 ## Audit inventory (15.5-001)
 
 Every hardcoded operational value found in the audit, with its disposition:

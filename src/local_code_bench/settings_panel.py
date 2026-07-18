@@ -37,6 +37,7 @@ from .config import (
 from . import theme
 from .agents import supported_harness_kinds
 from .settings import Settings, SettingsError, load_settings
+from .settings_store import content_hash
 from .suite_catalog import suite_catalog
 
 #: Why local endpoint concurrency may not be raised (Benchmark Protocol v1).
@@ -144,12 +145,20 @@ def _group(
     source: str | Path,
     build: Callable[[], list[dict[str, Any]]],
 ) -> dict[str, Any]:
-    """Build one settings group, degrading load failures to an inline error."""
+    """Build one settings group, degrading load failures to an inline error.
+
+    ``content_hash`` is the source file's poll token for external-change
+    detection (story 15.4-001): the tab compares it across refreshes and flags
+    the group "changed on disk — reload" on a mismatch. It is present even when
+    the loader rejects the file (an out-of-band edit can break a group) and
+    ``None`` only when the file cannot be read at all.
+    """
 
     group: dict[str, Any] = {
         "id": group_id,
         "label": label,
         "source": str(source),
+        "content_hash": _source_hash(source),
         "error": None,
         "items": [],
         # Story 15.3-003: groups whose source file has a dashboard editor. The
@@ -162,6 +171,13 @@ def _group(
     except (ConfigError, SettingsError, OSError) as exc:
         group["error"] = str(exc)
     return group
+
+
+def _source_hash(source: str | Path) -> str | None:
+    try:
+        return content_hash(Path(source).read_text(encoding="utf-8"))
+    except OSError:
+        return None
 
 
 def _field(
