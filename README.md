@@ -853,6 +853,22 @@ applies from the next start. The tier and inventory views pick up a saved edit o
 their next refresh without restarting the dashboard, and the pins editor suggests
 current inventory model names.
 
+Beyond the editor forms, a generic validated write path at
+`POST /api/settings/write` serves whole-document or dotted-path edits to any
+registered config file through the same pipeline (conflict-checked against the
+file's content hash, validated by the harness's own loaders, atomic with a
+timestamped backup). A landed write is applied to the running dashboard
+immediately: the in-memory model/inferencer registries reload in place, so the
+launcher, chat, tier view, inventory, and the next benchmark launch all use the
+post-edit values without a restart (the write response names the changed domains
+and the panels a client should re-poll). The tab polls each file's content hash,
+so a config edited outside the dashboard flags its group with a "changed on disk
+— reload" banner and stale submissions are refused until reloaded. Every write
+appends one line to a
+settings change log (timestamp, file, domain, what kind of change — never values)
+shown at the bottom of the tab; each entry names the backup snapshot a manual
+restore would copy back (see `docs/SETTINGS.md` for the restore steps).
+
 ## macOS App
 
 `app/macos/` holds a native SwiftUI shell that hosts the unified dashboard in a

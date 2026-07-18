@@ -162,6 +162,10 @@ class RunOrchestrator:
         error = self._validate(model, inferencer, suites)
         if error is not None:
             return 400, error
+        # Resolve the model config now: the registry dict is reloaded in place
+        # when a settings write lands (story 15.4-001), and an in-flight run
+        # must keep the exact config its provenance was captured against.
+        model_cfg = self._models[model]
 
         # Reserve the single-run slot before any server work so two concurrent
         # launches cannot both bring an engine up.
@@ -186,7 +190,7 @@ class RunOrchestrator:
         try:
             engine_provenance = capture_engine_provenance(
                 inferencer,
-                self._models[model].base_url,
+                model_cfg.base_url,
                 inferencer_config=self._inferencers[inferencer],
                 state_dir=self._state_dir,
             )
@@ -210,7 +214,7 @@ class RunOrchestrator:
         accepted = state.serialize()
         self._thread = threading.Thread(
             target=self._execute_run,
-            args=(state, result_path),
+            args=(state, result_path, model_cfg),
             daemon=True,
         )
         self._thread.start()
@@ -301,11 +305,10 @@ class RunOrchestrator:
             return 502, {"error": str(exc)}
         return 200, {"started": _serialize(started)}
 
-    def _execute_run(self, state: RunState, result_path: Path) -> None:
+    def _execute_run(self, state: RunState, result_path: Path, model: ModelConfig) -> None:
         """Run each selected suite in order, then release the single-run lock."""
 
         try:
-            model = self._models[state.model]
             for suite_name in state.suites:
                 suite_tasks = tasks.load_suite(suite_name, cache_dir=self._cache_dir)
                 state.total += len(suite_tasks)
