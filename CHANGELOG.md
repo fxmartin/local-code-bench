@@ -2,6 +2,17 @@
 
 <!-- version list -->
 
+## v0.67.0 (2026-07-18)
+
+### Features
+
+- **context-optimization-proxy**: Register headroom and (#13.4-001)
+  ([`0764da2`](https://github.com/fxmartin/local-code-bench/commit/0764da2b97f28fd3e34336ceb722c49e150e0db9))
+
+- **ui-theme-revamp**: Restyle every section onto the (#16.2-001)
+  ([`cc445c3`](https://github.com/fxmartin/local-code-bench/commit/cc445c3fd144fe73c8df7231973be8e4969c50be))
+
+
 ## v0.66.0 (2026-07-17)
 
 ### Features
