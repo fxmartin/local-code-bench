@@ -461,6 +461,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path(settings.dashboard_state_file),
         help="dashboard PID/state file",
     )
+    dashboard.add_argument(
+        "--exit-with-parent",
+        action="store_true",
+        help=(
+            "terminate when the parent process dies (used by the macOS app so a "
+            "force-quit never leaves an orphaned dashboard)"
+        ),
+    )
 
     opencode = subparsers.add_parser(
         "opencode",
@@ -824,7 +832,7 @@ def run_unified_dashboard_command(args: argparse.Namespace) -> int:
     surface as ``bench: error: ...`` on stderr with exit 2, like the rest of the CLI.
     """
 
-    from local_code_bench import dashboard_lifecycle
+    from local_code_bench import dashboard_lifecycle, parent_watch
     from local_code_bench.unified_dashboard import serve_dashboard
 
     try:
@@ -842,6 +850,8 @@ def run_unified_dashboard_command(args: argparse.Namespace) -> int:
             else:
                 print(f"dashboard not running ({status.detail})")
             return 0
+        if args.exit_with_parent:
+            parent_watch.start_parent_watch()
         serve_dashboard(
             args.config,
             args.state_dir,
