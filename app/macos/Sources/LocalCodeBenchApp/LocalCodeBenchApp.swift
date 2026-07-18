@@ -16,9 +16,13 @@ struct LocalCodeBenchApp: App {
         }
 
         // Keeps the app reachable while the dashboard window is closed and
-        // runs continue in the background.
-        MenuBarExtra("Local Code Bench", systemImage: "gauge.with.needle") {
+        // runs continue in the background; the icon flips to a warning when
+        // the service is failed or no longer answering (story 18.2-001).
+        MenuBarExtra {
             MenuBarContent()
+                .environmentObject(model)
+        } label: {
+            MenuBarIcon()
                 .environmentObject(model)
         }
     }
@@ -41,48 +45,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         AppModel.shared.shutdown()
-    }
-}
-
-struct MenuBarContent: View {
-    @EnvironmentObject private var model: AppModel
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some View {
-        if let controller = model.controller {
-            MenuBarStatusLabel(controller: controller)
-        }
-        Button("Open Dashboard") {
-            openWindow(id: "main")
-            NSApp.activate(ignoringOtherApps: true)
-        }
-        Divider()
-        Button("Quit Local Code Bench") {
-            NSApp.terminate(nil)
-        }
-    }
-}
-
-private struct MenuBarStatusLabel: View {
-    @ObservedObject var controller: ServiceController
-
-    var body: some View {
-        Text(statusText)
-    }
-
-    private var statusText: String {
-        switch controller.state {
-        case .idle: "Service: idle"
-        case .starting:
-            if let attempt = controller.restartAttempt {
-                "Service: restarting (attempt \(attempt))…"
-            } else {
-                "Service: starting…"
-            }
-        case .ready:
-            controller.attachedToExternalService
-                ? "Service: running (CLI-owned)" : "Service: running (app-managed)"
-        case .failed: "Service: failed"
-        }
     }
 }

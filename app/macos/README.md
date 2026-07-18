@@ -1,6 +1,6 @@
 # Local Code Bench — macOS App Shell
 
-A native SwiftUI shell (Stories 18.1-001/18.1-002) that hosts the unified
+A native SwiftUI shell (Stories 18.1-001/18.1-002/18.2-001) that hosts the unified
 dashboard (`bench dashboard`, Epic-09) in a full-bleed `WKWebView`, so the
 harness feels like a Mac application: Dock icon, a real window with its
 size/position restored across launches, and no browser tab to lose.
@@ -37,6 +37,23 @@ size/position restored across launches, and no browser tab to lose.
   existing `local-code-bench` checkout (validated: `configs/` +
   `pyproject.toml`), so configs/results are shared with the CLI. The choice is
   recorded in user defaults.
+- **Menu-bar status.** The menu-bar extra shows what the rig is doing without
+  opening the window: the running engine (from `/api/status`), each tracked
+  run's live suite progress and pass/fail counts (from `/api/runs`), and any
+  tier move with its live byte progress (from `/api/move-status`), all fed by
+  one poller. When the service fails or a ready service stops answering (e.g.
+  a CLI-owned dashboard whose process is gone), the icon flips to a warning
+  triangle and the menu offers **Restart Service** — status is never silently
+  stale. The poll interval is a setting, not a constant:
+  `defaults write me.fxmartin.local-code-bench statusPollIntervalSeconds -float 5`
+  (default 2 s, clamped to 0.5–60 s).
+- **Native notifications.** When the app is in the background, a suite run
+  completing or failing — and a tier move finishing or erroring — posts a
+  native notification with the outcome (edge-detected from the same poller:
+  state *transitions* fire, polls do not). Clicking it opens the window on the
+  relevant dashboard section (Run / Inventory). Notifications need a real
+  `.app` bundle; unbundled `swift run` dev builds skip them (menu-bar status
+  still works).
 - **Minimal bridging.** Same-origin navigations render in the web view;
   external links open in the default browser; downloads (e.g. the Epic-17
   comparison PDF) go through the standard save panel. There is no JS↔Swift
@@ -46,8 +63,8 @@ size/position restored across launches, and no browser tab to lose.
 
 | Target | Role |
 |--------|------|
-| `LocalCodeBenchKit` | Pure-Foundation logic: `StartupTracker` (startup state machine), `RestartPolicy` (crash/backoff rules), `StaleServiceState`, `BundledRuntime`, `LogTail`, `DataLocationStore` / `CheckoutValidation`, `NavigationPolicy`, `ServiceLaunchPlan`, and the `ServiceController` process/supervision glue. |
-| `LocalCodeBench` | The SwiftUI app: `WindowGroup` + `MenuBarExtra`, `WKWebView` wrapper, loading/failure/first-run views, window-frame autosave. |
+| `LocalCodeBenchKit` | Pure-Foundation logic: `StartupTracker` (startup state machine), `RestartPolicy` (crash/backoff rules), `StaleServiceState`, `BundledRuntime`, `LogTail`, `DataLocationStore` / `CheckoutValidation`, `NavigationPolicy`, `ServiceLaunchPlan`, the `ServiceController` process/supervision glue, and the status pipeline (`RigSnapshot` parsing, `StatusEventDetector` edge detection, `MenuBarStatus` / `NotificationContent` formatting, `StatusPollSettings`, `StatusPoller`). |
+| `LocalCodeBench` | The SwiftUI app: `WindowGroup` + `MenuBarExtra`, `WKWebView` wrapper, loading/failure/first-run views, window-frame autosave, `UNUserNotificationCenter` glue (`StatusNotifier`). |
 | `LocalCodeBenchChecks` | The kit's test suite as an assertion-based executable. |
 
 ## Build, run, test
