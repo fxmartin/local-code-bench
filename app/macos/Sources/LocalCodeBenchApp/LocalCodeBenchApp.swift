@@ -14,6 +14,16 @@ struct LocalCodeBenchApp: App {
                 .frame(minWidth: 900, minHeight: 600)
                 .background(WindowFrameAutosave(name: "LocalCodeBenchMainWindow"))
         }
+        .commands {
+            // The standard about panel shows only CFBundleShortVersionString;
+            // replacing it lets the credits line surface the bundled harness
+            // version too (Story 18.3-001).
+            CommandGroup(replacing: .appInfo) {
+                Button("About Local Code Bench") {
+                    showAboutPanel()
+                }
+            }
+        }
 
         // Keeps the app reachable while the dashboard window is closed and
         // runs continue in the background; the icon flips to a warning when
@@ -26,6 +36,28 @@ struct LocalCodeBenchApp: App {
                 .environmentObject(model)
         }
     }
+}
+
+/// Shows the standard about panel with both versions: the app's
+/// `CFBundleShortVersionString` (mirroring `pyproject.toml`) and the harness
+/// version recorded in the bundle by `scripts/build-macos-app.sh`.
+@MainActor private func showAboutPanel() {
+    let about = AboutInfo.resolve(
+        bundleShortVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+        bundledHarnessVersion: AboutInfo.bundledHarnessVersion(
+            resourcesDirectory: Bundle.main.resourceURL))
+    let credits = NSAttributedString(
+        string: "Harness \(about.harnessVersion)",
+        attributes: [
+            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ])
+    NSApplication.shared.orderFrontStandardAboutPanel(options: [
+        .applicationName: "Local Code Bench",
+        .applicationVersion: about.appVersion,
+        .credits: credits,
+    ])
+    NSApp.activate(ignoringOtherApps: true)
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {

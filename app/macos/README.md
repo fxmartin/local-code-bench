@@ -80,10 +80,26 @@ swift run LocalCodeBenchChecks     # run the test suite (exit code 0 = green)
 
 To produce a self-contained bundle that needs no Python/uv on the target Mac,
 run `scripts/build-macos-app.sh` from the repo root: it builds the shell in
-release mode, downloads a pinned relocatable CPython
+release mode, downloads a pinned, checksum-verified relocatable CPython
 (python-build-standalone), installs the harness wheel (with `pyyaml` /
-`python-dotenv`) into `Contents/Resources/python`, and assembles + ad-hoc
-signs `dist/LocalCodeBench.app`.
+`python-dotenv`) into `Contents/Resources/python`, and assembles + signs
+`dist/LocalCodeBench.app` (Story 18.3-001):
+
+- Every bundled Mach-O (dylibs, extension modules, the embedded `python3.12`,
+  the app executable) is signed inside-out with the hardened runtime and
+  `app/macos/entitlements.plist`; the script finishes with a clean
+  `codesign --verify --deep --strict`.
+- With a "Developer ID Application" certificate in the keychain (or a
+  `codesign_identity` pin) the bundle is distribution-signed; otherwise it
+  falls back to ad-hoc signing, labeled unsigned-for-distribution.
+- Every pin the script depends on — CPython version/tag/SHA-256, bundle id,
+  minimum macOS, entitlements path, signing identity — lives in
+  `configs/build.yaml`; same-named env vars (`PBS_TAG`, `CODESIGN_IDENTITY`,
+  …) override it for one-off experiments, and `--print-config` prints the
+  resolved values without building.
+- `CFBundleShortVersionString` mirrors `pyproject.toml`'s version, and the
+  About panel shows both the app version and the bundled harness version
+  (read from `Contents/Resources/harness-version`).
 
 `swift test` is deliberately not used: the XCTest / Swift Testing runtime ships
 only with full Xcode, and the benchmark machine has Command Line Tools only.
