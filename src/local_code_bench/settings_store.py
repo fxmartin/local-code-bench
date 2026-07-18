@@ -45,7 +45,7 @@ from .config import (
     load_inferencers,
     load_models,
 )
-from .settings import Settings, get_settings
+from .settings import Settings, SettingsError, get_settings, load_settings
 from .suite_catalog import load_custom_suites
 
 #: Default backups kept per config file (mirrors ``settings_backup.retention``).
@@ -74,6 +74,9 @@ _REGISTRY: dict[str, tuple[str, Callable[[Path], object]]] = {
     "inferencers": ("inferencers.yaml", _load_inferencers_file),
     "agents": ("agents.yaml", load_agents),
     "suites": ("suites.yaml", load_custom_suites),
+    # Story 16.4-001: operational defaults incl. the theme block, validated by
+    # the same loader the harness resolves them with.
+    "settings": ("settings.yaml", load_settings),
 }
 
 
@@ -260,7 +263,7 @@ class SettingsStore:
             candidate.write_text(content, encoding="utf-8")
             try:
                 loader(candidate)
-            except ConfigError as exc:
+            except (ConfigError, SettingsError) as exc:
                 message = str(exc).replace(str(candidate), str(path))
                 raise SettingsValidationError(
                     f"rejected edit to '{config_id}': {message}"

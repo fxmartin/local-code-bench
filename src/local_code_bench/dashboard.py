@@ -20,6 +20,7 @@ from pathlib import Path
 
 from local_code_bench import theme
 from local_code_bench.dashboard_charts import render_charts_section
+from local_code_bench.settings import load_theme_config
 from local_code_bench.dashboard_model import (
     AgentAggregate,
     DashboardData,
@@ -197,8 +198,6 @@ th.sortable-th:hover { text-decoration: underline; }
 .legend .swatch { margin-right: var(--space-1); }
 """.strip()
 
-_CSS = theme.THEME_CSS + "\n" + _PAGE_CSS
-
 
 # Progressive enhancement: the server-rendered tables are fully readable without
 # JavaScript; this inline script adds client-side filtering and column sorting on
@@ -251,6 +250,9 @@ _ENHANCE_JS = """
 
 
 def _render_html(data: DashboardData) -> str:
+    # Theme settings are read at generation time (story 16.4-001), so a saved
+    # accent/default-mode edit is reflected in the next generated page.
+    theme_config = load_theme_config()
     safe = _safe_data(data)
     embedded = json.dumps(safe, sort_keys=True, separators=(",", ":"))
     # Prevent the embedded JSON from prematurely closing the <script> element.
@@ -273,8 +275,8 @@ def _render_html(data: DashboardData) -> str:
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         "<title>local-code-bench — Results Dashboard</title>\n"
-        f"{theme.THEME_HEAD_SNIPPET}\n"
-        f"<style>\n{_CSS}\n</style>\n"
+        f"{theme.theme_head_snippet(theme_config.default_mode)}\n"
+        f"<style>\n{theme.theme_css(theme_config)}\n{_PAGE_CSS}\n</style>\n"
         "</head>\n"
         "<body>\n"
         f"{theme.THEME_TOGGLE_SNIPPET}\n"

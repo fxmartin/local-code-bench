@@ -25,12 +25,15 @@ inventory.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, fields
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from .theme import DEFAULT_ACCENT, DEFAULT_DANGER, DEFAULT_MODE, THEME_MODES, ThemeConfig
 
 DEFAULT_SETTINGS_PATH = Path("configs/settings.yaml")
 
@@ -66,6 +69,11 @@ class Settings:
     opencode_run_timeout_seconds: float = 10.0
     settings_backup_dir: str = ".runtime/settings-backups"
     settings_backup_retention: int = 10
+    # Dashboard theme (story 16.4-001): light-mode hues (#RRGGBB) and the
+    # initial mode; dark-mode tints are derived by the theme layer, never set.
+    theme_accent: str = DEFAULT_ACCENT
+    theme_danger: str = DEFAULT_DANGER
+    theme_default_mode: str = DEFAULT_MODE
 
 
 # YAML (section, key) -> Settings field. The YAML stays sectioned for humans;
@@ -90,6 +98,9 @@ _KEY_MAP: dict[tuple[str, str], str] = {
     ("opencode", "run_timeout_seconds"): "opencode_run_timeout_seconds",
     ("settings_backup", "dir"): "settings_backup_dir",
     ("settings_backup", "retention"): "settings_backup_retention",
+    ("theme", "accent"): "theme_accent",
+    ("theme", "danger"): "theme_danger",
+    ("theme", "default_mode"): "theme_default_mode",
 }
 
 # Fields whose values must be strictly positive (timeouts, caps, ports, counts).
@@ -106,6 +117,11 @@ _POSITIVE_FIELDS = {
     "opencode_run_timeout_seconds",
     "settings_backup_retention",
 }
+
+# Theme hues must be full #RRGGBB hex so the token block and the luminance
+# math never see a malformed color (story 16.4-001).
+_HEX_COLOR_FIELDS = {"theme_accent", "theme_danger"}
+_HEX_COLOR_RE = re.compile(r"#[0-9a-fA-F]{6}\Z")
 
 # Read-only measurement protocol: present in the shipped file for visibility,
 # but any deviation from these locked values is refused. The canary anchor set
@@ -161,6 +177,31 @@ def get_settings() -> Settings:
     return load_settings(DEFAULT_SETTINGS_PATH)
 
 
+def theme_config(settings: Settings) -> ThemeConfig:
+    """The theme layer's view of loaded settings (story 16.4-001)."""
+
+    return ThemeConfig(
+        accent=settings.theme_accent,
+        danger=settings.theme_danger,
+        default_mode=settings.theme_default_mode,
+    )
+
+
+def load_theme_config(path: str | Path | None = None) -> ThemeConfig:
+    """Fresh theme config for the render path — never a broken theme.
+
+    Re-reads the settings file per call so a saved edit shows on the next page
+    refresh without a restart. A malformed file falls back to the shipped
+    defaults here; the loader error itself still surfaces through the CLI and
+    the Settings tab's validated write path, which refuses to save it.
+    """
+
+    try:
+        return theme_config(load_settings(path))
+    except SettingsError:
+        return ThemeConfig()
+
+
 def _coerce(path: Path, dotted: str, field_name: str, value: object) -> object:
     annotation = _FIELD_TYPES[field_name]
     # bool is an int subclass; a YAML `true` must not sneak in as 1.
@@ -178,6 +219,10 @@ def _coerce(path: Path, dotted: str, field_name: str, value: object) -> object:
         coerced = value
     if field_name in _POSITIVE_FIELDS and not (isinstance(coerced, (int, float)) and coerced > 0):
         raise SettingsError(f"{path}: {dotted} must be positive")
+    if field_name in _HEX_COLOR_FIELDS and not _HEX_COLOR_RE.fullmatch(str(coerced)):
+        raise SettingsError(f"{path}: {dotted} must be a #RRGGBB hex color")
+    if field_name == "theme_default_mode" and coerced not in THEME_MODES:
+        raise SettingsError(f"{path}: {dotted} must be one of: {', '.join(THEME_MODES)}")
     return coerced
 
 

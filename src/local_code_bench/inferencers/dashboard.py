@@ -23,8 +23,8 @@ from urllib.parse import parse_qs, urlsplit
 
 from ..config import InferencerConfig, load_inferencers
 from ..engine_provenance import EngineProvenanceError, capture_engine_provenance
-from ..settings import get_settings
-from ..theme import THEME_CSS, THEME_HEAD_SNIPPET, THEME_TOGGLE_SNIPPET
+from ..settings import get_settings, load_theme_config
+from ..theme import THEME_TOGGLE_SNIPPET, theme_css, theme_head_snippet
 from . import manager
 from .manager import InferencerError, InferencerStatus
 
@@ -267,9 +267,19 @@ def serve_dashboard(
 
 
 def render_page() -> str:
-    """Return the self-contained dashboard HTML (inlined CSS/JS, no external assets)."""
+    """Return the self-contained dashboard HTML (inlined CSS/JS, no external assets).
 
-    return _PAGE
+    The token layer and pre-paint script are injected per render from the
+    current theme settings (story 16.4-001), so a saved theme edit shows on the
+    next refresh without a restart.
+    """
+
+    config = load_theme_config()
+    return (
+        _PAGE.replace("/*__THEME_CSS__*/", theme_css(config))
+        .replace("<!--__THEME_HEAD__-->", theme_head_snippet(config.default_mode))
+        .replace("<!--__THEME_TOGGLE__-->", THEME_TOGGLE_SNIPPET)
+    )
 
 
 _PAGE = """<!DOCTYPE html>
@@ -397,11 +407,3 @@ setInterval(refresh, 2000);
 </body>
 </html>
 """
-
-# Inject the shared token layer + base styles (story 16.1-001) and the
-# pre-paint script + theme toggle chrome (story 16.1-002) into the page.
-_PAGE = (
-    _PAGE.replace("/*__THEME_CSS__*/", THEME_CSS)
-    .replace("<!--__THEME_HEAD__-->", THEME_HEAD_SNIPPET)
-    .replace("<!--__THEME_TOGGLE__-->", THEME_TOGGLE_SNIPPET)
-)

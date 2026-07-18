@@ -28,9 +28,21 @@ Pages embed ``THEME_CSS`` (tokens + modes + base) plus the two chrome snippets
 and keep only layout-specific rules of their own, expressed exclusively as
 ``var(...)`` references. Restyling the
 UI is therefore a token edit here, not a hunt through per-page hex literals.
+
+Story 16.4-001 makes the accent/danger hues and the initial mode configurable:
+a :class:`ThemeConfig` (fed from the ``theme:`` block of
+``configs/settings.yaml`` via :func:`local_code_bench.settings.load_theme_config`)
+parameterizes :func:`tokens_css` / :func:`theme_css` / :func:`theme_head_snippet`.
+The dark-mode stop of each hue is *derived* (:func:`dark_tint` lifts lightness,
+hue preserved, until WCAG AA against the dark canvas), so the one-hue-per-role
+rule survives customization; the module-level constants stay as the shipped
+defaults so this file remains the single home of color literals.
 """
 
 from __future__ import annotations
+
+import colorsys
+from dataclasses import dataclass
 
 # --------------------------------------------------------------------------- #
 # Palette — white/black anchors, one neutral grey ramp (7 steps), one accent.
@@ -50,17 +62,122 @@ GREY_RAMP = (
     "#262626",
 )
 
+# Shipped theme defaults (story 16.4-001): a dark blue accent, a dark red
+# danger, and the OS scheme as the initial mode. These apply whenever the
+# ``theme:`` block of configs/settings.yaml is absent, keeping the file additive.
+DEFAULT_ACCENT = "#1e40af"
+DEFAULT_DANGER = "#991b1b"
+DEFAULT_MODE = "system"
+
+#: Valid values for the configured initial mode.
+THEME_MODES = ("light", "dark", "system")
+
+#: WCAG AA minimum contrast for normal text.
+_AA_TEXT_CONTRAST = 4.5
+
+
+def _rgb(hex_color: str) -> tuple[float, float, float]:
+    digits = hex_color.lstrip("#")
+    red, green, blue = (int(digits[i : i + 2], 16) / 255 for i in (0, 2, 4))
+    return red, green, blue
+
+
+def _hex(rgb: tuple[float, float, float]) -> str:
+    return "#" + "".join(f"{round(channel * 255):02x}" for channel in rgb)
+
+
+def relative_luminance(hex_color: str) -> float:
+    """WCAG relative luminance of a ``#RRGGBB`` color."""
+
+    linear = [
+        c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in _rgb(hex_color)
+    ]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def contrast_ratio(first: str, second: str) -> float:
+    """WCAG contrast ratio between two ``#RRGGBB`` colors (1:1 … 21:1)."""
+
+    lighter, darker = sorted(
+        (relative_luminance(first), relative_luminance(second)), reverse=True
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def dark_tint(hex_color: str) -> str:
+    """The dark-mode stop derived from a configured hue.
+
+    Lifts lightness (hue and saturation preserved, so one hue per role survives
+    customization) in small steps until the color meets AA 4.5:1 against the
+    dark canvas (``BLACK``); a hue that already meets it is returned unchanged.
+    """
+
+    if contrast_ratio(hex_color, BLACK) >= _AA_TEXT_CONTRAST:
+        return hex_color
+    hue, lightness, saturation = colorsys.rgb_to_hls(*_rgb(hex_color))
+    while lightness < 1.0:
+        lightness = min(1.0, lightness + 0.01)
+        candidate = _hex(colorsys.hls_to_rgb(hue, lightness, saturation))
+        if contrast_ratio(candidate, BLACK) >= _AA_TEXT_CONTRAST:
+            return candidate
+    return WHITE  # pragma: no cover - lightness 1.0 is white, which always passes
+
+
+def accent_contrast(stop: str) -> str:
+    """The readable text anchor on an accent-filled surface, as a var reference."""
+
+    white_wins = contrast_ratio(stop, WHITE) >= contrast_ratio(stop, BLACK)
+    return "var(--white)" if white_wins else "var(--black)"
+
+
+@dataclass(frozen=True)
+class ThemeConfig:
+    """The configurable theme surface: light-mode hues plus the initial mode.
+
+    Dark-mode stops are always derived (:func:`dark_tint`), never configured,
+    so a customized theme keeps the one-hue-per-role rule and AA contrast on
+    the dark canvas by construction.
+    """
+
+    accent: str = DEFAULT_ACCENT
+    danger: str = DEFAULT_DANGER
+    default_mode: str = DEFAULT_MODE
+
+
+def contrast_warnings(config: ThemeConfig | None = None) -> list[str]:
+    """AA warnings for configured hues against both mode backgrounds.
+
+    Pure luminance math, advisory only (story 16.4-001): the editor shows these
+    next to a saved theme edit but never blocks the write — FX owns the call.
+    """
+
+    resolved = config if config is not None else ThemeConfig()
+    warnings = []
+    for role, hue in (("accent", resolved.accent), ("danger", resolved.danger)):
+        for mode, stop, background in (
+            ("light", hue, WHITE),
+            ("dark", dark_tint(hue), BLACK),
+        ):
+            ratio = contrast_ratio(stop, background)
+            if ratio < _AA_TEXT_CONTRAST:
+                warnings.append(
+                    f"theme {role} {stop} is {ratio:.2f}:1 against the {mode}-mode "
+                    "background — below the WCAG AA 4.5:1 bar; saved anyway"
+                )
+    return warnings
+
+
 # Accent, tuned per scheme (story 16.1-002): no single blue holds AA 4.5:1
 # against both the white and the near-black anchor, so --accent is dual-valued —
-# the deeper stop for light mode, a lifted stop for dark mode.
-ACCENT = "#3a6df0"
-ACCENT_DARK = "#7aa2ff"
+# the configured stop for light mode, a derived lifted stop for dark mode.
+ACCENT = DEFAULT_ACCENT
+ACCENT_DARK = dark_tint(DEFAULT_ACCENT)
 
 # Danger red (story 16.2-001): the one status hue, reserved for failures and
 # destructive actions. Dual-valued like the accent so it holds AA contrast on
 # both anchors; every other status state stays monochrome (glyph + weight).
-DANGER = "#b3261e"
-DANGER_DARK = "#f2726f"
+DANGER = DEFAULT_DANGER
+DANGER_DARK = dark_tint(DEFAULT_DANGER)
 
 # Data-series paints for the inline SVG charts (story 16.2-002): the charts
 # speak the same monochrome-plus-accent language as the rest of the UI. Every
@@ -79,10 +196,19 @@ CHART_SERIES = (CHART_ACCENT, *CHART_GREYS)
 
 
 # --------------------------------------------------------------------------- #
-# Token block — the sole home of color literals in any stylesheet.
+# Token block — the sole home of color literals in any stylesheet. Since story
+# 16.4-001 it is a function of the configured theme; the module-level constant
+# keeps the shipped defaults for import-time consumers.
 # --------------------------------------------------------------------------- #
 
-TOKENS_CSS = f"""\
+
+def tokens_css(config: ThemeConfig | None = None) -> str:
+    """The ``:root`` token block for a theme, defaults when none is given."""
+
+    resolved = config if config is not None else ThemeConfig()
+    accent, accent_dark = resolved.accent, dark_tint(resolved.accent)
+    danger, danger_dark = resolved.danger, dark_tint(resolved.danger)
+    return f"""\
 :root {{
   color-scheme: light dark;
 
@@ -105,13 +231,14 @@ TOKENS_CSS = f"""\
   --border-strong: light-dark(var(--grey-3), var(--grey-6));
   --text: light-dark(var(--black), var(--grey-1));
   --text-muted: light-dark(var(--grey-5), var(--grey-4));
-  --accent: light-dark({ACCENT}, {ACCENT_DARK});
+  --accent: light-dark({accent}, {accent_dark});
+  --accent-contrast: light-dark({accent_contrast(accent)}, {accent_contrast(accent_dark)});
   --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
   --scrim: color-mix(in srgb, var(--black) 50%, transparent);
 
   /* Status semantics (locked, story 16.2-001): --danger alone carries hue,
      for failures/destructive actions only; pass/ok/warn are mono + weight. */
-  --danger: light-dark({DANGER}, {DANGER_DARK});
+  --danger: light-dark({danger}, {danger_dark});
   --danger-soft: color-mix(in srgb, var(--danger) 10%, transparent);
   --ok-fg: var(--text-muted);
   --err-fg: var(--danger);
@@ -171,6 +298,10 @@ TOKENS_CSS = f"""\
 """
 
 
+TOKENS_CSS = tokens_css()
+"""The token block for the shipped default theme."""
+
+
 # --------------------------------------------------------------------------- #
 # Mode overrides + toggle chrome (story 16.1-002). Forcing color-scheme on the
 # root flips every light-dark() token at once and drags native controls and
@@ -190,19 +321,35 @@ MODES_CSS = """\
 
 THEME_STORAGE_KEY = "lcb-theme"
 
-# Pre-paint script for <head>: applies the stored mode before the first paint
-# so a page never flashes the wrong theme. Written with a __KEY__ placeholder
-# (not an f-string) so the JS braces stay literal.
-THEME_INIT_JS = """\
+# Pre-paint script for <head>: applies the stored mode (else the configured
+# default mode, story 16.4-001) before the first paint so a page never flashes
+# the wrong theme. Written with __KEY__/__DEFAULT__ placeholders (not an
+# f-string) so the JS braces stay literal.
+_THEME_INIT_JS_TEMPLATE = """\
 (function () {
   try {
     var stored = localStorage.getItem("__KEY__");
-    if (stored === "light" || stored === "dark") {
-      document.documentElement.dataset.theme = stored;
+    var mode = stored === "light" || stored === "dark" ? stored : "__DEFAULT__";
+    if (mode === "light" || mode === "dark") {
+      document.documentElement.dataset.theme = mode;
     }
   } catch (err) { /* storage unavailable — stay on the OS scheme */ }
 })();
 """.replace("__KEY__", THEME_STORAGE_KEY)
+
+
+def _theme_init_js(default_mode: str) -> str:
+    return _THEME_INIT_JS_TEMPLATE.replace("__DEFAULT__", default_mode)
+
+
+def theme_head_snippet(default_mode: str = DEFAULT_MODE) -> str:
+    """The <head> pre-paint snippet: stored preference first, then the
+    configured initial mode; ``system`` leaves the OS scheme in charge."""
+
+    return f"<script>\n{_theme_init_js(default_mode)}</script>"
+
+
+THEME_INIT_JS = _theme_init_js(DEFAULT_MODE)
 
 THEME_TOGGLE_HTML = '<button id="theme-toggle" type="button"></button>'
 
@@ -310,5 +457,11 @@ p.warn, span.warn, li.warn { color: var(--warn-fg); font-weight: 600; min-height
 .card ul { margin: var(--space-2) 0 var(--space-4); }
 """
 
-THEME_CSS = TOKENS_CSS + "\n" + MODES_CSS + "\n" + BASE_CSS
+def theme_css(config: ThemeConfig | None = None) -> str:
+    """Tokens + mode overrides + base styles for a theme, ready for ``<style>``."""
+
+    return tokens_css(config) + "\n" + MODES_CSS + "\n" + BASE_CSS
+
+
+THEME_CSS = theme_css()
 """Tokens + mode overrides + base styles, ready to embed in a page's ``<style>`` block."""

@@ -49,6 +49,22 @@ are rejected with a `SettingsError` naming the offending `section.key`.
 | `opencode.run_timeout_seconds` | `10.0` | `opencode.blackbox.score_task_a` | Per-check run budget for the compiled binary |
 | `settings_backup.dir` | `.runtime/settings-backups` | `settings_store.default_settings_store` | Backup dir for validated settings writes |
 | `settings_backup.retention` | `10` | `settings_store.default_settings_store` | Backups kept per settings file |
+| `theme.accent` | `#1e40af` | `theme.tokens_css` via `settings.load_theme_config` | Light-mode accent hue (`#RRGGBB`); the dark-mode tint is derived automatically |
+| `theme.danger` | `#991b1b` | `theme.tokens_css` via `settings.load_theme_config` | Light-mode danger hue (`#RRGGBB`); the dark-mode tint is derived automatically |
+| `theme.default_mode` | `system` | `theme.theme_head_snippet` via `settings.load_theme_config` | Initial dashboard mode (`light` \| `dark` \| `system`); a stored per-browser toggle choice wins |
+
+## Theme (story 16.4-001)
+
+The `theme:` block styles every dashboard surface through the shared token
+layer (`src/local_code_bench/theme.py`). Only the light-mode hues are
+configured; each dark-mode stop is *derived* (lightness lifted, hue preserved,
+until WCAG AA 4.5:1 against the dark canvas), so one hue per role holds under
+customization. The render path re-reads the file per page render, so a saved
+edit shows on the next refresh without a restart. Malformed values (bad hex,
+unknown mode) are rejected by the loader — and therefore by the Settings tab's
+validated write path — never rendered as a broken theme. A hue with poor AA
+contrast against either mode's background produces a *warning* on save, not a
+rejection.
 
 ## Read-only protocol section
 
@@ -83,6 +99,7 @@ Every hardcoded operational value found in the audit, with its disposition:
 | Inferencer start/health timeouts 30 s / 1 s | `inferencers/manager.py` | **Externalized** → `inferencer.start_timeout_seconds`, `inferencer.health_timeout_seconds` |
 | OpenCode build/run timeouts 60 s / 10 s | `opencode/blackbox.py` | **Externalized** → `opencode.build_timeout_seconds`, `opencode.run_timeout_seconds` |
 | 15.2-001 backup dir/retention | `settings_store.py` | **Externalized** → `settings_backup.dir`, `settings_backup.retention`, wired by `default_settings_store()` |
+| Theme accent/danger hues + initial mode | `theme.py` | **Externalized** (16.4-001) → `theme.accent`, `theme.danger`, `theme.default_mode`; module constants remain as the shipped defaults and the single home of color literals |
 | Canary anchor set `CANARY_HUMANEVAL_IDS` | `tasks.py` | **Non-setting (protocol-locked)** — the fixed anchor set is what makes historical canary runs comparable; no settings key exists on purpose |
 | Benchmark temperature 0 / seed 0 | `runner.py`, `cli.py` (opencode), `opencode/invoke.py` | **Non-setting (protocol-locked)** — read-only `protocol:` section documents them; loader refuses overrides |
 | Local-model concurrency = 1 | `configs/models.yaml` per-model `concurrency` | **Non-setting (protocol-locked)** — a per-model measurement-protocol knob in the model registry, not an operational default |
