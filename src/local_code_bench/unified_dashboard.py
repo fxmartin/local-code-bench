@@ -40,6 +40,7 @@ from . import compare_report
 from . import dashboard_lifecycle
 from . import dashboard_server as results_panel
 from . import launch
+from . import settings_editor
 from . import settings_panel
 from .config import (
     AutoTierConfig,
@@ -63,6 +64,7 @@ from .inferencers import tiered, tiering
 from .inferencers.external import check_availability
 from .optimizers import manager as optimizer_manager
 from .settings import get_settings
+from .settings_store import SettingsStore, default_settings_store
 from .suite_catalog import catalog_payload
 from .theme import THEME_CSS, THEME_HEAD_SNIPPET, THEME_TOGGLE_SNIPPET
 
@@ -310,6 +312,10 @@ class DashboardContext:
     # Inferencers one. Lifecycle stays on the CLI (`bench optimizer start/stop`).
     optimizer_configs: dict[str, OptimizerConfig] = field(default_factory=dict)
     optimizer_state_dir: str | Path = ".runtime/optimizers"
+    # Story 15.3-003: the validated write path behind the Settings tab's suites &
+    # agents editors. The store resolves file paths from its own registry, so a
+    # request can never name a file outside the registered config set.
+    settings_store: SettingsStore = field(default_factory=default_settings_store)
 
 
 @dataclass(frozen=True)
@@ -1083,6 +1089,23 @@ def handle_request(
         return _json(*catalog_action(ctx))
     if method == "GET" and route == "/api/settings":
         return _json(*settings_action(ctx))
+    if method == "GET" and route == "/api/settings/config":
+        return _json(*settings_editor.read_action(ctx.settings_store, query.get("id", [""])[0]))
+    if method == "POST" and route == "/api/settings/config":
+        try:
+            parsed = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            return _json(400, {"error": "invalid JSON body"})
+        return _json(
+            *settings_editor.write_action(
+                ctx.settings_store,
+                query.get("id", [""])[0],
+                parsed,
+                referenced_suites=lambda: settings_editor.referenced_suite_ids(
+                    _resolve_result_paths(ctx)
+                ),
+            )
+        )
     if method == "GET" and route == "/api/chat/catalog":
         return _json(*chat_catalog_action(ctx))
     if method == "GET" and route == "/api/inventory":
@@ -1460,6 +1483,12 @@ _PAGE = """<!DOCTYPE html>
     margin-left: var(--space-2); font-family: var(--font-mono); }
   .lock-note { color: var(--warn-fg); }
   .flag-set { color: var(--ok-fg); } .flag-unset { color: var(--warn-fg); }
+  .settings-editor { margin: var(--space-2) 0 var(--space-4); }
+  .settings-editor summary { cursor: pointer; color: var(--text-muted); }
+  .settings-editor textarea { width: 100%; min-height: 14rem; resize: vertical;
+    font-family: var(--font-mono); font-size: var(--text-sm); }
+  .settings-editor .editor-note { color: var(--text-muted); font-size: var(--text-sm); }
+  .settings-editor .editor-warnings { color: var(--warn-fg); }
 </style>
 </head>
 <body>
@@ -2969,9 +2998,11 @@ _PAGE = """<!DOCTYPE html>
   watchMove();
 })();
 
-// Settings section: read-only aggregate over /api/settings (story 15.1-001).
-// Renders whatever groups/items/fields the server sends — all interpretation
-// (env indicators, protocol locks, per-group load errors) happens server-side.
+// Settings section: aggregate over /api/settings (story 15.1-001). Renders
+// whatever groups/items/fields the server sends — all interpretation (env
+// indicators, protocol locks, per-group load errors, which groups are editable)
+// happens server-side. Groups flagged editable get a YAML editor over the
+// validated write path at /api/settings/config (story 15.3-003).
 (function () {
   const host = document.getElementById("settings-groups");
   const err = document.getElementById("settings-err");
@@ -3045,9 +3076,85 @@ _PAGE = """<!DOCTYPE html>
     }
     table.appendChild(tbody);
     host.appendChild(table);
+    if (g.editable) attachEditor(g);
+  }
+
+  // One YAML editor per editable group (story 15.3-003): load content + hash,
+  // save through the validated write path. The server rejects invalid edits
+  // (422), stale forms (409, edit the reloaded file), and unregistered files
+  // (404); a save may return warnings (e.g. a removed suite id still used by a
+  // saved launcher selection) which are shown but never block the write.
+  function attachEditor(g) {
+    const details = document.createElement("details");
+    details.className = "settings-editor";
+    const summary = document.createElement("summary");
+    summary.textContent = "Edit " + g.source;
+    const note = document.createElement("p");
+    note.className = "editor-note";
+    note.textContent = g.editable_note || "";
+    const area = document.createElement("textarea");
+    area.spellcheck = false;
+    const save = document.createElement("button");
+    save.textContent = "Save";
+    const reload = document.createElement("button");
+    reload.textContent = "Reload";
+    const status = document.createElement("p");
+    const warnings = document.createElement("ul");
+    warnings.className = "editor-warnings";
+    details.append(summary, note, area, save, reload, status, warnings);
+    host.appendChild(details);
+    let hash = null;
+
+    function fail(message) {
+      status.textContent = message;
+      status.className = "err";
+    }
+
+    async function load() {
+      warnings.innerHTML = "";
+      status.className = "";
+      status.textContent = "";
+      try {
+        const res = await fetch("/api/settings/config?id=" + encodeURIComponent(g.id));
+        const data = await res.json();
+        if (!res.ok) { fail(data.error || ("load failed (" + res.status + ")")); return; }
+        area.value = data.content;
+        hash = data.content_hash;
+      } catch (e) { fail("load failed: " + e); }
+    }
+
+    details.addEventListener("toggle", () => {
+      if (details.open) load();
+      else refresh();  // closing the editor lets the tables catch up
+    });
+    reload.addEventListener("click", load);
+    save.addEventListener("click", async () => {
+      warnings.innerHTML = "";
+      status.className = "";
+      status.textContent = "saving...";
+      try {
+        const res = await fetch("/api/settings/config?id=" + encodeURIComponent(g.id), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: area.value, expected_hash: hash }),
+        });
+        const data = await res.json();
+        if (!res.ok) { fail(data.error || ("save failed (" + res.status + ")")); return; }
+        hash = data.content_hash;
+        status.textContent = "saved (backup: " + data.backup + ")";
+        for (const w of data.warnings || []) {
+          const li = document.createElement("li");
+          li.className = "warn";
+          li.textContent = w;
+          warnings.appendChild(li);
+        }
+      } catch (e) { fail("save failed: " + e); }
+    });
   }
 
   async function refresh() {
+    // Never re-render over an open editor: it would wipe unsaved edits.
+    if (host.querySelector(".settings-editor[open]")) return;
     try {
       const res = await fetch("/api/settings");
       const data = await res.json();

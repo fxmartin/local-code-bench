@@ -328,3 +328,35 @@ def test_benchmark_temperature_and_seed_are_locked(tmp_path: Path) -> None:
     assert fields["temperature"]["rationale"]
     assert fields["seed"]["value"] == 0
     assert fields["seed"]["locked"] is True
+
+
+# ---------------------------------------------------------------------------
+# Story 15.3-003: editable groups and runner-fixed agent fields
+# ---------------------------------------------------------------------------
+
+
+def test_agent_type_is_locked_as_runner_fixed(tmp_path: Path) -> None:
+    agents = _group(_payload(tmp_path), "agents")
+    type_field = _fields(_item(agents, "codex"))["type"]
+
+    assert type_field["locked"] is True
+    assert "codex" in type_field["rationale"]  # names the supported harness set
+
+
+def test_suites_and_agents_groups_are_flagged_editable_with_note(tmp_path: Path) -> None:
+    payload = _payload(tmp_path)
+
+    for group_id in ("suites", "agents"):
+        group = _group(payload, group_id)
+        assert group["editable"] is True
+        assert group["editable_note"]
+    assert "code" in _group(payload, "suites")["editable_note"]
+
+
+def test_read_only_groups_are_not_flagged_editable(tmp_path: Path) -> None:
+    payload = _payload(tmp_path)
+
+    for group_id in ("models", "inferencers", "storage"):
+        group = _group(payload, group_id)
+        assert group["editable"] is False
+        assert group["editable_note"] is None
