@@ -283,13 +283,12 @@ _PAGE = """<!DOCTYPE html>
 /*__THEME_CSS__*/
   body { margin: var(--space-6); }
   table { max-width: 56rem; }
-  #err { color: var(--err-fg); font-weight: 600; min-height: 1.2rem; }
 </style>
 </head>
 <body>
 <!--__THEME_TOGGLE__-->
 <h1>Inferencer Control</h1>
-<p id="err"></p>
+<p id="err" class="err"></p>
 <table>
   <thead>
     <tr><th></th><th>Engine</th><th>Version</th><th>Lifecycle</th><th>Port</th><th>PID</th><th>State</th><th></th></tr>
@@ -301,7 +300,7 @@ _PAGE = """<!DOCTYPE html>
   <div class="card">
     <p id="modal-msg"></p>
     <ul id="modal-list"></ul>
-    <button id="modal-confirm">Stop them &amp; start</button>
+    <button class="danger" id="modal-confirm">Stop them &amp; start</button>
     <button id="modal-cancel">Cancel</button>
   </div>
 </div>
@@ -332,7 +331,7 @@ function render(items) {
     const action = it.lifecycle === "app"
       ? "<span>manage in app</span>"
       : (it.running
-          ? `<button data-stop="${it.name}">Stop</button>`
+          ? `<button class="danger" data-stop="${it.name}">Stop</button>`
           : `<button data-start="${it.name}">Start</button>`);
     tr.innerHTML =
       `<td><span class="dot ${dot}"></span></td>` +

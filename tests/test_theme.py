@@ -100,15 +100,16 @@ def test_type_spacing_radius_elevation_scales_defined() -> None:
         assert token in theme.TOKENS_CSS, f"missing scale token {token}"
 
 
-def test_palette_is_anchors_grey_ramp_and_single_accent() -> None:
+def test_palette_is_anchors_grey_ramp_accent_and_danger() -> None:
     palette = _hexes(theme.TOKENS_CSS)
     assert theme.WHITE in palette
     assert theme.BLACK in palette
     greys = [color for color in palette if _is_grey(color)]
     accents = {color for color in palette if not _is_grey(color)}
-    # One accent hue, two lightness stops (story 16.1-002 dual-values --accent
-    # so it holds WCAG AA contrast against both the white and black anchors).
-    assert accents == {theme.ACCENT, theme.ACCENT_DARK}
+    # One accent hue and one danger hue, each with two lightness stops
+    # (stories 16.1-002 / 16.2-001 dual-value --accent and --danger so they
+    # hold WCAG AA contrast against both the white and black anchors).
+    assert accents == {theme.ACCENT, theme.ACCENT_DARK, theme.DANGER, theme.DANGER_DARK}
     # Grey ramp of 5–7 steps between the white/black anchors.
     ramp_steps = len(set(greys)) - 2
     assert 5 <= ramp_steps <= 7, f"grey ramp has {ramp_steps} steps"
