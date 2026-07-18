@@ -26,6 +26,10 @@ final class AppModel: ObservableObject {
     /// a closed window (`openWindow` is only reachable from a view).
     var openMainWindow: (() -> Void)?
 
+    /// Launch-at-login registration via SMAppService; the menu-bar toggle
+    /// drives it (story 18.2-002).
+    let launchAtLogin = LaunchAtLogin()
+
     let host = "127.0.0.1"
     let port = 8765
 
@@ -70,6 +74,43 @@ final class AppModel: ObservableObject {
             guard let hint = await UpdateCheck.check(currentVersion: current, repo: repo)
             else { return }
             self?.availableUpdate = hint
+        }
+    }
+
+    // MARK: Finder conveniences (story 18.2-002)
+
+    var resultsDirectory: URL? {
+        location.map { ReportsLocation.resultsDirectory(for: $0) }
+    }
+
+    var reportsDirectory: URL? {
+        location.map { ReportsLocation.reportsDirectory(for: $0) }
+    }
+
+    func recentReports() -> [URL] {
+        guard let reportsDirectory else { return [] }
+        return RecentReports.list(in: reportsDirectory)
+    }
+
+    /// Create-if-missing so the menu action always lands somewhere real, then
+    /// show the folder in Finder.
+    func openResultsFolder() {
+        guard let resultsDirectory else { return }
+        try? FileManager.default.createDirectory(
+            at: resultsDirectory, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(resultsDirectory)
+    }
+
+    func revealInFinder(_ url: URL) {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    /// A dashboard-triggered report download completed: notify with "Reveal
+    /// in Finder". Unbundled dev builds cannot post notifications, so they
+    /// reveal the file directly — the download must never finish silently.
+    func reportDownloadFinished(at url: URL) {
+        if !notifier.postDownloadFinished(at: url) {
+            revealInFinder(url)
         }
     }
 

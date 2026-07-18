@@ -5,16 +5,24 @@ import WebKit
 
 /// Full-bleed WKWebView on the dashboard URL. Bridging is deliberately
 /// minimal: same-origin navigations render here, anything else opens in the
-/// default browser, and downloads (e.g. the Epic-17 comparison PDF) go
-/// through the standard save panel.
+/// default browser, and downloads land in the reports folder (PDF reports,
+/// story 18.2-002) or go through the standard save panel (everything else).
 struct DashboardWebView: NSViewRepresentable {
     let url: URL
+    /// `results/reports/` for the recorded data location; PDF downloads land
+    /// here without a save panel. nil falls back to the panel.
+    var reportsDirectory: URL?
+    /// Called with the destination of a completed report download.
+    var onReportDownloaded: ((URL) -> Void)?
     /// A dashboard section a notification click asked for; consumed (reset to
     /// nil) once handed to the page's `window.showSection`.
     @Binding var pendingSection: String?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(baseURL: url)
+        Coordinator(
+            baseURL: url,
+            reportsDirectory: reportsDirectory,
+            onReportDownloaded: onReportDownloaded)
     }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -35,12 +43,23 @@ struct DashboardWebView: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         let baseURL: URL
+        let reportsDirectory: URL?
+        let onReportDownloaded: ((URL) -> Void)?
         /// A section requested while the page was still loading; replayed
         /// from `didFinish` (a freshly reopened window races the page load).
         private var sectionAwaitingLoad: String?
+        /// Where each in-flight report download will land, so `didFinish`
+        /// knows which file to announce.
+        private var reportDestinations: [WKDownload: URL] = [:]
 
-        init(baseURL: URL) {
+        init(
+            baseURL: URL,
+            reportsDirectory: URL? = nil,
+            onReportDownloaded: ((URL) -> Void)? = nil
+        ) {
             self.baseURL = baseURL
+            self.reportsDirectory = reportsDirectory
+            self.onReportDownloaded = onReportDownloaded
         }
 
         func show(section: String, in webView: WKWebView) {
@@ -132,10 +151,33 @@ struct DashboardWebView: NSViewRepresentable {
             suggestedFilename: String,
             completionHandler: @escaping @MainActor @Sendable (URL?) -> Void
         ) {
+            // PDF reports skip the save panel and land in the user-visible
+            // reports folder (story 18.2-002); other downloads keep the panel.
+            if let reportsDirectory, ReportDownload.isPDF(filename: suggestedFilename) {
+                try? FileManager.default.createDirectory(
+                    at: reportsDirectory, withIntermediateDirectories: true)
+                let destination = ReportDownload.destination(
+                    suggestedFilename: suggestedFilename, in: reportsDirectory)
+                reportDestinations[download] = destination
+                completionHandler(destination)
+                return
+            }
             let panel = NSSavePanel()
             panel.nameFieldStringValue = suggestedFilename
             panel.canCreateDirectories = true
             completionHandler(panel.runModal() == .OK ? panel.url : nil)
+        }
+
+        func downloadDidFinish(_ download: WKDownload) {
+            guard let destination = reportDestinations.removeValue(forKey: download)
+            else { return }
+            onReportDownloaded?(destination)
+        }
+
+        func download(
+            _ download: WKDownload, didFailWithError error: Error, resumeData: Data?
+        ) {
+            reportDestinations.removeValue(forKey: download)
         }
     }
 }

@@ -60,11 +60,67 @@ struct LocalCodeBenchApp: App {
     NSApp.activate(ignoringOtherApps: true)
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// A launch-at-login start (SMAppService) begins quietly in the menu bar:
+    /// the opening Apple event carries 'lgit', and the dashboard window it
+    /// would otherwise splash across login is closed (story 18.2-002).
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        guard Self.launchedAsLoginItem() else { return }
+        for window in NSApp.windows
+        where window.identifier?.rawValue.hasPrefix("main") == true {
+            window.close()
+        }
+    }
+
+    private static func launchedAsLoginItem() -> Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent else { return false }
+        return LoginItemLaunch.isLoginItemLaunch(
+            eventClass: event.eventClass,
+            eventID: event.eventID,
+            propData: event.paramDescriptor(
+                forKeyword: AEKeyword(LoginItemLaunch.propDataKeyword))?.enumCodeValue)
+    }
+
     /// Window close must not kill in-flight runs/moves: the app (and the
     /// service process it owns) stays alive in the Dock and menu bar.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    /// Dock menu: "Open Results Folder" plus the most recent Epic-17 PDF
+    /// reports, each revealed in Finder (story 18.2-002).
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let model = AppModel.shared
+        guard model.resultsDirectory != nil else { return nil }
+        let menu = NSMenu()
+        let open = NSMenuItem(
+            title: "Open Results Folder",
+            action: #selector(openResultsFolder(_:)), keyEquivalent: "")
+        open.target = self
+        menu.addItem(open)
+        let reports = model.recentReports()
+        if !reports.isEmpty {
+            menu.addItem(.separator())
+            for report in reports {
+                let item = NSMenuItem(
+                    title: report.lastPathComponent,
+                    action: #selector(revealReport(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = report
+                menu.addItem(item)
+            }
+        }
+        return menu
+    }
+
+    @objc private func openResultsFolder(_ sender: Any?) {
+        AppModel.shared.openResultsFolder()
+    }
+
+    @objc private func revealReport(_ sender: NSMenuItem) {
+        guard let report = sender.representedObject as? URL else { return }
+        AppModel.shared.revealInFinder(report)
     }
 
     /// Clicking the Dock icon with no open window reopens the dashboard

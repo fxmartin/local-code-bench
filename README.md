@@ -925,6 +925,11 @@ and tier moves survive; reopening the window reattaches to the same session. On
 first run it asks where benchmark data lives: a private
 `~/Library/Application Support/LocalCodeBench` directory, or an existing
 `local-code-bench` checkout so configs and results are shared with the CLI.
+The menu-bar and Dock menus offer "Open Results Folder" and the most recent
+Epic-17 PDF reports (revealed in Finder), an optional launch-at-login toggle
+(`SMAppService`; a login launch starts quietly in the menu bar), and PDF
+reports downloaded from the dashboard land in `results/reports/` with a
+"Reveal in Finder" notification — see `app/macos/README.md` for details.
 
 The app supervises the service it launches: a crash is restarted with
 exponential backoff, repeated crash-looping surfaces the service log instead of
