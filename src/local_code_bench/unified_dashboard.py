@@ -37,6 +37,7 @@ from urllib.parse import parse_qs, urlsplit
 from . import chat
 from . import compare
 from . import compare_report
+from . import compare_verdicts
 from . import dashboard_lifecycle
 from . import dashboard_server as results_panel
 from . import launch
@@ -1146,6 +1147,7 @@ def compare_report_action(ctx: DashboardContext, axis_id: str) -> tuple[int, dic
         models=ctx.models,
         sweep_points=load_dashboard_data(paths).sweep_points,
         metadata_by_run=compare_report.read_run_metadata(paths),
+        canary_history=compare_verdicts.canary_history(paths),
     )
 
 
@@ -1609,6 +1611,11 @@ _PAGE = """<!DOCTYPE html>
   .report-subtitle { color: var(--text-muted); max-width: 46rem; margin: 0 0 var(--space-3); }
   .chip-row { display: flex; gap: var(--space-2); flex-wrap: wrap; margin: 0 0 var(--space-4); }
   .chip b { color: var(--text); font-weight: 600; }
+  .conclusion { max-width: 46rem; border-left: 3px solid var(--accent);
+    padding-left: var(--space-3); margin: 0 0 var(--space-2); }
+  .conclusion-inconclusive, .conclusion-insufficient { border-left-color: var(--border);
+    color: var(--text-muted); }
+  .conclusion .note { display: block; font-size: var(--text-xs); color: var(--text-muted); }
   .panel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
     gap: var(--space-3); max-width: 80rem; }
   .stat-panel { border: 1px solid var(--border); border-radius: var(--radius-md);
@@ -3803,6 +3810,17 @@ _PAGE = """<!DOCTYPE html>
     host.appendChild(subtitle(data.subtitle));
     if (data.axis.description) host.appendChild(el("p", "note", data.axis.description));
     if (data.chips.length) host.appendChild(chipRow(data.chips));
+
+    if (data.conclusions.length) {
+      host.appendChild(el("h3", "", "Conclusions"));
+      for (const c of data.conclusions) {
+        const item = el("p", "conclusion conclusion-" + c.status, c.text);
+        if (c.run_ids.length) {
+          item.appendChild(el("span", "note", " Runs: " + c.run_ids.join(", ")));
+        }
+        host.appendChild(item);
+      }
+    }
 
     if (!data.data_ready) {
       host.appendChild(el("h3", "", "No comparable runs yet"));

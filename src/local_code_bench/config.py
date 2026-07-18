@@ -762,10 +762,21 @@ class HighlightedPair:
     reason: str
 
 
+#: How a verdict rule is evaluated (story 17.2-002): ``pair`` thresholds one
+#: side's aggregate against another's, ``quality_bar`` finds the smallest
+#: configuration within ``threshold`` of the best, ``canary_drift`` thresholds
+#: the latest canary run against the previous one.
+VERDICT_KINDS: frozenset[str] = frozenset({"pair", "quality_bar", "canary_drift"})
+
+
 @dataclass(frozen=True)
 class VerdictRule:
     """A deterministic conclusion rule: a thresholded metric over cohort aggregates.
 
+    ``margin`` is the declared noise band around ``threshold`` — a computed
+    value inside it is rendered "inconclusive — within noise margin", never a
+    confident verdict. ``sides`` names the two cohorts a ``pair`` rule
+    compares (in order), required when the axis declares more than two.
     ``settings_key`` names the Epic-15 settings entry that overrides
     ``threshold`` once the settings layer lands; until then the shipped
     threshold is the default (story 17.1-002 technical notes).
@@ -777,6 +788,9 @@ class VerdictRule:
     unit: str | None = None
     description: str | None = None
     settings_key: str | None = None
+    kind: str = "pair"
+    margin: float = 0.0
+    sides: tuple[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -868,14 +882,17 @@ def _parse_comparison_axis(entry: Any, index: int) -> ComparisonAxis:
         allowed = " | ".join(sorted(PAIRING_KEYS))
         raise ConfigError(f"comparisons[{index}].pairing_key must be one of: {allowed}")
 
+    cohorts = _parse_cohorts(entry.get("cohorts"), index)
     return ComparisonAxis(
         id=_required_str(entry, "id", index, root="comparisons"),
         title=_required_str(entry, "title", index, root="comparisons"),
         pairing_key=pairing_key,  # type: ignore[arg-type]
-        cohorts=_parse_cohorts(entry.get("cohorts"), index),
+        cohorts=cohorts,
         description=_optional_str(entry, "description", index, root="comparisons"),
         highlighted_pairs=_parse_highlighted_pairs(entry.get("highlighted_pairs"), index),
-        verdicts=_parse_verdicts(entry.get("verdicts"), index),
+        verdicts=_parse_verdicts(
+            entry.get("verdicts"), index, cohort_names=tuple(c.name for c in cohorts)
+        ),
     )
 
 
@@ -927,7 +944,9 @@ def _parse_highlighted_pairs(value: Any, index: int) -> tuple[HighlightedPair, .
     return tuple(pairs)
 
 
-def _parse_verdicts(value: Any, index: int) -> tuple[VerdictRule, ...]:
+def _parse_verdicts(
+    value: Any, index: int, *, cohort_names: tuple[str, ...] = ()
+) -> tuple[VerdictRule, ...]:
     if value is None:
         return ()
     root = f"comparisons[{index}].verdicts"
@@ -944,6 +963,14 @@ def _parse_verdicts(value: Any, index: int) -> tuple[VerdictRule, ...]:
         threshold = item.get("threshold")
         if isinstance(threshold, bool) or not isinstance(threshold, int | float):
             raise ConfigError(f"{root}[{position}].threshold must be a number")
+        kind = _optional_str(item, "kind", position, root=root) or "pair"
+        if kind not in VERDICT_KINDS:
+            allowed = " | ".join(sorted(VERDICT_KINDS))
+            raise ConfigError(f"{root}[{position}].kind must be one of: {allowed}")
+        margin = item.get("margin", 0.0)
+        if isinstance(margin, bool) or not isinstance(margin, int | float) or margin < 0:
+            raise ConfigError(f"{root}[{position}].margin must be a non-negative number")
+        sides = _parse_verdict_sides(item, position, root, kind, cohort_names)
         verdict = VerdictRule(
             id=_required_str(item, "id", position, root=root),
             metric=metric,
@@ -951,11 +978,49 @@ def _parse_verdicts(value: Any, index: int) -> tuple[VerdictRule, ...]:
             unit=_optional_str(item, "unit", position, root=root),
             description=_optional_str(item, "description", position, root=root),
             settings_key=_optional_str(item, "settings_key", position, root=root),
+            kind=kind,
+            margin=float(margin),
+            sides=sides,
         )
         if any(verdict.id == other.id for other in verdicts):
             raise ConfigError(f"{root}[{position}].id duplicates '{verdict.id}'")
         verdicts.append(verdict)
     return tuple(verdicts)
+
+
+def _parse_verdict_sides(
+    item: dict[str, Any],
+    position: int,
+    root: str,
+    kind: str,
+    cohort_names: tuple[str, ...],
+) -> tuple[str, str] | None:
+    """Validate a rule's declared comparison sides against the axis's cohorts.
+
+    A ``pair`` rule over more than two cohorts is ambiguous without them, so
+    that is rejected at load time rather than guessed at render time.
+    """
+
+    sides = _optional_str_tuple(item, "sides", position, root=root)
+    if kind != "pair":
+        if sides:
+            raise ConfigError(f"{root}[{position}].sides only applies to pair verdicts")
+        return None
+    if not sides:
+        if len(cohort_names) > 2:
+            raise ConfigError(
+                f"{root}[{position}].sides must name the two cohorts to compare"
+                " when the axis declares more than two"
+            )
+        return None
+    if len(sides) != 2:
+        raise ConfigError(f"{root}[{position}].sides must name exactly two cohorts")
+    for name in sides:
+        if name not in cohort_names:
+            raise ConfigError(
+                f"{root}[{position}].sides references unknown cohort '{name}'"
+            )
+    return (sides[0], sides[1])
 
 
 def _optional_str_tuple(

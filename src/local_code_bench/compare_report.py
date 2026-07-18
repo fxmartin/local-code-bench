@@ -26,6 +26,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from local_code_bench.compare import ConfigurationStats, _read_records
+from local_code_bench.compare_verdicts import CanaryHistory, conclusions
 from local_code_bench.config import (
     ComparisonAxis,
     ComparisonCatalog,
@@ -133,10 +134,13 @@ def report_action(
     models: Mapping[str, ModelConfig],
     sweep_points: Sequence[SweepPoint] = (),
     metadata_by_run: Mapping[str, dict[str, object]] | None = None,
+    canary_history: CanaryHistory | None = None,
 ) -> tuple[int, dict[str, object]]:
     """Build the ``GET /api/compare/report?axis=<id>`` payload for one axis.
 
     Unknown (or missing) axis is a 404 listing the declared axis ids.
+    ``canary_history`` feeds the axis's ``canary_drift`` verdict rules (story
+    17.2-002); axes without one never read it.
     """
 
     axis = catalog.axis(axis_id)
@@ -165,6 +169,9 @@ def report_action(
         "sides": _cohort_summaries(axis, stats, models),
         "subtitle": _subtitle(assigned, metadata),
         "chips": _chips(assigned, metadata),
+        "conclusions": conclusions(
+            axis, assigned, models=models, canary_history=canary_history
+        ),
         "members": members,
         "frontier": _frontier(axis, stats, models),
         "context_scaling": _context_scaling(axis, sweep_points, models),

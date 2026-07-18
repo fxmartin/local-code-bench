@@ -423,11 +423,80 @@ def test_api_compare_report_unknown_axis_is_404(tmp_path: Path) -> None:
     assert payload["axes"] == ["engine"]
 
 
+_CANARY_COMPARISONS_YAML = """\
+comparisons:
+  - id: canary
+    title: Canary drift
+    pairing_key: suite_context
+    cohorts:
+      - name: local
+        names: [local-coder]
+      - name: cloud
+        names: [cloud-coder]
+    verdicts:
+      - id: canary-drift
+        metric: pass_at_1
+        threshold: 5.0
+        unit: pp
+        kind: canary_drift
+        margin: 1.0
+"""
+
+
+def _canary_run(path: Path, timestamp: str, passes: list[bool]) -> Path:
+    append_jsonl(path, {"record_type": "metadata", "timestamp": timestamp})
+    for index, passed in enumerate(passes):
+        append_jsonl(
+            path,
+            {
+                "run_mode": "endpoint",
+                "model": "local-coder",
+                "suite": "canary",
+                "task_id": f"t{index}",
+                "passed": passed,
+                "metrics": {"latency_seconds": 1.0},
+            },
+        )
+    return path
+
+
+def test_api_compare_report_feeds_canary_history_to_drift_verdicts(tmp_path: Path) -> None:
+    # Story 17.2-002 AC: the canary axis view calls out drift beyond the
+    # declared tolerance vs the previous run, with both values and dates.
+    catalog = tmp_path / "comparisons.yaml"
+    catalog.write_text(_CANARY_COMPARISONS_YAML, encoding="utf-8")
+    old = _canary_run(tmp_path / "old.jsonl", "2026-07-01T10:00:00+00:00", [True, True])
+    new = _canary_run(tmp_path / "new.jsonl", "2026-07-15T10:00:00+00:00", [False, False])
+
+    resp = ud.handle_request(
+        "GET",
+        "/api/compare/report?axis=canary",
+        _ctx([old, new], comparisons_path=catalog),
+    )
+
+    assert resp.status == 200
+    payload = json.loads(resp.body)
+    drift = [c for c in payload["conclusions"] if c["rule_id"] == "canary-drift"]
+    assert drift
+    assert drift[0]["status"] == "holds"
+    assert "2026-07-01" in drift[0]["text"] and "2026-07-15" in drift[0]["text"]
+    assert drift[0]["run_ids"] == ["new.jsonl", "old.jsonl"]
+
+
 def test_page_has_benchmarks_section_with_axis_picker() -> None:
     body = ud.render_page()
     assert 'data-section="benchmarks"' in body
     assert 'id="section-benchmarks"' in body
     assert 'id="bench-axis"' in body
+
+
+def test_report_view_renders_conclusion_callouts() -> None:
+    # Story 17.2-002: the report view states each verdict rule's conclusion as
+    # prose, with its supporting run IDs attached.
+    body = ud.render_page()
+    assert "data.conclusions" in body
+    assert "Conclusions" in body
+    assert "run_ids" in body
     assert "/api/compare/axes" in body
     assert "/api/compare/report" in body
 
