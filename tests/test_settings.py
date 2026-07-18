@@ -304,3 +304,122 @@ def test_settings_module_reexports_for_backfill_story() -> None:
     loaded = settings_module.load_settings(DEFAULT_SETTINGS_PATH)
     assert loaded.settings_backup_dir == ".runtime/settings-backups"
     assert loaded.settings_backup_retention == 10
+
+
+# ---------------------------------------------------------------------------
+# per-key provenance for the Settings tab (story 15.5-002)
+# ---------------------------------------------------------------------------
+
+
+def _provenance_by_key(entries):
+    return {f"{e.section}.{e.key}": e for e in entries}
+
+
+def test_provenance_covers_every_settings_key(tmp_path: Path) -> None:
+    entries = settings_module.settings_provenance(tmp_path / "absent.yaml")
+    assert {f"{e.section}.{e.key}" for e in entries} == {
+        f"{section}.{key}" for section, key in settings_module._KEY_MAP
+    }
+
+
+def test_provenance_yaml_layer_wins_over_fallback(tmp_path: Path) -> None:
+    path = tmp_path / "settings.yaml"
+    path.write_text("endpoint:\n  max_tokens: 2048\n", encoding="utf-8")
+
+    by_key = _provenance_by_key(settings_module.settings_provenance(path, environ={}))
+    entry = by_key["endpoint.max_tokens"]
+    assert entry.layer == "yaml"
+    assert entry.value == 2048
+    assert entry.yaml_value == 2048
+
+
+def test_provenance_fallback_layer_for_missing_key(tmp_path: Path) -> None:
+    path = tmp_path / "settings.yaml"
+    path.write_text("endpoint:\n  max_tokens: 2048\n", encoding="utf-8")
+
+    by_key = _provenance_by_key(settings_module.settings_provenance(path, environ={}))
+    entry = by_key["chat.temperature"]
+    assert entry.layer == "fallback"
+    assert entry.value == 0.7
+    assert entry.yaml_value is None
+
+
+def test_provenance_env_layer_wins_over_yaml(tmp_path: Path) -> None:
+    path = tmp_path / "settings.yaml"
+    path.write_text("endpoint:\n  provider_timeout_seconds: 60.0\n", encoding="utf-8")
+
+    environ = {settings_module.PROVIDER_TIMEOUT_ENV: "45"}
+    by_key = _provenance_by_key(settings_module.settings_provenance(path, environ=environ))
+    entry = by_key["endpoint.provider_timeout_seconds"]
+    assert entry.layer == "env"
+    assert entry.value == 45.0
+    assert entry.env_var == settings_module.PROVIDER_TIMEOUT_ENV
+    assert entry.env_active is True
+    # the yaml layer stays visible so an env override is never mistaken for it
+    assert entry.yaml_value == 60.0
+
+
+def test_provenance_env_var_named_even_when_unset(tmp_path: Path) -> None:
+    by_key = _provenance_by_key(
+        settings_module.settings_provenance(tmp_path / "absent.yaml", environ={})
+    )
+    entry = by_key["endpoint.provider_timeout_seconds"]
+    assert entry.env_var == settings_module.PROVIDER_TIMEOUT_ENV
+    assert entry.env_active is False
+    assert entry.layer == "fallback"
+
+
+def test_provenance_exposes_documented_cli_flags(tmp_path: Path) -> None:
+    by_key = _provenance_by_key(
+        settings_module.settings_provenance(tmp_path / "absent.yaml", environ={})
+    )
+    assert by_key["endpoint.max_tokens"].flag == "--max-tokens"
+    assert by_key["sandbox.timeout_seconds"].flag == "--timeout"
+    assert by_key["chat.temperature"].flag is None
+
+
+def test_provenance_rejects_malformed_file(tmp_path: Path) -> None:
+    path = tmp_path / "settings.yaml"
+    path.write_text("endpoint: [broken", encoding="utf-8")
+    with pytest.raises(SettingsError):
+        settings_module.settings_provenance(path, environ={})
+
+
+def test_protocol_entries_expose_locked_values() -> None:
+    assert settings_module.protocol_entries() == {
+        "benchmark_temperature": 0.0,
+        "benchmark_seed": 0,
+        "local_concurrency": 1,
+    }
+
+
+class TestParseSettingValue:
+    """Coercion of submitted Harness-group edits (story 15.5-002)."""
+
+    def test_integer_string_is_coerced(self) -> None:
+        assert settings_module.parse_setting_value("endpoint.max_tokens", "2048") == 2048
+
+    def test_float_string_is_coerced(self) -> None:
+        assert settings_module.parse_setting_value("sandbox.timeout_seconds", "7.5") == 7.5
+
+    def test_string_value_passes_through(self) -> None:
+        assert settings_module.parse_setting_value("dashboard.host", "127.0.0.1") == "127.0.0.1"
+
+    def test_typed_values_accepted(self) -> None:
+        assert settings_module.parse_setting_value("chat.max_tokens", 512) == 512
+
+    def test_non_numeric_string_rejected(self) -> None:
+        with pytest.raises(SettingsError, match="endpoint.max_tokens"):
+            settings_module.parse_setting_value("endpoint.max_tokens", "lots")
+
+    def test_non_positive_rejected(self) -> None:
+        with pytest.raises(SettingsError, match="positive"):
+            settings_module.parse_setting_value("endpoint.max_tokens", "0")
+
+    def test_unknown_key_rejected(self) -> None:
+        with pytest.raises(SettingsError, match="unknown setting"):
+            settings_module.parse_setting_value("endpoint.nope", "1")
+
+    def test_protocol_key_is_read_only(self) -> None:
+        with pytest.raises(SettingsError, match="read-only"):
+            settings_module.parse_setting_value("protocol.benchmark_seed", "1")

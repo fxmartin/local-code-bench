@@ -120,6 +120,7 @@ def _ctx(
     settings_store: object | None = None,
     settings_changelog: object | None = None,
     results_dir: str | Path | None = None,
+    settings_path: str | Path = "configs/does-not-exist-settings.yaml",
 ) -> ud.DashboardContext:
     extra = {"settings_store": settings_store} if settings_store is not None else {}
     return ud.DashboardContext(
@@ -136,6 +137,7 @@ def _ctx(
         inferencers_path=inferencers_path,
         comparisons_path=comparisons_path,
         settings_changelog=settings_changelog,
+        settings_path=settings_path,
         **extra,
     )
 
@@ -2985,18 +2987,28 @@ agents:
 """
 
 
+_SETTINGS_HARNESS_YAML = """\
+# Operational defaults (story 15.5-001).
+endpoint:
+  max_tokens: 1024
+"""
+
+
 def _settings_ctx(tmp_path: Path) -> ud.DashboardContext:
     models_path = tmp_path / "models.yaml"
     inferencers_path = tmp_path / "inferencers.yaml"
     agents_path = tmp_path / "agents.yaml"
+    settings_path = tmp_path / "settings.yaml"
     models_path.write_text(_SETTINGS_MODELS_YAML, encoding="utf-8")
     inferencers_path.write_text(_SETTINGS_INFERENCERS_YAML, encoding="utf-8")
     agents_path.write_text(_SETTINGS_AGENTS_YAML, encoding="utf-8")
+    settings_path.write_text(_SETTINGS_HARNESS_YAML, encoding="utf-8")
     return _ctx(
         models_path=models_path,
         inferencers_path=inferencers_path,
         agents_path=agents_path,
         suites_path=tmp_path / "suites.yaml",
+        settings_path=settings_path,
         cache_dir=tmp_path / "no-cache",
     )
 
@@ -3007,6 +3019,8 @@ def test_page_has_settings_section() -> None:
     assert 'id="section-settings"' in body
     # the section is a thin client over the aggregated settings endpoint
     assert "/api/settings" in body
+    # the harness defaults group saves through the 15.2-001 pipeline (15.5-002)
+    assert "/api/settings/harness" in body
 
 
 def test_api_settings_returns_one_grouped_document(tmp_path: Path) -> None:
@@ -3016,6 +3030,7 @@ def test_api_settings_returns_one_grouped_document(tmp_path: Path) -> None:
     assert resp.content_type.startswith("application/json")
     payload = json.loads(resp.body)
     assert [group["id"] for group in payload["groups"]] == [
+        "harness",
         "models",
         "inferencers",
         "storage",
@@ -3056,8 +3071,9 @@ def test_api_settings_degrades_a_broken_group_inline(tmp_path: Path) -> None:
 
 def test_post_to_settings_route_is_404() -> None:
     # the aggregated settings surface stays read-only; edits go through the
-    # dedicated editor routes (/api/settings/models, /api/settings/config,
-    # /api/settings/inferencers) and the generic /api/settings/write pipeline
+    # dedicated /api/settings/* editor routes (models 15.3-001, config 15.3-003,
+    # inferencers 15.3-002, harness 15.5-002) and the generic /api/settings/write
+    # pipeline
     assert ud.handle_request("POST", "/api/settings", _ctx()).status == 404
 
 
@@ -3560,3 +3576,111 @@ def test_page_has_change_detection_and_changelog_ui() -> None:
     assert "changed on disk" in body
     assert 'id="settings-changelog"' in body
     assert "/api/settings/changelog" in body
+
+
+# ---------------------------------------------------------------------------
+# harness defaults group: editable via the 15.2-001 store (story 15.5-002)
+# ---------------------------------------------------------------------------
+
+
+def _harness_ctx(tmp_path: Path) -> ud.DashboardContext:
+    # route backups into tmp so the edit pipeline never touches the repo tree
+    ctx = _settings_ctx(tmp_path)
+    Path(ctx.settings_path).write_text(
+        _SETTINGS_HARNESS_YAML + f"settings_backup:\n  dir: {tmp_path / 'backups'}\n",
+        encoding="utf-8",
+    )
+    return ctx
+
+
+def _harness_group(ctx: ud.DashboardContext) -> dict:
+    payload = json.loads(ud.handle_request("GET", "/api/settings", ctx).body)
+    return next(group for group in payload["groups"] if group["id"] == "harness")
+
+
+def _post_harness(ctx: ud.DashboardContext, body: dict) -> ud.Response:
+    return ud.handle_request(
+        "POST", "/api/settings/harness", ctx, body=json.dumps(body).encode("utf-8")
+    )
+
+
+def test_api_settings_harness_group_shows_provenance(tmp_path: Path) -> None:
+    harness = _harness_group(_harness_ctx(tmp_path))
+
+    assert harness["editable"] is True
+    assert harness["content_hash"]
+    endpoint_item = next(item for item in harness["items"] if item["name"] == "endpoint")
+    max_tokens = next(f for f in endpoint_item["fields"] if f["label"] == "max_tokens")
+    assert max_tokens["source"] == "yaml"
+    assert max_tokens["editable"] is True
+
+
+def test_api_settings_harness_edit_writes_through_the_store(tmp_path: Path) -> None:
+    ctx = _harness_ctx(tmp_path)
+    harness = _harness_group(ctx)
+
+    resp = _post_harness(
+        ctx,
+        {
+            "updates": {"endpoint.max_tokens": "2048"},
+            "expected_hash": harness["content_hash"],
+        },
+    )
+
+    assert resp.status == 200
+    payload = json.loads(resp.body)
+    assert payload["written"] is True
+    written = Path(ctx.settings_path).read_text(encoding="utf-8")
+    assert "max_tokens: 2048" in written
+    # comments survive the 15.2-001 round-trip
+    assert "# Operational defaults (story 15.5-001)." in written
+    # a timestamped backup of the previous version exists
+    assert list((tmp_path / "backups").glob("settings.yaml.*"))
+
+
+def test_api_settings_harness_edit_with_stale_hash_is_409(tmp_path: Path) -> None:
+    ctx = _harness_ctx(tmp_path)
+
+    resp = _post_harness(
+        ctx, {"updates": {"endpoint.max_tokens": "2048"}, "expected_hash": "stale"}
+    )
+
+    assert resp.status == 409
+    payload = json.loads(resp.body)
+    assert payload["current_hash"]
+    # nothing was written
+    assert "max_tokens: 1024" in Path(ctx.settings_path).read_text(encoding="utf-8")
+
+
+def test_api_settings_harness_edit_invalid_value_is_400(tmp_path: Path) -> None:
+    ctx = _harness_ctx(tmp_path)
+    harness = _harness_group(ctx)
+
+    resp = _post_harness(
+        ctx,
+        {"updates": {"endpoint.max_tokens": "lots"}, "expected_hash": harness["content_hash"]},
+    )
+
+    assert resp.status == 400
+    assert "max_tokens: 1024" in Path(ctx.settings_path).read_text(encoding="utf-8")
+
+
+def test_api_settings_harness_edit_protocol_key_is_400(tmp_path: Path) -> None:
+    ctx = _harness_ctx(tmp_path)
+    harness = _harness_group(ctx)
+
+    resp = _post_harness(
+        ctx,
+        {"updates": {"protocol.benchmark_seed": "1"}, "expected_hash": harness["content_hash"]},
+    )
+
+    assert resp.status == 400
+    assert "read-only" in json.loads(resp.body)["error"]
+
+
+def test_api_settings_harness_edit_rejects_malformed_bodies(tmp_path: Path) -> None:
+    ctx = _harness_ctx(tmp_path)
+
+    assert ud.handle_request("POST", "/api/settings/harness", ctx, body=b"not json").status == 400
+    assert _post_harness(ctx, {"updates": {}, "expected_hash": "x"}).status == 400
+    assert _post_harness(ctx, {"updates": {"endpoint.max_tokens": "1"}}).status == 400

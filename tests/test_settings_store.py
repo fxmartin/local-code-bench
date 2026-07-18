@@ -62,6 +62,15 @@ _SUITES_YAML = """\
 suites: []
 """
 
+_SETTINGS_YAML = """\
+# Operational defaults (story 15.5-001).
+endpoint:
+  # Generation cap for endpoint suite runs.
+  max_tokens: 1024
+sandbox:
+  timeout_seconds: 5.0
+"""
+
 _FIXED_NOW = datetime(2026, 7, 17, 12, 30, 45, tzinfo=UTC)
 
 
@@ -72,6 +81,7 @@ def _make_config_dir(tmp_path: Path) -> Path:
     (config_dir / "agents.yaml").write_text(_AGENTS_YAML, encoding="utf-8")
     (config_dir / "inferencers.yaml").write_text(_INFERENCERS_YAML, encoding="utf-8")
     (config_dir / "suites.yaml").write_text(_SUITES_YAML, encoding="utf-8")
+    (config_dir / "settings.yaml").write_text(_SETTINGS_YAML, encoding="utf-8")
     return config_dir
 
 
@@ -308,10 +318,54 @@ def test_apply_updates_honours_conflict_detection(tmp_path: Path) -> None:
 
 def test_all_registered_configs_read_and_roundtrip(tmp_path: Path) -> None:
     store = _store(tmp_path)
-    for config_id in ("models", "inferencers", "agents", "suites"):
+    for config_id in ("models", "inferencers", "agents", "suites", "settings"):
         doc = store.read(config_id)
         result = store.write(config_id, doc.content, expected_hash=doc.content_hash)
         assert result.content_hash == doc.content_hash
+
+
+# ---------------------------------------------------------------------------
+# harness defaults: configs/settings.yaml is a registered config (15.5-002)
+# ---------------------------------------------------------------------------
+
+
+def test_settings_yaml_is_a_registered_config(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    doc = store.read("settings")
+    assert doc.path.name == "settings.yaml"
+    assert doc.content == _SETTINGS_YAML
+
+
+def test_settings_edit_preserves_comments_and_validates(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    doc = store.read("settings")
+
+    store.apply_updates(
+        "settings", {"endpoint.max_tokens": 2048}, expected_hash=doc.content_hash
+    )
+
+    written = (tmp_path / "configs" / "settings.yaml").read_text(encoding="utf-8")
+    assert "# Generation cap for endpoint suite runs." in written
+    assert "max_tokens: 2048" in written
+
+
+def test_settings_edit_overriding_protocol_is_rejected(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    doc = store.read("settings")
+    bad = doc.content + "protocol:\n  benchmark_seed: 7\n"
+
+    with pytest.raises(SettingsValidationError, match="read-only"):
+        store.write("settings", bad, expected_hash=doc.content_hash)
+    assert (tmp_path / "configs" / "settings.yaml").read_text(encoding="utf-8") == doc.content
+
+
+def test_settings_edit_with_unknown_key_is_rejected(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    doc = store.read("settings")
+    bad = doc.content + "endpoint2:\n  nope: 1\n"
+
+    with pytest.raises(SettingsValidationError, match="unknown setting"):
+        store.write("settings", bad, expected_hash=doc.content_hash)
 
 
 def test_missing_registered_file_is_a_store_error(tmp_path: Path) -> None:

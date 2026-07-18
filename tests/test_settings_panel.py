@@ -78,22 +78,33 @@ agents:
 """
 
 
+_SETTINGS_YAML = """\
+endpoint:
+  max_tokens: 2048
+sandbox:
+  timeout_seconds: 5.0
+"""
+
+
 def _write_configs(
     tmp_path: Path,
     *,
     models: str = _MODELS_YAML,
     inferencers: str = _INFERENCERS_YAML,
     agents: str = _AGENTS_YAML,
+    settings: str = _SETTINGS_YAML,
 ) -> dict[str, Path]:
     paths = {
         "models": tmp_path / "models.yaml",
         "inferencers": tmp_path / "inferencers.yaml",
         "agents": tmp_path / "agents.yaml",
         "suites": tmp_path / "suites.yaml",
+        "settings": tmp_path / "settings.yaml",
     }
     paths["models"].write_text(models, encoding="utf-8")
     paths["inferencers"].write_text(inferencers, encoding="utf-8")
     paths["agents"].write_text(agents, encoding="utf-8")
+    paths["settings"].write_text(settings, encoding="utf-8")
     return paths
 
 
@@ -104,6 +115,7 @@ def _payload(tmp_path: Path, environ: dict[str, str] | None = None, **overrides)
         inferencers_path=overrides.get("inferencers_path", paths["inferencers"]),
         agents_path=overrides.get("agents_path", paths["agents"]),
         suites_path=overrides.get("suites_path", paths["suites"]),
+        settings_path=overrides.get("settings_path", paths["settings"]),
         cache_dir=tmp_path / "no-cache",
         environ=environ if environ is not None else {},
     )
@@ -130,6 +142,7 @@ def test_payload_groups_every_surface(tmp_path: Path) -> None:
     payload = _payload(tmp_path)
 
     assert [group["id"] for group in payload["groups"]] == [
+        "harness",
         "models",
         "inferencers",
         "storage",
@@ -145,6 +158,7 @@ def test_payload_groups_every_surface(tmp_path: Path) -> None:
 def test_each_group_is_labelled_with_its_source_file(tmp_path: Path) -> None:
     payload = _payload(tmp_path)
 
+    assert _group(payload, "harness")["source"].endswith("settings.yaml")
     assert _group(payload, "models")["source"].endswith("models.yaml")
     assert _group(payload, "inferencers")["source"].endswith("inferencers.yaml")
     # the storage tiers (local stores + external_repo + auto_tier) live in the
@@ -440,3 +454,99 @@ def test_harness_group_names_binaries_that_would_enable_export(
     # no renderer: the tab still shows which binaries would enable one-click
     assert "none" in fields["renderer detected"]["value"]
     assert "Google Chrome.app" in fields["renderer candidates"]["value"]
+
+
+# ---------------------------------------------------------------------------
+# story 15.5-002: Harness defaults group (configs/settings.yaml + provenance)
+# ---------------------------------------------------------------------------
+
+
+def test_harness_group_shows_every_settings_key_with_source_layer(tmp_path: Path) -> None:
+    from local_code_bench.settings import _KEY_MAP
+
+    harness = _group(_payload(tmp_path), "harness")
+
+    keys = {field["key"] for item in harness["items"] for field in item["fields"] if "key" in field}
+    assert keys == {f"{section}.{key}" for section, key in _KEY_MAP}
+    for item in harness["items"]:
+        for field in item["fields"]:
+            if field.get("editable"):
+                assert field["source"] in ("env", "yaml", "fallback")
+
+
+def test_harness_field_resolves_effective_value_and_layer(tmp_path: Path) -> None:
+    harness = _group(_payload(tmp_path), "harness")
+    fields = _fields(_item(harness, "endpoint"))
+
+    # present in the file -> yaml layer; absent -> built-in fallback layer
+    assert fields["max_tokens"]["value"] == 2048
+    assert fields["max_tokens"]["source"] == "yaml"
+    chat = _fields(_item(harness, "chat"))
+    assert chat["temperature"]["value"] == 0.7
+    assert chat["temperature"]["source"] == "fallback"
+
+
+def test_harness_env_override_wins_and_is_stated(tmp_path: Path) -> None:
+    environ = {"BENCH_PROVIDER_TIMEOUT_SECONDS": "45"}
+    harness = _group(_payload(tmp_path, environ=environ), "harness")
+    field = _fields(_item(harness, "endpoint"))["provider_timeout_seconds"]
+
+    assert field["source"] == "env"
+    assert field["value"] == 45.0
+    assert field["editable"] is True
+    assert field["env_active"] is True
+    # the tab states the override wins until unset, server-side
+    assert "until unset" in field["note"]
+    assert "BENCH_PROVIDER_TIMEOUT_SECONDS" in field["note"]
+
+
+def test_harness_fields_are_editable_with_yaml_layer_value(tmp_path: Path) -> None:
+    harness = _group(_payload(tmp_path), "harness")
+    field = _fields(_item(harness, "endpoint"))["max_tokens"]
+
+    assert field["editable"] is True
+    assert field["yaml_value"] == 2048
+    missing = _fields(_item(harness, "chat"))["temperature"]
+    assert missing["editable"] is True
+    assert missing["yaml_value"] is None
+
+
+def test_harness_group_carries_content_hash_for_conflict_check(tmp_path: Path) -> None:
+    from local_code_bench.settings_store import content_hash
+
+    paths = _write_configs(tmp_path)
+    harness = _group(_payload(tmp_path), "harness")
+
+    assert harness["editable"] is True
+    assert harness["content_hash"] == content_hash(paths["settings"].read_text(encoding="utf-8"))
+
+
+def test_harness_protocol_entries_are_locked_with_rationale(tmp_path: Path) -> None:
+    harness = _group(_payload(tmp_path), "harness")
+    fields = _fields(_item(harness, "protocol"))
+
+    for label in ("benchmark_temperature", "benchmark_seed", "local_concurrency"):
+        assert fields[label]["locked"] is True
+        assert fields[label]["rationale"]
+        assert "editable" not in fields[label]
+
+
+def test_harness_missing_file_renders_fallbacks_read_only(tmp_path: Path) -> None:
+    harness = _group(_payload(tmp_path, settings_path=tmp_path / "absent.yaml"), "harness")
+
+    assert harness["error"] is None
+    assert harness["content_hash"] is None
+    assert harness["editable"] is False
+    chat = _fields(_item(harness, "chat"))
+    assert chat["temperature"]["source"] == "fallback"
+
+
+def test_harness_broken_file_degrades_only_the_harness_group(tmp_path: Path) -> None:
+    broken = tmp_path / "broken-settings.yaml"
+    broken.write_text("endpoint: [broken", encoding="utf-8")
+    payload = _payload(tmp_path, settings_path=broken)
+
+    harness = _group(payload, "harness")
+    assert harness["error"] is not None
+    assert harness["items"] == []
+    assert _group(payload, "models")["error"] is None
