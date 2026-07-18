@@ -796,8 +796,23 @@ with a set/unset indicator — never a value. Protocol-locked values are marked
 read-only with a one-line rationale: local endpoint `concurrency` (one request at a
 time so shared-GPU contention cannot distort prefill/decode measurements) and the
 benchmark temperature/seed (pass@1 is measured at temperature 0 with a fixed seed).
-This view is read-only — edit the YAML files to change anything; there is no write
-path.
+
+Below the aggregate sits the **Inferencers & storage editor**
+(`GET`/`POST /api/settings/inferencers`), the tab's editable surface for
+`inferencers.yaml`: per-engine `model_store` paths and on-disk format, the
+`external_repo` block, and the `auto_tier` policy — the storage settings that change
+most as the model library grows. Lifecycle, detection, port, and start/stop commands
+are install facts, shown for reference only; the server rejects any edit outside the
+editable set. Writes ride the validated settings pipeline (conflict-checked against
+the loaded content hash, validated by the harness's own loaders — including the
+`external_repo`/`auto_tier` blocks — then written atomically with a backup), so the
+dashboard can never produce a config the CLI would reject. A store path or external
+root that does not exist yet only *warns* — an unplugged SSD is a normal state, not
+an error — and a running engine (Epic-08 state) is flagged so you know its edit
+applies from the next start. The tier and inventory views pick up a saved edit on
+their next refresh without restarting the dashboard, and the pins editor suggests
+current inventory model names. Everything else in the YAML files is still edited
+directly.
 
 ## macOS App
 

@@ -37,7 +37,14 @@ from typing import Any
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
-from .config import ConfigError, load_agents, load_inferencers, load_models
+from .config import (
+    ConfigError,
+    load_agents,
+    load_autotier,
+    load_external_repo,
+    load_inferencers,
+    load_models,
+)
 from .settings import Settings, get_settings
 from .suite_catalog import load_custom_suites
 
@@ -47,11 +54,24 @@ DEFAULT_BACKUP_RETENTION = 10
 #: Backup directory name used when the caller does not inject one.
 DEFAULT_BACKUP_DIR_NAME = ".backups"
 
+def _load_inferencers_file(path: Path) -> object:
+    """Validate every block the harness reads from ``inferencers.yaml``.
+
+    ``load_inferencers`` ignores the optional Epic-12 tier blocks, so on its
+    own it would let a broken ``external_repo`` / ``auto_tier`` edit through
+    (story 15.3-002 edits both from the dashboard). Run all three loaders.
+    """
+
+    load_external_repo(path)
+    load_autotier(path)
+    return load_inferencers(path)
+
+
 #: The registered config set: id -> (file name, the harness's own loader).
 #: The store only ever writes these files; ids are opaque tokens, not paths.
 _REGISTRY: dict[str, tuple[str, Callable[[Path], object]]] = {
     "models": ("models.yaml", load_models),
-    "inferencers": ("inferencers.yaml", load_inferencers),
+    "inferencers": ("inferencers.yaml", _load_inferencers_file),
     "agents": ("agents.yaml", load_agents),
     "suites": ("suites.yaml", load_custom_suites),
 }
