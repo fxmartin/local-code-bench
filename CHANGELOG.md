@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.75.0 (2026-07-18)
+
+### Features
+
+- **ui-theme-revamp**: Theme settings in `settings.yaml` (#16.4-001)
+  ([`a2dc0b0`](https://github.com/fxmartin/local-code-bench/commit/a2dc0b0b4d58e307d3aa888f3f3612d1981db5ca))
+
+
 ## v0.74.0 (2026-07-18)
 
 
