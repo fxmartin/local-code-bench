@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.79.0 (2026-07-18)
+
+### Features
+
+- **benchmark-comparison-dashboard**: Download-pdf button (#17.3-002)
+  ([`1dfed8b`](https://github.com/fxmartin/local-code-bench/commit/1dfed8b27295b45d8ca597f205d9913365806927))
+
+
 ## v0.78.0 (2026-07-18)
 
 ### Features
