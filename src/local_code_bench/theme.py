@@ -62,20 +62,20 @@ ACCENT_DARK = "#7aa2ff"
 DANGER = "#b3261e"
 DANGER_DARK = "#f2726f"
 
-# Categorical data-series colors for the inline SVG charts. These are a
-# data-visualization layer on top of the UI palette (distinguishing up to eight
-# sweep series needs hue, which a monochrome ramp cannot provide); the first
-# series is the accent so single-series charts stay within the palette.
-CHART_SERIES = (
-    ACCENT,
-    "#ff9f0a",
-    "#30d158",
-    "#bf5af2",
-    "#ff375f",
-    "#64d2ff",
-    "#ffd60a",
-    "#a2845e",
+# Data-series paints for the inline SVG charts (story 16.2-002): the charts
+# speak the same monochrome-plus-accent language as the rest of the UI. Every
+# entry is a var(--chart-*) reference into the token block below, so the SVG
+# re-colors live when the mode toggles — no repaint-on-reload. The accent leads
+# and is reserved for the highlighted first series; supporting series cycle
+# mode-aware grey ramp stops, and the chart module layers dash patterns and
+# marker shapes on top for distinguishability that hue no longer provides.
+CHART_ACCENT = "var(--chart-accent)"
+CHART_GREYS = (
+    "var(--chart-grey-1)",
+    "var(--chart-grey-2)",
+    "var(--chart-grey-3)",
 )
+CHART_SERIES = (CHART_ACCENT, *CHART_GREYS)
 
 
 # --------------------------------------------------------------------------- #
@@ -119,6 +119,18 @@ TOKENS_CSS = f"""\
   --status-on: var(--accent);
   --status-off: var(--text-muted);
   --status-warn: light-dark(var(--grey-6), var(--grey-3));
+
+  /* Chart layer (story 16.2-002) — axes/labels reuse the UI greys; series
+     stops are dual-valued so data marks hold AA non-text contrast (3:1)
+     against --bg in both schemes, with --chart-label holding the 4.5:1 text
+     bar. The accent stays reserved for the highlighted series. */
+  --chart-axis: var(--border-strong);
+  --chart-grid: var(--border);
+  --chart-label: var(--text-muted);
+  --chart-accent: var(--accent);
+  --chart-grey-1: light-dark(var(--grey-7), var(--grey-2));
+  --chart-grey-2: light-dark(var(--grey-6), var(--grey-3));
+  --chart-grey-3: light-dark(var(--grey-5), var(--grey-4));
 
   /* Type scale. */
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
