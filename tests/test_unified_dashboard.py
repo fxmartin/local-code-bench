@@ -2707,6 +2707,7 @@ def test_api_settings_returns_one_grouped_document(tmp_path: Path) -> None:
         "storage",
         "suites",
         "agents",
+        "settings",
     ]
 
 

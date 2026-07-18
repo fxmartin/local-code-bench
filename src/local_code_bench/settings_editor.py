@@ -1,6 +1,7 @@
-"""Settings-tab editors: inferencers & storage plus suites & agents.
+"""Settings-tab editors: inferencers & storage, suites & agents, plus harness
+settings.
 
-Two stories share this module, both riding the Story 15.2-001 write pipeline
+Three stories share this module, all riding the Story 15.2-001 write pipeline
 (:class:`~.settings_store.SettingsStore`): conflict-checked against the
 submitted content hash, validated by the harness's own loaders, and written
 atomically with a backup.
@@ -30,6 +31,12 @@ still referenced by a saved dashboard launcher selection — a suite recorded in
 the run history under ``results/`` — is *warned about but allowed*: the write
 lands and the response carries the dangling ids, mirroring how the dashboard
 treats stale history rows.
+
+Story 16.4-001 — harness settings. ``settings.yaml`` (including the dashboard
+theme) rides the same ``read_action``/``write_action`` pair, validated by
+``load_settings`` via the store. A settings edit whose theme hues fall below
+WCAG AA contrast against either mode's background is *warned about but
+allowed* — FX owns the final call.
 """
 
 from __future__ import annotations
@@ -43,6 +50,7 @@ from typing import Any
 
 import yaml
 
+from . import theme
 from .config import (
     DEFAULT_EXTERNAL_SUBPATHS,
     DEFAULT_VOLUME_MARKER,
@@ -312,9 +320,9 @@ def _restart_pending(path: Path, updates: dict[str, Any], running: Collection[st
 # Suites & agents editor (Story 15.3-003)
 # ---------------------------------------------------------------------------
 
-#: Config ids this story's editors expose. The store registers more (models,
+#: Config ids these stories' editors expose. The store registers more (models,
 #: inferencers); those stay read-only until their own editor stories land.
-EDITABLE_CONFIG_IDS: tuple[str, ...] = ("suites", "agents")
+EDITABLE_CONFIG_IDS: tuple[str, ...] = ("suites", "agents", "settings")
 
 
 def read_action(store: SettingsStore, config_id: str) -> tuple[int, dict[str, Any]]:
@@ -377,6 +385,8 @@ def write_action(
     warnings: list[str] = []
     if config_id == "suites" and referenced_suites is not None:
         warnings = dangling_suite_warnings(previous, content, referenced_suites())
+    if config_id == "settings":
+        warnings = theme_contrast_warnings(content)
     return 200, {
         "config_id": result.config_id,
         "content_hash": result.content_hash,
@@ -396,6 +406,27 @@ def dangling_suite_warnings(
         "in the run history; those rows will show a dangling suite id"
         for suite_id in sorted(removed & referenced)
     ]
+
+
+def theme_contrast_warnings(content: str) -> list[str]:
+    """AA contrast warnings for a saved settings document's theme block.
+
+    Runs only after the loader has accepted the edit, so the light parse here
+    cannot fail on shape; missing keys fall back to the shipped default hues.
+    Advisory by design (story 16.4-001): warn, never block.
+    """
+
+    try:
+        raw = yaml.safe_load(content)
+    except yaml.YAMLError:  # pragma: no cover - validated content upstream
+        return []
+    block = raw.get("theme") if isinstance(raw, dict) else None
+    values = block if isinstance(block, dict) else {}
+    config = theme.ThemeConfig(
+        accent=values.get("accent", theme.DEFAULT_ACCENT),
+        danger=values.get("danger", theme.DEFAULT_DANGER),
+    )
+    return theme.contrast_warnings(config)
 
 
 def referenced_suite_ids(result_paths: Iterable[str | Path]) -> set[str]:

@@ -523,7 +523,14 @@ unified dashboard, and the inferencer panel) ships designed light and dark
 modes. Pages follow the OS `prefers-color-scheme` by default; the round toggle
 in the top-right corner switches instantly and remembers the choice in the
 browser's `localStorage`, applied before first paint so a reload never flashes
-the wrong theme. The charts follow the same monochrome-plus-accent language:
+the wrong theme. The accent and danger hues and the initial mode are
+configurable through the `theme:` block of `configs/settings.yaml` (editable
+from the Settings tab's **Harness** group): `accent` / `danger` take `#RRGGBB`
+hex and `default_mode` takes `light | dark | system`, with the shipped defaults
+(dark blue `#1e40af`, dark red `#991b1b`, `system`) applying when the block is
+absent. Dark-mode tints are always derived from the configured hues, so one hue
+per role holds under customization, and a saved edit shows on the next page
+refresh without a restart. The charts follow the same monochrome-plus-accent language:
 axes, gridlines, labels, and series resolve from the shared theme tokens and
 re-color live when the mode toggles, with the accent reserved for the
 highlighted series and the remaining series told apart by grey ramp stops plus
@@ -797,7 +804,8 @@ read-only with a one-line rationale: local endpoint `concurrency` (one request a
 time so shared-GPU contention cannot distort prefill/decode measurements) and the
 benchmark temperature/seed (pass@1 is measured at temperature 0 with a fixed seed).
 
-The **Suites** and **Agents** groups are editable in place: each carries an
+The **Suites**, **Agents**, and **Harness** (`configs/settings.yaml`, incl. the
+dashboard theme) groups are editable in place: each carries an
 "Edit `<file>`" form that loads the file's YAML and saves it through the validated
 settings store (`GET`/`POST /api/settings/config`). Every edit is validated by the
 harness's own loaders before a byte lands — the dashboard can never save a config
@@ -809,7 +817,8 @@ silently overwriting. Built-in suites are code, not config — `configs/suites.y
 registers custom suites only — and the agent harness `type` is marked read-only
 (harness adapters are code). Removing or renaming a custom suite id that saved runs
 in the history still reference produces a dangling-reference warning, but the change
-is allowed.
+is allowed. Likewise a theme hue with poor WCAG AA contrast against either mode's
+background warns on save but never blocks — you own the final call.
 
 The **Models** group is editable (`GET`/`POST /api/settings/models`): add, edit,
 duplicate, or remove a `configs/models.yaml` entry from a form exposing the fields

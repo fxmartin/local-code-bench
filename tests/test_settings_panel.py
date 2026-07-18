@@ -134,6 +134,7 @@ def test_payload_groups_every_surface(tmp_path: Path) -> None:
         "storage",
         "suites",
         "agents",
+        "settings",
     ]
     for group in payload["groups"]:
         assert group["error"] is None

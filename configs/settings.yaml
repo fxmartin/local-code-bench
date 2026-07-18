@@ -51,6 +51,15 @@ settings_backup:
   dir: .runtime/settings-backups
   retention: 10
 
+theme:
+  # Dashboard theme (story 16.4-001): light-mode accent/danger hues (#RRGGBB)
+  # and the initial mode (light | dark | system) before any per-browser toggle
+  # choice. Dark-mode tints are derived from these hues automatically; a
+  # poor-contrast hue warns on save but never blocks.
+  accent: "#1e40af"
+  danger: "#991b1b"
+  default_mode: system
+
 # READ-ONLY — measurement protocol. The loader refuses any value that differs
 # from these locked constants; edit the source (and the methodology docs) to
 # change the protocol, not this file. The canary anchor set

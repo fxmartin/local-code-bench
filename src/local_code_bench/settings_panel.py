@@ -34,7 +34,9 @@ from .config import (
     load_models,
     resolve_health_url,
 )
+from . import theme
 from .agents import supported_harness_kinds
+from .settings import Settings, SettingsError, load_settings
 from .suite_catalog import suite_catalog
 
 #: Why local endpoint concurrency may not be raised (Benchmark Protocol v1).
@@ -64,6 +66,11 @@ EDITABLE_GROUP_NOTES = {
         "entries configure the harness command, workspace sandbox policy, and "
         "timeouts; the invocation shape per harness type is fixed in code"
     ),
+    "settings": (
+        "operational defaults incl. the dashboard theme; dark-mode tints are "
+        "derived from the configured hues, and a poor-contrast hue warns on "
+        "save but never blocks"
+    ),
 }
 
 #: Hosts that identify a locally served endpoint (protocol-locked concurrency).
@@ -76,6 +83,7 @@ def settings_payload(
     inferencers_path: str | Path = "configs/inferencers.yaml",
     agents_path: str | Path = "configs/agents.yaml",
     suites_path: str | Path = "configs/suites.yaml",
+    settings_path: str | Path = "configs/settings.yaml",
     cache_dir: str | Path = ".cache/benchmarks",
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
@@ -120,6 +128,12 @@ def settings_payload(
                 agents_path,
                 lambda: _agent_items(load_agents(agents_path), env),
             ),
+            _group(
+                "settings",
+                "Harness",
+                settings_path,
+                lambda: _harness_items(load_settings(settings_path)),
+            ),
         ]
     }
 
@@ -145,7 +159,7 @@ def _group(
     }
     try:
         group["items"] = build()
-    except (ConfigError, OSError) as exc:
+    except (ConfigError, SettingsError, OSError) as exc:
         group["error"] = str(exc)
     return group
 
@@ -309,6 +323,27 @@ def _suite_items(suites_path: str | Path, cache_dir: str | Path) -> list[dict[st
         }
     )
     return items
+
+
+def _harness_items(settings: Settings) -> list[dict[str, Any]]:
+    """The Harness/theme group (story 16.4-001): configured hues, derived tints.
+
+    The dark tints are shown but not editable as values of their own — they are
+    always derived from the configured hues, keeping one hue per role.
+    """
+
+    return [
+        {
+            "name": "theme",
+            "fields": [
+                _field("accent", settings.theme_accent),
+                _field("accent dark tint (derived)", theme.dark_tint(settings.theme_accent)),
+                _field("danger", settings.theme_danger),
+                _field("danger dark tint (derived)", theme.dark_tint(settings.theme_danger)),
+                _field("default mode", settings.theme_default_mode),
+            ],
+        }
+    ]
 
 
 def _agent_items(

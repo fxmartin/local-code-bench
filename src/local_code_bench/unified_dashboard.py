@@ -65,10 +65,10 @@ from .inferencers import manager as inferencer_manager
 from .inferencers import tiered, tiering
 from .inferencers.external import check_availability
 from .optimizers import manager as optimizer_manager
-from .settings import get_settings
+from .settings import get_settings, load_theme_config
 from .settings_store import SettingsStore, default_settings_store
 from .suite_catalog import catalog_payload
-from .theme import THEME_CSS, THEME_HEAD_SNIPPET, THEME_TOGGLE_SNIPPET
+from .theme import THEME_TOGGLE_SNIPPET, theme_css, theme_head_snippet
 
 DEFAULT_HOST = get_settings().dashboard_host
 DEFAULT_PORT = get_settings().unified_dashboard_port
@@ -305,6 +305,8 @@ class DashboardContext:
     models_path: str | Path = "configs/models.yaml"
     agents_path: str | Path = "configs/agents.yaml"
     inferencers_path: str | Path = "configs/inferencers.yaml"
+    # Story 16.4-001: the operational-defaults file behind the Harness/theme group.
+    settings_path: str | Path = "configs/settings.yaml"
     # Story 17.2-001: the comparison-axis catalog behind the Benchmarks tab. It is
     # re-read per request like the settings sources, so a catalog edit (an eighth
     # comparison) shows up on refresh and a broken file degrades to a picker error.
@@ -373,6 +375,7 @@ def settings_action(ctx: DashboardContext) -> tuple[int, dict]:
         inferencers_path=ctx.inferencers_path,
         agents_path=ctx.agents_path,
         suites_path=ctx.suites_path,
+        settings_path=ctx.settings_path,
         cache_dir=ctx.cache_dir,
     )
 
@@ -1514,9 +1517,19 @@ def _load_tier_configs_safe(
 
 
 def render_page() -> str:
-    """Return the self-contained unified page (inlined CSS/JS, no external assets)."""
+    """Return the self-contained unified page (inlined CSS/JS, no external assets).
 
-    return _PAGE
+    The shared token layer (story 16.1-001) and pre-paint script (16.1-002) are
+    injected per render from the current theme settings (story 16.4-001), so a
+    saved accent or default-mode edit shows on the next refresh — no restart.
+    """
+
+    config = load_theme_config()
+    return (
+        _PAGE.replace("/*__THEME_CSS__*/", theme_css(config))
+        .replace("<!--__THEME_HEAD__-->", theme_head_snippet(config.default_mode))
+        .replace("<!--__THEME_TOGGLE__-->", THEME_TOGGLE_SNIPPET)
+    )
 
 
 _PAGE = """<!DOCTYPE html>
@@ -4082,10 +4095,3 @@ _PAGE = """<!DOCTYPE html>
 </html>
 """
 
-# Inject the shared token layer + base styles (story 16.1-001) and the
-# pre-paint script + theme toggle chrome (story 16.1-002) into the page.
-_PAGE = (
-    _PAGE.replace("/*__THEME_CSS__*/", THEME_CSS)
-    .replace("<!--__THEME_HEAD__-->", THEME_HEAD_SNIPPET)
-    .replace("<!--__THEME_TOGGLE__-->", THEME_TOGGLE_SNIPPET)
-)
