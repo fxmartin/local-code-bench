@@ -9,6 +9,9 @@ import WebKit
 /// through the standard save panel.
 struct DashboardWebView: NSViewRepresentable {
     let url: URL
+    /// A dashboard section a notification click asked for; consumed (reset to
+    /// nil) once handed to the page's `window.showSection`.
+    @Binding var pendingSection: String?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(baseURL: url)
@@ -23,14 +26,39 @@ struct DashboardWebView: NSViewRepresentable {
         return webView
     }
 
-    func updateNSView(_ webView: WKWebView, context: Context) {}
+    func updateNSView(_ webView: WKWebView, context: Context) {
+        guard let section = pendingSection else { return }
+        context.coordinator.show(section: section, in: webView)
+        Task { @MainActor in pendingSection = nil }
+    }
 
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         let baseURL: URL
+        /// A section requested while the page was still loading; replayed
+        /// from `didFinish` (a freshly reopened window races the page load).
+        private var sectionAwaitingLoad: String?
 
         init(baseURL: URL) {
             self.baseURL = baseURL
+        }
+
+        func show(section: String, in webView: WKWebView) {
+            if webView.isLoading {
+                sectionAwaitingLoad = section
+                return
+            }
+            // Section names come from our own NotificationContent enum, never
+            // from remote input; showSection is the nav's exposed switcher.
+            webView.evaluateJavaScript(
+                "window.showSection && window.showSection('\(section)')")
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            if let section = sectionAwaitingLoad {
+                sectionAwaitingLoad = nil
+                show(section: section, in: webView)
+            }
         }
 
         func webView(
