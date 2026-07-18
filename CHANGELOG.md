@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.77.0 (2026-07-18)
+
+### Features
+
+- **benchmark-comparison-dashboard**: Print-faithful (#17.3-001)
+  ([`169a899`](https://github.com/fxmartin/local-code-bench/commit/169a8990eba7a8292834e10eb13482fd9df477c4))
+
+
 ## v0.76.0 (2026-07-18)
 
 ### Bug Fixes
