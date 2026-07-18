@@ -17,6 +17,10 @@ final class AppModel: ObservableObject {
     /// A dashboard section a notification click asked to reveal; consumed by
     /// the web view via `window.showSection`.
     @Published var pendingSection: String?
+    /// A newer published release, checked once on launch (best-effort, silent
+    /// offline and in dev builds); the menu bar links to the download — no
+    /// auto-install (story 18.3-002).
+    @Published private(set) var availableUpdate: UpdateHint?
 
     /// Set by the main window's root view so a notification click can reopen
     /// a closed window (`openWindow` is only reachable from a view).
@@ -31,6 +35,7 @@ final class AppModel: ObservableObject {
     private init() {
         location = store.recorded
         if location != nil { startService() }
+        checkForUpdate()
     }
 
     var isFirstRun: Bool { location == nil }
@@ -52,6 +57,20 @@ final class AppModel: ObservableObject {
         pendingSection = section
         NSApp.activate(ignoringOtherApps: true)
         openMainWindow?()
+    }
+
+    /// Launch-time update check against the GitHub releases API. The repo is
+    /// stamped into Info.plist (`LCBGitHubRepo`) by the build script; dev
+    /// builds have neither it nor a bundle version, so the check is a no-op.
+    private func checkForUpdate() {
+        let info = Bundle.main.infoDictionary
+        let current = info?["CFBundleShortVersionString"] as? String
+        let repo = info?["LCBGitHubRepo"] as? String
+        Task { [weak self] in
+            guard let hint = await UpdateCheck.check(currentVersion: current, repo: repo)
+            else { return }
+            self?.availableUpdate = hint
+        }
     }
 
     private func startService() {

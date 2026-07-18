@@ -19,3 +19,10 @@ pbs_sha256: 4c18852bf9c1a11b56f21bcf0df1946f7e98ee43e9e4c0c5374b2b3765cf9508
 # unsigned for distribution) when none exists.
 codesign_identity: ""
 entitlements: app/macos/entitlements.plist
+
+# Distribution (Story 18.3-002). notary_profile names the notarytool keychain
+# profile (create it once with `xcrun notarytool store-credentials`);
+# github_repo is where releases are published — stamped into the app's
+# Info.plist (LCBGitHubRepo) for the launch-time update hint.
+notary_profile: local-code-bench-notary
+github_repo: fxmartin/local-code-bench

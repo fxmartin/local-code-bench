@@ -49,6 +49,7 @@ PBS_ARCH="${PBS_ARCH:-$(require_config pbs_arch)}"
 PBS_SHA256="${PBS_SHA256:-$(require_config pbs_sha256)}"
 ENTITLEMENTS="${REPO_ROOT}/$(require_config entitlements)"
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-$(config_value codesign_identity)}"
+GITHUB_REPO="${GITHUB_REPO:-$(require_config github_repo)}"
 
 PBS_ARCHIVE="cpython-${PBS_PYTHON}+${PBS_TAG}-${PBS_ARCH}-install_only.tar.gz"
 PBS_URL="https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_TAG}/${PBS_ARCHIVE}"
@@ -83,6 +84,7 @@ PBS_SHA256=${PBS_SHA256}
 ENTITLEMENTS=${ENTITLEMENTS}
 CODESIGN_IDENTITY=${CODESIGN_IDENTITY}
 SIGNING_MODE=${SIGNING_MODE}
+GITHUB_REPO=${GITHUB_REPO}
 CONFIG
     exit 0
 fi
@@ -139,6 +141,7 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
     <key>CFBundleShortVersionString</key><string>${APP_VERSION}</string>
     <key>CFBundleVersion</key><string>${APP_VERSION}</string>
     <key>LSMinimumSystemVersion</key><string>${MIN_MACOS}</string>
+    <key>LCBGitHubRepo</key><string>${GITHUB_REPO}</string>
     <key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>

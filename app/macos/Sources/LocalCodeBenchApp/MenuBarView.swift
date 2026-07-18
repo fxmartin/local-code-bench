@@ -43,6 +43,13 @@ struct MenuBarContent: View {
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)
         }
+        // Unobtrusive update hint (story 18.3-002): one menu entry linking to
+        // the release download; never an auto-install.
+        if let update = model.availableUpdate {
+            Button("Update Available — Download \(update.version)…") {
+                NSWorkspace.shared.open(update.url)
+            }
+        }
         Divider()
         Button("Quit Local Code Bench") {
             NSApp.terminate(nil)
