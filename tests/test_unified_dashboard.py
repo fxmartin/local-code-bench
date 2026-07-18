@@ -2740,7 +2740,7 @@ def test_api_settings_degrades_a_broken_group_inline(tmp_path: Path) -> None:
 
 
 def test_post_to_settings_route_is_404() -> None:
-    # the settings surface is strictly read-only (no write path yet)
+    # the aggregate view stays read-only; writes live at /api/settings/models (15.3-001)
     assert ud.handle_request("POST", "/api/settings", _ctx()).status == 404
 
 

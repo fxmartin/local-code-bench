@@ -809,8 +809,26 @@ silently overwriting. Built-in suites are code, not config — `configs/suites.y
 registers custom suites only — and the agent harness `type` is marked read-only
 (harness adapters are code). Removing or renaming a custom suite id that saved runs
 in the history still reference produces a dangling-reference warning, but the change
-is allowed. The Models, Inferencers, and Storage groups remain read-only — edit
-their YAML files directly to change them.
+is allowed.
+
+The **Models** group is editable (`GET`/`POST /api/settings/models`): add, edit,
+duplicate, or remove a `configs/models.yaml` entry from a form exposing the fields
+the model schema accepts — name, endpoint URL, model id, pinned revision, API-key
+env-var name, concurrency, max tokens, `extra_body` (edited as a free-form
+YAML/JSON mapping), the price table, and `inferencer`. A saved entry appears in
+the models list and the benchmark launcher without a dashboard restart. Every save
+goes through the validated write pipeline: the same loader the CLI uses validates
+the result before any bytes land, the write is atomic with a timestamped backup
+(`settings_backup.*` in `configs/settings.yaml`), and a concurrent on-disk edit is
+detected as a conflict instead of overwritten. Duplicate model names are rejected
+naming the clash, non-numeric or negative prices are rejected inline before
+submission, and local entries (an `inferencer`-declaring or localhost-endpoint
+model) have `concurrency` locked at 1 with the measurement-protocol rationale
+shown. Removal is per-entry behind an explicit confirmation — there is no bulk
+delete. Keys the form does not manage (`quant`, `provider`, `engine`,
+`thinking_extra_body`, …) and YAML comments are preserved on edit. The
+Inferencers and Storage groups stay read-only — edit their YAML files directly
+to change them.
 
 ## macOS App
 
