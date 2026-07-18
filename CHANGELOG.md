@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.73.0 (2026-07-18)
+
+### Features
+
+- **settings-management**: Models editor (#15.3-001)
+  ([`4739c58`](https://github.com/fxmartin/local-code-bench/commit/4739c5880805edf4c2db632866137f21a80ca063))
+
+
 ## v0.72.0 (2026-07-18)
 
 ### Features

@@ -40,6 +40,7 @@ from . import compare_report
 from . import dashboard_lifecycle
 from . import dashboard_server as results_panel
 from . import launch
+from . import models_editor
 from . import settings_editor
 from . import settings_panel
 from .config import (
@@ -452,6 +453,55 @@ def _refresh_storage_context(ctx: DashboardContext) -> None:
     object.__setattr__(ctx, "configs", configs)
     object.__setattr__(ctx, "external_cfg", external_cfg)
     object.__setattr__(ctx, "autotier_cfg", autotier_cfg)
+
+
+def _settings_store(ctx: DashboardContext) -> SettingsStore:
+    if ctx.settings_store is not None:
+        return ctx.settings_store
+    return default_settings_store(Path(ctx.models_path).parent)
+
+
+def _refresh_models(ctx: DashboardContext) -> None:
+    """Reload the model registry in place after a validated models.yaml write.
+
+    ``ctx.models`` is the same dict the launch orchestrator and Chat section hold
+    by reference, so mutating it (rather than rebinding) makes a saved entry
+    appear in the launcher catalog without a dashboard restart. The write path
+    already ran the harness loader, so a load failure here is not expected; the
+    previous registry is kept if it happens anyway.
+    """
+
+    try:
+        loaded = load_models(ctx.models_path)
+    except (ConfigError, OSError):  # pragma: no cover - the write was loader-validated
+        return
+    ctx.models.clear()
+    ctx.models.update(loaded)
+
+
+def models_editor_action(
+    ctx: DashboardContext, method: str, body: bytes
+) -> tuple[int, dict]:
+    """The Models editor endpoints (story 15.3-001): form payload + write actions.
+
+    GET returns the raw field values the form prefills from (including
+    ``base_url``, which the read-only aggregate deliberately omits — the form
+    must edit it and the dashboard binds localhost only). POST applies one
+    add / update / duplicate / remove action through the 15.2-001 store; on
+    success the in-memory model registry is refreshed in place.
+    """
+
+    store = _settings_store(ctx)
+    if method == "GET":
+        return models_editor.models_editor_payload(store)
+    try:
+        action = json.loads(body or b"{}")
+    except json.JSONDecodeError:
+        return 400, {"error": "invalid JSON body"}
+    status, payload = models_editor.apply_models_action(store, action)
+    if status == 200:
+        _refresh_models(ctx)
+    return status, payload
 
 
 def optimizers_action(ctx: DashboardContext) -> tuple[int, dict]:
@@ -1193,6 +1243,8 @@ def handle_request(
                 ),
             )
         )
+    if method in ("GET", "POST") and route == "/api/settings/models":
+        return _json(*models_editor_action(ctx, method, body))
     if method == "GET" and route == "/api/chat/catalog":
         return _json(*chat_catalog_action(ctx))
     if method == "GET" and route == "/api/inventory":
@@ -1389,6 +1441,7 @@ def serve_dashboard(
             models_path=models_path,
             agents_path=agents_path,
             inferencers_path=config_path,
+            settings_store=default_settings_store(Path(models_path).parent),
             optimizer_configs=optimizer_configs,
             optimizer_state_dir=optimizer_state_dir,
         )
@@ -1566,6 +1619,13 @@ _PAGE = """<!DOCTYPE html>
   .legend { list-style: none; padding: 0; margin: var(--space-2) 0 0; display: flex;
     flex-wrap: wrap; gap: var(--space-3); font-size: var(--text-xs); color: var(--text-muted); }
   .legend .swatch { margin-right: var(--space-1); }
+  .model-form { border: 1px solid var(--border); border-radius: 6px; padding: var(--space-4);
+    margin-bottom: var(--space-4); }
+  .model-form-grid { display: flex; gap: var(--space-4); flex-wrap: wrap; }
+  .model-form-grid label, .model-form > label { display: block; font-size: var(--text-xs);
+    color: var(--text-muted); }
+  .model-form-grid input, .model-form-grid select { min-width: 12rem; }
+  .model-actions button { margin-left: var(--space-2); }
   .settings-source { color: var(--text-muted); font-size: var(--text-xs); font-weight: 400;
     margin-left: var(--space-2); font-family: var(--font-mono); }
   .lock-note { color: var(--warn-fg); }
@@ -1846,10 +1906,39 @@ _PAGE = """<!DOCTYPE html>
   <p class="note">Every harness config surface in one view — models, inferencers,
     storage tiering, suites, and agents — each group labelled with the file it comes from.
     Env-var entries show only the variable name and whether it is currently set. Values
-    marked read-only are fixed by the benchmark protocol; inferencer store paths and the
-    storage tier blocks are editable in the editor below — edit the YAML files directly
-    for everything else.</p>
+    marked read-only are fixed by the benchmark protocol. Models can be added, edited,
+    duplicated, and removed here; every save is validated by the harness loader and
+    written atomically with a backup. Inferencer store paths and the storage tier
+    blocks are editable in the editor below — edit the YAML files directly for
+    everything else.</p>
   <p id="settings-err" class="err"></p>
+  <div id="model-form" class="model-form" hidden>
+    <h3 id="mf-title">Add model</h3>
+    <div class="model-form-grid">
+      <div><label for="mf-name">Name</label><input id="mf-name"></div>
+      <div><label for="mf-type">Type</label>
+        <select id="mf-type"><option value="openai">openai</option><option value="anthropic">anthropic</option></select></div>
+      <div><label for="mf-endpoint">Base URL</label><input id="mf-endpoint" placeholder="http://localhost:8080/v1"></div>
+      <div><label for="mf-model-id">Model id</label><input id="mf-model-id"></div>
+      <div><label for="mf-revision">Pinned revision</label><input id="mf-revision"></div>
+      <div><label for="mf-key-env">API key env var (name only)</label><input id="mf-key-env"></div>
+      <div><label for="mf-inferencer">Inferencer (local models)</label><input id="mf-inferencer"></div>
+      <div><label for="mf-concurrency">Concurrency</label><input id="mf-concurrency" type="number" min="1" step="1">
+        <span id="mf-conc-note" class="lock-note" hidden></span></div>
+      <div><label for="mf-max-tokens">Max tokens (blank = default 1024)</label>
+        <input id="mf-max-tokens" type="number" min="1" step="1"></div>
+      <div><label for="mf-price-in">Price / 1k input tokens ($)</label><input id="mf-price-in"></div>
+      <div><label for="mf-price-out">Price / 1k output tokens ($)</label><input id="mf-price-out"></div>
+    </div>
+    <label for="mf-extra-body">extra_body (YAML/JSON mapping, optional)</label>
+    <textarea id="mf-extra-body" rows="4" placeholder="reasoning:&#10;  enabled: false"></textarea>
+    <p id="mf-note" class="note" hidden></p>
+    <p id="mf-err" class="err"></p>
+    <p class="run-actions">
+      <button class="act" id="mf-save">Save</button>
+      <button class="act" id="mf-cancel">Cancel</button>
+    </p>
+  </div>
   <div id="settings-groups"></div>
 
   <h3>Inferencers &amp; storage editor</h3>
@@ -2443,6 +2532,9 @@ _PAGE = """<!DOCTYPE html>
     launchBtn.dataset.confirm = "";
     launch(confirm, false);
   });
+
+  // A saved Models-editor entry must appear here without a restart (15.3-001).
+  window.addEventListener("models-changed", load);
 
   load();
 })();
@@ -3115,10 +3207,207 @@ _PAGE = """<!DOCTYPE html>
 // whatever groups/items/fields the server sends — all interpretation (env
 // indicators, protocol locks, per-group load errors, which groups are editable)
 // happens server-side. Groups flagged editable get a YAML editor over the
-// validated write path at /api/settings/config (story 15.3-003).
+// validated write path at /api/settings/config (story 15.3-003), and the Models
+// group gets its own form over GET/POST /api/settings/models (story 15.3-001) —
+// the form only pre-validates prices inline and locks local concurrency for UX,
+// while every write authority (duplicate names, loader validation, atomic
+// write + backup) lives server-side.
 (function () {
   const host = document.getElementById("settings-groups");
   const err = document.getElementById("settings-err");
+  const form = document.getElementById("model-form");
+  const formTitle = document.getElementById("mf-title");
+  const formErr = document.getElementById("mf-err");
+  const formNote = document.getElementById("mf-note");
+  const concNote = document.getElementById("mf-conc-note");
+  const fields = {
+    name: document.getElementById("mf-name"),
+    type: document.getElementById("mf-type"),
+    endpoint: document.getElementById("mf-endpoint"),
+    modelId: document.getElementById("mf-model-id"),
+    revision: document.getElementById("mf-revision"),
+    keyEnv: document.getElementById("mf-key-env"),
+    inferencer: document.getElementById("mf-inferencer"),
+    concurrency: document.getElementById("mf-concurrency"),
+    maxTokens: document.getElementById("mf-max-tokens"),
+    priceIn: document.getElementById("mf-price-in"),
+    priceOut: document.getElementById("mf-price-out"),
+    extraBody: document.getElementById("mf-extra-body"),
+  };
+  let EDIT = null;       // {original: name|null (null = add), hash: conflict token}
+  let RATIONALE = "";    // measurement-protocol rationale for the concurrency lock
+
+  async function editorDoc() {
+    const res = await fetch("/api/settings/models");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || ("models editor unavailable (" + res.status + ")"));
+    RATIONALE = data.concurrency_rationale || "";
+    return data;
+  }
+
+  function isLocal() {
+    if (fields.inferencer.value.trim()) return true;
+    const url = fields.endpoint.value.trim();
+    const hostName = url.split("//").pop().split("/")[0].replace(/:\\d+$/, "");
+    return ["localhost", "127.0.0.1", "::1", "[::1]"].indexOf(hostName) !== -1;
+  }
+
+  function lockConcurrency() {
+    const local = isLocal();
+    fields.concurrency.disabled = local;
+    concNote.hidden = !local;
+    if (local) {
+      fields.concurrency.value = "1";
+      concNote.textContent = " locked at 1 \\u2014 " + RATIONALE;
+    }
+  }
+
+  function fill(m) {
+    fields.name.value = (m && m.name) || "";
+    fields.type.value = (m && m.type) || "openai";
+    fields.endpoint.value = (m && m.endpoint_url) || "";
+    fields.modelId.value = (m && m.model_id) || "";
+    fields.revision.value = (m && m.pinned_revision) || "";
+    fields.keyEnv.value = (m && m.key_env) || "";
+    fields.inferencer.value = (m && m.inferencer) || "";
+    fields.concurrency.value = m && m.concurrency != null ? m.concurrency : 1;
+    fields.maxTokens.value = m && m.max_tokens != null ? m.max_tokens : "";
+    fields.priceIn.value = m && m.price_input != null ? m.price_input : "";
+    fields.priceOut.value = m && m.price_output != null ? m.price_output : "";
+    fields.extraBody.value = (m && m.extra_body) || "";
+    const others = (m && m.other_keys) || [];
+    formNote.hidden = !others.length;
+    if (others.length) formNote.textContent = "Keys kept as-is on save: " + others.join(", ");
+    lockConcurrency();
+  }
+
+  async function openForm(name) {
+    formErr.textContent = "";
+    try {
+      const doc = await editorDoc();
+      const entry = name ? (doc.models || []).find((m) => m.name === name) : null;
+      if (name && !entry) throw new Error("model '" + name + "' not found \\u2014 reload the page");
+      EDIT = { original: name, hash: doc.content_hash };
+      formTitle.textContent = name ? "Edit model: " + name : "Add model";
+      fill(entry);
+      form.hidden = false;
+      form.scrollIntoView({ block: "nearest" });
+    } catch (e) {
+      err.textContent = String(e.message || e);
+    }
+  }
+
+  function priceValue(input, label, errors) {
+    const raw = input.value.trim();
+    const num = Number(raw);
+    if (raw === "" || !isFinite(num) || num < 0) {
+      errors.push(label + " must be a non-negative number");
+      return null;
+    }
+    return num;
+  }
+
+  function composeEntry() {
+    // inline pre-submission check (AC): a bad price never reaches the server
+    const errors = [];
+    const priceIn = priceValue(fields.priceIn, "price / 1k input tokens", errors);
+    const priceOut = priceValue(fields.priceOut, "price / 1k output tokens", errors);
+    if (errors.length) {
+      formErr.textContent = errors.join("; ");
+      return null;
+    }
+    return {
+      name: fields.name.value.trim(),
+      type: fields.type.value,
+      endpoint_url: fields.endpoint.value.trim(),
+      model_id: fields.modelId.value.trim(),
+      pinned_revision: fields.revision.value.trim(),
+      key_env: fields.keyEnv.value.trim() || null,
+      inferencer: fields.inferencer.value.trim() || null,
+      concurrency: isLocal() ? 1 : parseInt(fields.concurrency.value, 10),
+      max_tokens: fields.maxTokens.value.trim() === "" ? null : parseInt(fields.maxTokens.value, 10),
+      extra_body: fields.extraBody.value,
+      price_input: priceIn,
+      price_output: priceOut,
+    };
+  }
+
+  async function post(action, showError) {
+    const res = await fetch("/api/settings/models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(action),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showError((data.errors || [data.error || ("save failed (" + res.status + ")")]).join("; "));
+      return false;
+    }
+    return true;
+  }
+
+  function afterWrite() {
+    refresh();
+    // the launcher catalog reloads on this event, so a saved model is
+    // selectable without a dashboard restart
+    window.dispatchEvent(new Event("models-changed"));
+  }
+
+  async function save() {
+    const entry = composeEntry();
+    if (!entry) return;
+    const action = EDIT.original
+      ? { op: "update", name: EDIT.original, entry: entry, expected_hash: EDIT.hash }
+      : { op: "add", entry: entry, expected_hash: EDIT.hash };
+    if (await post(action, (t) => { formErr.textContent = t; })) {
+      form.hidden = true;
+      EDIT = null;
+      afterWrite();
+    }
+  }
+
+  async function duplicateModel(name) {
+    const newName = window.prompt("Name for the copy of '" + name + "':", name + "-copy");
+    if (!newName) return;
+    try {
+      const doc = await editorDoc();
+      const action = { op: "duplicate", name: name, new_name: newName, expected_hash: doc.content_hash };
+      if (await post(action, (t) => { err.textContent = t; })) afterWrite();
+    } catch (e) {
+      err.textContent = String(e.message || e);
+    }
+  }
+
+  async function removeModel(name) {
+    // explicit per-entry confirmation step (AC) — there is no bulk delete
+    if (!window.confirm("Remove model '" + name + "' from models.yaml?")) return;
+    try {
+      const doc = await editorDoc();
+      const action = { op: "remove", name: name, confirm: true, expected_hash: doc.content_hash };
+      if (await post(action, (t) => { err.textContent = t; })) afterWrite();
+    } catch (e) {
+      err.textContent = String(e.message || e);
+    }
+  }
+
+  function actionButton(label, handler) {
+    const btn = document.createElement("button");
+    btn.className = "act";
+    btn.textContent = label;
+    btn.addEventListener("click", handler);
+    return btn;
+  }
+
+  function modelActions(name) {
+    const span = document.createElement("span");
+    span.className = "model-actions";
+    span.append(
+      actionButton("Edit", () => openForm(name)),
+      actionButton("Duplicate", () => duplicateModel(name)),
+      actionButton("Remove", () => removeModel(name))
+    );
+    return span;
+  }
 
   function valueCell(f) {
     const td = document.createElement("td");
@@ -3142,12 +3431,19 @@ _PAGE = """<!DOCTYPE html>
   }
 
   function renderGroup(g) {
+    const editable = g.id === "models";
     const title = document.createElement("h3");
     title.textContent = g.label;
     const src = document.createElement("span");
     src.className = "settings-source";
     src.textContent = "from " + g.source;
     title.appendChild(src);
+    if (editable && !g.error) {
+      const actions = document.createElement("span");
+      actions.className = "model-actions";
+      actions.appendChild(actionButton("Add model", () => openForm(null)));
+      title.appendChild(actions);
+    }
     host.appendChild(title);
     if (g.error) {
       const p = document.createElement("p");
@@ -3171,7 +3467,10 @@ _PAGE = """<!DOCTYPE html>
       (item.fields || []).forEach((f, i) => {
         const tr = document.createElement("tr");
         const nameTd = document.createElement("td");
-        nameTd.textContent = i === 0 ? item.name : "";
+        if (i === 0) {
+          nameTd.textContent = item.name;
+          if (editable) nameTd.appendChild(modelActions(item.name));
+        }
         const settingTd = document.createElement("td");
         settingTd.textContent = f.label;
         tr.append(nameTd, settingTd, valueCell(f), noteCell(f));
@@ -3278,6 +3577,14 @@ _PAGE = """<!DOCTYPE html>
       err.textContent = "settings unavailable: " + e;
     }
   }
+
+  document.getElementById("mf-save").addEventListener("click", save);
+  document.getElementById("mf-cancel").addEventListener("click", () => {
+    form.hidden = true;
+    EDIT = null;
+  });
+  fields.inferencer.addEventListener("input", lockConcurrency);
+  fields.endpoint.addEventListener("input", lockConcurrency);
 
   refresh();
   setInterval(refresh, 10000);

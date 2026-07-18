@@ -811,6 +811,23 @@ registers custom suites only — and the agent harness `type` is marked read-onl
 in the history still reference produces a dangling-reference warning, but the change
 is allowed.
 
+The **Models** group is editable (`GET`/`POST /api/settings/models`): add, edit,
+duplicate, or remove a `configs/models.yaml` entry from a form exposing the fields
+the model schema accepts — name, endpoint URL, model id, pinned revision, API-key
+env-var name, concurrency, max tokens, `extra_body` (edited as a free-form
+YAML/JSON mapping), the price table, and `inferencer`. A saved entry appears in
+the models list and the benchmark launcher without a dashboard restart. Every save
+goes through the validated write pipeline: the same loader the CLI uses validates
+the result before any bytes land, the write is atomic with a timestamped backup
+(`settings_backup.*` in `configs/settings.yaml`), and a concurrent on-disk edit is
+detected as a conflict instead of overwritten. Duplicate model names are rejected
+naming the clash, non-numeric or negative prices are rejected inline before
+submission, and local entries (an `inferencer`-declaring or localhost-endpoint
+model) have `concurrency` locked at 1 with the measurement-protocol rationale
+shown. Removal is per-entry behind an explicit confirmation — there is no bulk
+delete. Keys the form does not manage (`quant`, `provider`, `engine`,
+`thinking_extra_body`, …) and YAML comments are preserved on edit.
+
 Below the aggregate sits the **Inferencers & storage editor**
 (`GET`/`POST /api/settings/inferencers`), the tab's editable surface for
 `inferencers.yaml`: per-engine `model_store` paths and on-disk format, the
@@ -825,8 +842,7 @@ root that does not exist yet only *warns* — an unplugged SSD is a normal state
 an error — and a running engine (Epic-08 state) is flagged so you know its edit
 applies from the next start. The tier and inventory views pick up a saved edit on
 their next refresh without restarting the dashboard, and the pins editor suggests
-current inventory model names. The Models group remains read-only — edit
-`configs/models.yaml` directly to change it.
+current inventory model names.
 
 ## macOS App
 
