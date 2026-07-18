@@ -826,9 +826,23 @@ submission, and local entries (an `inferencer`-declaring or localhost-endpoint
 model) have `concurrency` locked at 1 with the measurement-protocol rationale
 shown. Removal is per-entry behind an explicit confirmation — there is no bulk
 delete. Keys the form does not manage (`quant`, `provider`, `engine`,
-`thinking_extra_body`, …) and YAML comments are preserved on edit. The
-Inferencers and Storage groups stay read-only — edit their YAML files directly
-to change them.
+`thinking_extra_body`, …) and YAML comments are preserved on edit.
+
+Below the aggregate sits the **Inferencers & storage editor**
+(`GET`/`POST /api/settings/inferencers`), the tab's editable surface for
+`inferencers.yaml`: per-engine `model_store` paths and on-disk format, the
+`external_repo` block, and the `auto_tier` policy — the storage settings that change
+most as the model library grows. Lifecycle, detection, port, and start/stop commands
+are install facts, shown for reference only; the server rejects any edit outside the
+editable set. Writes ride the validated settings pipeline (conflict-checked against
+the loaded content hash, validated by the harness's own loaders — including the
+`external_repo`/`auto_tier` blocks — then written atomically with a backup), so the
+dashboard can never produce a config the CLI would reject. A store path or external
+root that does not exist yet only *warns* — an unplugged SSD is a normal state, not
+an error — and a running engine (Epic-08 state) is flagged so you know its edit
+applies from the next start. The tier and inventory views pick up a saved edit on
+their next refresh without restarting the dashboard, and the pins editor suggests
+current inventory model names.
 
 ## macOS App
 

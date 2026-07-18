@@ -61,6 +61,7 @@ from .dashboard_model import load_dashboard_data
 from .inferencers import autotier
 from .inferencers import dashboard as inferencer_panel
 from .inferencers import inventory
+from .inferencers import manager as inferencer_manager
 from .inferencers import tiered, tiering
 from .inferencers.external import check_availability
 from .optimizers import manager as optimizer_manager
@@ -313,10 +314,13 @@ class DashboardContext:
     # Inferencers one. Lifecycle stays on the CLI (`bench optimizer start/stop`).
     optimizer_configs: dict[str, OptimizerConfig] = field(default_factory=dict)
     optimizer_state_dir: str | Path = ".runtime/optimizers"
-    # Story 15.3-003: the validated write path behind the Settings tab's suites &
-    # agents editors. The store resolves file paths from its own registry, so a
-    # request can never name a file outside the registered config set.
-    settings_store: SettingsStore = field(default_factory=default_settings_store)
+    # Stories 15.3-002 / 15.3-003: the validated write pipeline behind the
+    # Settings tab editors (inferencers & storage, suites & agents). ``None``
+    # builds the default store against the directory holding
+    # ``inferencers_path``; tests inject one wired to a temp dir. The store
+    # resolves file paths from its own registry, so a request can never name a
+    # file outside the registered config set.
+    settings_store: SettingsStore | None = None
 
 
 @dataclass(frozen=True)
@@ -371,6 +375,84 @@ def settings_action(ctx: DashboardContext) -> tuple[int, dict]:
         suites_path=ctx.suites_path,
         cache_dir=ctx.cache_dir,
     )
+
+
+def settings_editor_action(ctx: DashboardContext) -> tuple[int, dict]:
+    """Return the editable Inferencers & Storage document (story 15.3-002).
+
+    Delegates to :func:`settings_editor.editor_payload`, wiring in the Epic-08
+    running-engine state (a running engine's edits apply from its next start)
+    and the Epic-11 inventory names as pin suggestions.
+    """
+
+    return 200, settings_editor.editor_payload(
+        ctx.inferencers_path,
+        running=_running_engines(ctx),
+        pin_suggestions=_pin_suggestions(ctx),
+    )
+
+
+def settings_editor_apply_action(ctx: DashboardContext, body: bytes) -> tuple[int, dict]:
+    """Apply an Inferencers & Storage edit through the 15.2-001 pipeline.
+
+    On success the storage-derived context fields are refreshed from the
+    written file, so the Inventory/tier views reflect the edit on their next
+    poll without restarting the dashboard (story 15.3-002 AC2).
+    """
+
+    try:
+        parsed = json.loads(body or b"{}")
+    except json.JSONDecodeError:
+        return 400, {"error": "invalid JSON body"}
+    status, payload = settings_editor.apply_edit(
+        _editor_store(ctx), parsed, running=_running_engines(ctx)
+    )
+    if status == 200:
+        _refresh_storage_context(ctx)
+    return status, payload
+
+
+def _editor_store(ctx: DashboardContext) -> SettingsStore:
+    if ctx.settings_store is not None:
+        return ctx.settings_store
+    return default_settings_store(Path(ctx.inferencers_path).parent)
+
+
+def _running_engines(ctx: DashboardContext) -> frozenset[str]:
+    """Engine names the Epic-08 state reports live (server PIDs / app probes)."""
+
+    return frozenset(
+        name
+        for name, status in inferencer_manager.status_all(ctx.configs, ctx.state_dir).items()
+        if status.running
+    )
+
+
+def _pin_suggestions(ctx: DashboardContext) -> list[str]:
+    """Current inventory model names, offered by the pins editor as suggestions."""
+
+    return sorted({model.name for model in _scan_local(ctx)})
+
+
+def _refresh_storage_context(ctx: DashboardContext) -> None:
+    """Fold a successful ``inferencers.yaml`` edit back into the live context.
+
+    The handler holds ``ctx`` by reference for the server's lifetime, so the
+    Inventory/tier views would otherwise keep serving the configs loaded at
+    startup. The context is frozen by design; this one seam swaps the three
+    storage-derived fields in place after a loader-validated write so the tier
+    view reflects the edit on its next refresh without a restart (15.3-002).
+    """
+
+    try:
+        configs = load_inferencers(ctx.inferencers_path)
+        external_cfg = load_external_repo(ctx.inferencers_path)
+        autotier_cfg = load_autotier(ctx.inferencers_path)
+    except ConfigError:  # pragma: no cover - the write was loader-validated
+        return
+    object.__setattr__(ctx, "configs", configs)
+    object.__setattr__(ctx, "external_cfg", external_cfg)
+    object.__setattr__(ctx, "autotier_cfg", autotier_cfg)
 
 
 def _settings_store(ctx: DashboardContext) -> SettingsStore:
@@ -1088,9 +1170,10 @@ def handle_request(
 ) -> Response | chat.ChatStreamResponse:
     """Route one request to the unified page or a delegated section action.
 
-    ``body`` carries the raw POST payload; only ``/api/chat`` and ``/api/run`` consume
-    it (the other POST actions are driven by query params). A chat launch returns a
-    streaming :class:`chat.ChatStreamResponse`; everything else returns a buffered
+    ``body`` carries the raw POST payload; only ``/api/chat``, ``/api/run``, and
+    ``/api/settings/inferencers`` consume it (the other POST actions are driven by
+    query params). A chat launch returns a streaming
+    :class:`chat.ChatStreamResponse`; everything else returns a buffered
     ``Response``.
     """
 
@@ -1139,8 +1222,12 @@ def handle_request(
         return _json(*catalog_action(ctx))
     if method == "GET" and route == "/api/settings":
         return _json(*settings_action(ctx))
+    if method == "GET" and route == "/api/settings/inferencers":
+        return _json(*settings_editor_action(ctx))
+    if method == "POST" and route == "/api/settings/inferencers":
+        return _json(*settings_editor_apply_action(ctx, body))
     if method == "GET" and route == "/api/settings/config":
-        return _json(*settings_editor.read_action(ctx.settings_store, query.get("id", [""])[0]))
+        return _json(*settings_editor.read_action(_editor_store(ctx), query.get("id", [""])[0]))
     if method == "POST" and route == "/api/settings/config":
         try:
             parsed = json.loads(body or b"{}")
@@ -1148,7 +1235,7 @@ def handle_request(
             return _json(400, {"error": "invalid JSON body"})
         return _json(
             *settings_editor.write_action(
-                ctx.settings_store,
+                _editor_store(ctx),
                 query.get("id", [""])[0],
                 parsed,
                 referenced_suites=lambda: settings_editor.referenced_suite_ids(
@@ -1543,6 +1630,20 @@ _PAGE = """<!DOCTYPE html>
     margin-left: var(--space-2); font-family: var(--font-mono); }
   .lock-note { color: var(--warn-fg); }
   .flag-set { color: var(--ok-fg); } .flag-unset { color: var(--warn-fg); }
+  .seditor-card { border: 1px solid var(--border); border-radius: var(--radius-md);
+    padding: var(--space-3); margin-top: var(--space-3); max-width: 46rem; }
+  .seditor-card h4 { margin: 0 0 var(--space-2); }
+  .seditor-grid { display: grid; grid-template-columns: max-content 1fr;
+    gap: var(--space-2) var(--space-3); align-items: start; }
+  .seditor-grid input, .seditor-grid select, .seditor-grid textarea { width: 100%;
+    box-sizing: border-box; }
+  .seditor-fixed { color: var(--text-muted); font-family: var(--font-mono);
+    font-size: var(--text-xs); }
+  .seditor-warn { color: var(--warn-fg); font-size: var(--text-xs);
+    margin: var(--space-2) 0 0; padding-left: 1.1rem; }
+  .seditor-running { color: var(--warn-fg); font-size: var(--text-xs); font-weight: 400;
+    margin-left: var(--space-2); }
+  .seditor-save { margin-top: var(--space-3); }
   .settings-editor { margin: var(--space-2) 0 var(--space-4); }
   .settings-editor summary { cursor: pointer; color: var(--text-muted); }
   .settings-editor textarea { width: 100%; min-height: 14rem; resize: vertical;
@@ -1807,7 +1908,9 @@ _PAGE = """<!DOCTYPE html>
     Env-var entries show only the variable name and whether it is currently set. Values
     marked read-only are fixed by the benchmark protocol. Models can be added, edited,
     duplicated, and removed here; every save is validated by the harness loader and
-    written atomically with a backup. Edit the YAML files to change the other groups.</p>
+    written atomically with a backup. Inferencer store paths and the storage tier
+    blocks are editable in the editor below — edit the YAML files directly for
+    everything else.</p>
   <p id="settings-err" class="err"></p>
   <div id="model-form" class="model-form" hidden>
     <h3 id="mf-title">Add model</h3>
@@ -1837,6 +1940,17 @@ _PAGE = """<!DOCTYPE html>
     </p>
   </div>
   <div id="settings-groups"></div>
+
+  <h3>Inferencers &amp; storage editor</h3>
+  <p class="note">Editable: per-engine <code>model_store</code> paths and on-disk format,
+    the <code>external_repo</code> block, and the <code>auto_tier</code> policy. Lifecycle,
+    detection, and start commands are install facts — shown for reference only. A path that
+    does not exist yet only warns (an unplugged SSD is normal); a running engine picks up
+    its edits at the next start. Changes are validated and written atomically with a backup.</p>
+  <p id="seditor-err" class="err"></p>
+  <p id="seditor-msg" class="note"></p>
+  <div id="seditor"></div>
+  <datalist id="pin-suggestions"></datalist>
 </section>
 
 </main>
@@ -3744,6 +3858,224 @@ _PAGE = """<!DOCTYPE html>
 
   picker.addEventListener("change", () => renderAxis(picker.value));
   loadAxes();
+})();
+
+// Inferencers & storage editor (story 15.3-002): thin client over the 15.2-001
+// write pipeline at /api/settings/inferencers. Store paths, format, and the
+// external_repo / auto_tier blocks are editable; lifecycle/detect/start stay
+// display-only. All validation is server-side (the harness's own loaders); a
+// nonexistent path only warns. No polling — the form refreshes on load, after a
+// save, and on a conflict, so in-progress edits are never clobbered.
+(function () {
+  const host = document.getElementById("seditor");
+  const err = document.getElementById("seditor-err");
+  const msg = document.getElementById("seditor-msg");
+  const datalist = document.getElementById("pin-suggestions");
+  let hash = null;
+  let updates = {};
+
+  function row(grid, labelText, control) {
+    const label = document.createElement("label");
+    label.textContent = labelText;
+    grid.append(label, control);
+  }
+
+  function fixedRow(grid, labelText, value) {
+    const label = document.createElement("span");
+    label.className = "seditor-fixed";
+    label.textContent = labelText;
+    const span = document.createElement("span");
+    span.className = "seditor-fixed";
+    span.textContent = value === null || value === undefined ? "-" : String(value);
+    grid.append(label, span);
+  }
+
+  function textInput(value, onInput) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = value === null || value === undefined ? "" : String(value);
+    input.addEventListener("input", () => onInput(input.value));
+    return input;
+  }
+
+  function warnList(warnings) {
+    const ul = document.createElement("ul");
+    ul.className = "seditor-warn";
+    for (const warning of warnings || []) {
+      const li = document.createElement("li");
+      li.textContent = warning;
+      ul.appendChild(li);
+    }
+    return ul;
+  }
+
+  function card(titleText, note) {
+    const div = document.createElement("div");
+    div.className = "seditor-card";
+    const title = document.createElement("h4");
+    title.textContent = titleText;
+    if (note) {
+      const badge = document.createElement("span");
+      badge.className = "seditor-running";
+      badge.textContent = note;
+      title.appendChild(badge);
+    }
+    div.appendChild(title);
+    const grid = document.createElement("div");
+    grid.className = "seditor-grid";
+    div.appendChild(grid);
+    return { div, grid };
+  }
+
+  function engineCard(eng, formats) {
+    const c = card(eng.name, eng.restart_note);
+    for (const d of eng.display || []) fixedRow(c.grid, d.label, d.value);
+    const paths = document.createElement("textarea");
+    paths.rows = 2;
+    paths.value = (eng.store.paths || []).join("\\n");
+    paths.addEventListener("input", () => {
+      const lines = paths.value.split("\\n").map((s) => s.trim()).filter(Boolean);
+      updates["inferencers." + eng.index + ".model_store"] = lines.length ? lines : null;
+    });
+    row(c.grid, "model_store (one path per line)", paths);
+    const select = document.createElement("select");
+    for (const fmt of [""].concat(formats)) {
+      const opt = document.createElement("option");
+      opt.value = fmt;
+      opt.textContent = fmt || "(none)";
+      opt.selected = fmt === (eng.store.format || "");
+      select.appendChild(opt);
+    }
+    select.addEventListener("change", () => {
+      updates["inferencers." + eng.index + ".format"] = select.value || null;
+    });
+    row(c.grid, "format", select);
+    c.div.appendChild(warnList(eng.store.warnings));
+    return c.div;
+  }
+
+  function externalCard(ext) {
+    // Whole-block submission: root + marker + subpaths always travel together,
+    // and an emptied root removes the block (a valid single-tier config).
+    const state = {
+      root: ext.root || "",
+      marker: ext.volume_marker || "",
+      subpaths: Object.assign({}, ext.subpaths || {}),
+    };
+    function push() {
+      const root = state.root.trim();
+      updates["external_repo"] = root
+        ? { root: root, volume_marker: state.marker.trim(), subpaths: state.subpaths }
+        : null;
+    }
+    const c = card("external_repo", ext.configured ? "" : " not configured");
+    row(c.grid, "root (empty removes the block)", textInput(state.root, (v) => { state.root = v; push(); }));
+    row(c.grid, "volume marker", textInput(state.marker, (v) => { state.marker = v; push(); }));
+    for (const fmt of Object.keys(state.subpaths).sort()) {
+      row(c.grid, "subpath: " + fmt, textInput(state.subpaths[fmt], (v) => {
+        state.subpaths[fmt] = v.trim();
+        push();
+      }));
+    }
+    c.div.appendChild(warnList(ext.warnings));
+    return c.div;
+  }
+
+  function autoTierCard(tier, suggestions) {
+    const state = {
+      max: tier.max_local_gb === null ? "" : String(tier.max_local_gb),
+      min: tier.min_free_gb === null ? "" : String(tier.min_free_gb),
+      pins: (tier.pins || []).join(", "),
+    };
+    function push() {
+      const block = {};
+      if (state.max.trim()) block.max_local_gb = Number(state.max);
+      if (state.min.trim()) block.min_free_gb = Number(state.min);
+      const pins = state.pins.split(",").map((s) => s.trim()).filter(Boolean);
+      if (pins.length) block.pins = pins;
+      updates["auto_tier"] = Object.keys(block).length ? block : null;
+    }
+    const c = card("auto_tier", tier.configured ? "" : " not configured");
+    row(c.grid, "max local GiB", textInput(state.max, (v) => { state.max = v; push(); }));
+    row(c.grid, "min free GiB", textInput(state.min, (v) => { state.min = v; push(); }));
+    const pins = textInput(state.pins, (v) => { state.pins = v; push(); });
+    pins.setAttribute("list", "pin-suggestions");
+    pins.placeholder = suggestions.length
+      ? "comma-separated, e.g. " + suggestions[0]
+      : "comma-separated model names";
+    row(c.grid, "pins (never auto-evicted)", pins);
+    return c.div;
+  }
+
+  function render(data) {
+    host.innerHTML = "";
+    updates = {};
+    hash = data.content_hash;
+    if (data.error) {
+      err.textContent = data.source + ": " + data.error;
+      return;
+    }
+    err.textContent = "";
+    const suggestions = (data.storage && data.storage.pin_suggestions) || [];
+    datalist.innerHTML = "";
+    for (const name of suggestions) {
+      const opt = document.createElement("option");
+      opt.value = name;
+      datalist.appendChild(opt);
+    }
+    for (const eng of data.engines || []) host.appendChild(engineCard(eng, data.formats || []));
+    if (data.storage) {
+      host.appendChild(externalCard(data.storage.external_repo));
+      host.appendChild(autoTierCard(data.storage.auto_tier, suggestions));
+    }
+    const save = document.createElement("button");
+    save.className = "act seditor-save";
+    save.id = "seditor-save";
+    save.textContent = "Save changes";
+    save.addEventListener("click", saveChanges);
+    host.appendChild(save);
+  }
+
+  async function saveChanges() {
+    if (!Object.keys(updates).length) {
+      msg.textContent = "Nothing changed.";
+      return;
+    }
+    err.textContent = "";
+    msg.textContent = "";
+    try {
+      const res = await fetch("/api/settings/inferencers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_hash: hash, updates: updates }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        err.textContent = data.error || "save failed (" + res.status + ")";
+        if (res.status === 409) refresh();
+        return;
+      }
+      const notes = ["Saved — the tier view reflects this on its next refresh."];
+      for (const name of data.restart_pending || []) {
+        notes.push(name + " is running — the change applies from its next start.");
+      }
+      msg.textContent = notes.concat(data.warnings || []).join(" ");
+      refresh();
+    } catch (e) {
+      err.textContent = "save failed: " + e;
+    }
+  }
+
+  async function refresh() {
+    try {
+      const res = await fetch("/api/settings/inferencers");
+      render(await res.json());
+    } catch (e) {
+      err.textContent = "settings editor unavailable: " + e;
+    }
+  }
+
+  refresh();
 })();
 </script>
 </body>

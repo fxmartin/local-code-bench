@@ -2740,8 +2740,126 @@ def test_api_settings_degrades_a_broken_group_inline(tmp_path: Path) -> None:
 
 
 def test_post_to_settings_route_is_404() -> None:
-    # the aggregate view stays read-only; writes live at /api/settings/models (15.3-001)
+    # the aggregated settings surface stays read-only; edits go through the
+    # dedicated editor routes (/api/settings/models, /api/settings/config,
+    # /api/settings/inferencers)
     assert ud.handle_request("POST", "/api/settings", _ctx()).status == 404
+
+
+# ---------------------------------------------------------------------------
+# settings editor: inferencers & storage over the 15.2-001 pipeline (15.3-002)
+# ---------------------------------------------------------------------------
+
+
+_EDITOR_INFERENCERS_YAML = """\
+inferencers:
+  - name: mlx-lm
+    lifecycle: server
+    detect:
+      module: mlx_lm
+    port: 8080
+    health_url: http://127.0.0.1:{port}/v1/models
+    start: ["mlx_lm.server"]
+    model_store: ~/hub
+    format: hf-safetensors
+
+auto_tier:
+  max_local_gb: 200
+"""
+
+
+def _inferencers_editor_ctx(tmp_path: Path) -> ud.DashboardContext:
+    from local_code_bench.config import load_autotier, load_external_repo, load_inferencers
+    from local_code_bench.settings_store import SettingsStore
+
+    inferencers_path = tmp_path / "inferencers.yaml"
+    inferencers_path.write_text(_EDITOR_INFERENCERS_YAML, encoding="utf-8")
+    return ud.DashboardContext(
+        configs=load_inferencers(inferencers_path),
+        state_dir=tmp_path / "state",
+        inferencers_path=inferencers_path,
+        external_cfg=load_external_repo(inferencers_path),
+        autotier_cfg=load_autotier(inferencers_path),
+        settings_store=SettingsStore(tmp_path),
+    )
+
+
+def test_page_has_settings_editor() -> None:
+    body = ud.render_page()
+    assert 'id="seditor"' in body
+    assert "/api/settings/inferencers" in body
+    assert 'id="pin-suggestions"' in body
+
+
+def test_api_settings_editor_returns_editable_document(tmp_path: Path) -> None:
+    resp = ud.handle_request("GET", "/api/settings/inferencers", _inferencers_editor_ctx(tmp_path))
+
+    assert resp.status == 200
+    payload = json.loads(resp.body)
+    assert payload["error"] is None
+    assert isinstance(payload["content_hash"], str)
+    assert [engine["name"] for engine in payload["engines"]] == ["mlx-lm"]
+    assert payload["engines"][0]["store"]["paths"] == ["~/hub"]
+    assert payload["storage"]["auto_tier"]["max_local_gb"] == 200.0
+
+
+def test_api_settings_editor_apply_refreshes_the_tier_context(tmp_path: Path) -> None:
+    ctx = _inferencers_editor_ctx(tmp_path)
+    loaded = json.loads(ud.handle_request("GET", "/api/settings/inferencers", ctx).body)
+    body = json.dumps(
+        {
+            "expected_hash": loaded["content_hash"],
+            "updates": {
+                "auto_tier": {"max_local_gb": 50, "pins": ["qwen2.5-coder"]},
+                "inferencers.0.model_store": ["~/other-hub"],
+            },
+        }
+    ).encode("utf-8")
+
+    resp = ud.handle_request("POST", "/api/settings/inferencers", ctx, body)
+
+    assert resp.status == 200
+    payload = json.loads(resp.body)
+    assert payload["ok"] is True
+    # the live context is refreshed so the tier view reflects the edit on its
+    # next poll without restarting the dashboard (story 15.3-002 AC2)
+    assert ctx.autotier_cfg is not None
+    assert ctx.autotier_cfg.max_local_gb == 50.0
+    assert ctx.autotier_cfg.pins == ("qwen2.5-coder",)
+    assert ctx.configs["mlx-lm"].model_store == ("~/other-hub",)
+
+
+def test_api_settings_editor_apply_rejects_install_facts(tmp_path: Path) -> None:
+    ctx = _inferencers_editor_ctx(tmp_path)
+    loaded = json.loads(ud.handle_request("GET", "/api/settings/inferencers", ctx).body)
+    body = json.dumps(
+        {"expected_hash": loaded["content_hash"], "updates": {"inferencers.0.port": 9}}
+    ).encode("utf-8")
+
+    resp = ud.handle_request("POST", "/api/settings/inferencers", ctx, body)
+
+    assert resp.status == 400
+    assert "not editable" in json.loads(resp.body)["error"]
+
+
+def test_api_settings_editor_apply_rejects_invalid_json(tmp_path: Path) -> None:
+    resp = ud.handle_request(
+        "POST", "/api/settings/inferencers", _inferencers_editor_ctx(tmp_path), b"not json"
+    )
+    assert resp.status == 400
+
+
+def test_api_settings_editor_stale_hash_conflicts(tmp_path: Path) -> None:
+    ctx = _inferencers_editor_ctx(tmp_path)
+    body = json.dumps(
+        {"expected_hash": "0" * 64, "updates": {"auto_tier": {"max_local_gb": 10}}}
+    ).encode("utf-8")
+
+    resp = ud.handle_request("POST", "/api/settings/inferencers", ctx, body)
+
+    assert resp.status == 409
+    assert json.loads(resp.body)["current_hash"]
+
 
 
 # ---------------------------------------------------------------------------
@@ -2839,3 +2957,4 @@ def test_settings_page_has_editor_affordance() -> None:
     assert "settings-editor" in body
     # the editor is a thin client over the shared read/write endpoint
     assert "/api/settings/config" in body
+
