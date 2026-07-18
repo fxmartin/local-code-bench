@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.72.0 (2026-07-18)
+
+### Features
+
+- **settings-management**: Suites & agents editor (#15.3-003)
+  ([`3c42ab4`](https://github.com/fxmartin/local-code-bench/commit/3c42ab42cd6a14454856d467cdeabcb53be17ccb))
+
+
 ## v0.71.0 (2026-07-18)
 
 ### Features

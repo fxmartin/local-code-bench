@@ -645,7 +645,7 @@ yourself — the harness neither triggers nor depends on it.
 
 `bench dashboard` serves a single localhost page that brings the inferencer control
 panel, a read-only **Optimizers** section, the live results view, a benchmark
-**Run** section, a **Chat** section, and a read-only **Settings** section together —
+**Run** section, a **Chat** section, and a **Settings** section together —
 switch between them client-side with no reload and no build step:
 
 ```bash
@@ -783,19 +783,33 @@ catalog is re-read per request, so a `configs/comparisons.yaml` edit shows up on
 refresh, and a broken catalog degrades to an inline picker error.
 
 The **Settings** section (`GET /api/settings`) aggregates every harness config surface
-into one read-only view, so you can see the whole configuration without opening four
+into one view, so you can see the whole configuration without opening four
 YAML files: **Models** (`--models`, default `configs/models.yaml`), **Inferencers** and
 **Storage** — local model stores plus the optional `external_repo` / `auto_tier` tier
 blocks — (`--config`, default `configs/inferencers.yaml`), **Suites** (`--suites`,
 default `configs/suites.yaml`), and **Agents** (`--agents`, default
 `configs/agents.yaml`). Each group is labelled with the file it comes from and is
-aggregated server-side (no YAML ever reaches the browser); a missing or unparsable
+aggregated server-side; a missing or unparsable
 file degrades that one group to an inline error naming the file while the others
 render. Model and agent API-key entries show only the environment-variable *name*
 with a set/unset indicator — never a value. Protocol-locked values are marked
 read-only with a one-line rationale: local endpoint `concurrency` (one request at a
 time so shared-GPU contention cannot distort prefill/decode measurements) and the
 benchmark temperature/seed (pass@1 is measured at temperature 0 with a fixed seed).
+
+The **Suites** and **Agents** groups are editable in place: each carries an
+"Edit `<file>`" form that loads the file's YAML and saves it through the validated
+settings store (`GET`/`POST /api/settings/config`). Every edit is validated by the
+harness's own loaders before a byte lands — the dashboard can never save a config
+the CLI would reject — and valid edits are written atomically with a timestamped
+backup of the previous version (default `.runtime/settings-backups/`, retention
+configurable via `settings_backup.*` in `configs/settings.yaml`). A form that went
+stale because the file changed on disk is refused with a conflict instead of
+silently overwriting. Built-in suites are code, not config — `configs/suites.yaml`
+registers custom suites only — and the agent harness `type` is marked read-only
+(harness adapters are code). Removing or renaming a custom suite id that saved runs
+in the history still reference produces a dangling-reference warning, but the change
+is allowed.
 
 Below the aggregate sits the **Inferencers & storage editor**
 (`GET`/`POST /api/settings/inferencers`), the tab's editable surface for
@@ -811,8 +825,8 @@ root that does not exist yet only *warns* — an unplugged SSD is a normal state
 an error — and a running engine (Epic-08 state) is flagged so you know its edit
 applies from the next start. The tier and inventory views pick up a saved edit on
 their next refresh without restarting the dashboard, and the pins editor suggests
-current inventory model names. Everything else in the YAML files is still edited
-directly.
+current inventory model names. The Models group remains read-only — edit
+`configs/models.yaml` directly to change it.
 
 ## macOS App
 

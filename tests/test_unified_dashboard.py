@@ -116,7 +116,9 @@ def _ctx(
     agents_path: str | Path = "configs/does-not-exist-agents.yaml",
     inferencers_path: str | Path = "configs/does-not-exist-inferencers.yaml",
     comparisons_path: str | Path = "configs/does-not-exist-comparisons.yaml",
+    settings_store: object | None = None,
 ) -> ud.DashboardContext:
+    extra = {"settings_store": settings_store} if settings_store is not None else {}
     return ud.DashboardContext(
         configs=_configs(),
         state_dir=".runtime",
@@ -129,6 +131,7 @@ def _ctx(
         agents_path=agents_path,
         inferencers_path=inferencers_path,
         comparisons_path=comparisons_path,
+        **extra,
     )
 
 
@@ -2764,7 +2767,7 @@ auto_tier:
 """
 
 
-def _editor_ctx(tmp_path: Path) -> ud.DashboardContext:
+def _inferencers_editor_ctx(tmp_path: Path) -> ud.DashboardContext:
     from local_code_bench.config import load_autotier, load_external_repo, load_inferencers
     from local_code_bench.settings_store import SettingsStore
 
@@ -2788,7 +2791,7 @@ def test_page_has_settings_editor() -> None:
 
 
 def test_api_settings_editor_returns_editable_document(tmp_path: Path) -> None:
-    resp = ud.handle_request("GET", "/api/settings/inferencers", _editor_ctx(tmp_path))
+    resp = ud.handle_request("GET", "/api/settings/inferencers", _inferencers_editor_ctx(tmp_path))
 
     assert resp.status == 200
     payload = json.loads(resp.body)
@@ -2800,7 +2803,7 @@ def test_api_settings_editor_returns_editable_document(tmp_path: Path) -> None:
 
 
 def test_api_settings_editor_apply_refreshes_the_tier_context(tmp_path: Path) -> None:
-    ctx = _editor_ctx(tmp_path)
+    ctx = _inferencers_editor_ctx(tmp_path)
     loaded = json.loads(ud.handle_request("GET", "/api/settings/inferencers", ctx).body)
     body = json.dumps(
         {
@@ -2826,7 +2829,7 @@ def test_api_settings_editor_apply_refreshes_the_tier_context(tmp_path: Path) ->
 
 
 def test_api_settings_editor_apply_rejects_install_facts(tmp_path: Path) -> None:
-    ctx = _editor_ctx(tmp_path)
+    ctx = _inferencers_editor_ctx(tmp_path)
     loaded = json.loads(ud.handle_request("GET", "/api/settings/inferencers", ctx).body)
     body = json.dumps(
         {"expected_hash": loaded["content_hash"], "updates": {"inferencers.0.port": 9}}
@@ -2840,13 +2843,13 @@ def test_api_settings_editor_apply_rejects_install_facts(tmp_path: Path) -> None
 
 def test_api_settings_editor_apply_rejects_invalid_json(tmp_path: Path) -> None:
     resp = ud.handle_request(
-        "POST", "/api/settings/inferencers", _editor_ctx(tmp_path), b"not json"
+        "POST", "/api/settings/inferencers", _inferencers_editor_ctx(tmp_path), b"not json"
     )
     assert resp.status == 400
 
 
 def test_api_settings_editor_stale_hash_conflicts(tmp_path: Path) -> None:
-    ctx = _editor_ctx(tmp_path)
+    ctx = _inferencers_editor_ctx(tmp_path)
     body = json.dumps(
         {"expected_hash": "0" * 64, "updates": {"auto_tier": {"max_local_gb": 10}}}
     ).encode("utf-8")
@@ -2855,3 +2858,102 @@ def test_api_settings_editor_stale_hash_conflicts(tmp_path: Path) -> None:
 
     assert resp.status == 409
     assert json.loads(resp.body)["current_hash"]
+
+
+
+# ---------------------------------------------------------------------------
+# settings editor routes (story 15.3-003): suites & agents through the store
+# ---------------------------------------------------------------------------
+
+_EDITOR_SUITES_YAML = """\
+suites:
+  - id: logclass-cli
+    source: datasets/logclass-cli.jsonl
+"""
+
+
+def _editor_ctx(tmp_path: Path, **ctx_kwargs) -> ud.DashboardContext:
+    from local_code_bench.settings_store import SettingsStore
+
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    (config_dir / "suites.yaml").write_text(_EDITOR_SUITES_YAML, encoding="utf-8")
+    (config_dir / "agents.yaml").write_text(_SETTINGS_AGENTS_YAML, encoding="utf-8")
+    return _ctx(settings_store=SettingsStore(config_dir), **ctx_kwargs)
+
+
+def test_api_settings_config_read_returns_editable_document(tmp_path: Path) -> None:
+    resp = ud.handle_request("GET", "/api/settings/config?id=suites", _editor_ctx(tmp_path))
+
+    assert resp.status == 200
+    payload = json.loads(resp.body)
+    assert payload["config_id"] == "suites"
+    assert payload["content"] == _EDITOR_SUITES_YAML
+    assert payload["content_hash"]
+
+
+def test_api_settings_config_write_round_trips_through_the_store(tmp_path: Path) -> None:
+    ctx = _editor_ctx(tmp_path)
+    loaded = json.loads(ud.handle_request("GET", "/api/settings/config?id=suites", ctx).body)
+    edited = loaded["content"] + "  - id: extra\n    source: datasets/extra.jsonl\n"
+    body = json.dumps({"content": edited, "expected_hash": loaded["content_hash"]}).encode()
+
+    resp = ud.handle_request("POST", "/api/settings/config?id=suites", ctx, body)
+
+    assert resp.status == 200
+    payload = json.loads(resp.body)
+    assert payload["warnings"] == []
+    assert (tmp_path / "configs" / "suites.yaml").read_text(encoding="utf-8") == edited
+
+
+def test_api_settings_config_write_warns_on_dangling_suite_reference(tmp_path: Path) -> None:
+    run_file = tmp_path / "run.jsonl"
+    append_jsonl(run_file, {"run_mode": "endpoint", "suite": "logclass-cli", "task_id": "t1"})
+    ctx = _editor_ctx(tmp_path, result_paths=[run_file])
+    loaded = json.loads(ud.handle_request("GET", "/api/settings/config?id=suites", ctx).body)
+    body = json.dumps(
+        {"content": "suites: []\n", "expected_hash": loaded["content_hash"]}
+    ).encode()
+
+    resp = ud.handle_request("POST", "/api/settings/config?id=suites", ctx, body)
+
+    assert resp.status == 200
+    payload = json.loads(resp.body)
+    assert any("logclass-cli" in warning for warning in payload["warnings"])
+    assert (tmp_path / "configs" / "suites.yaml").read_text(encoding="utf-8") == "suites: []\n"
+
+
+def test_api_settings_config_rejects_invalid_edit_with_422(tmp_path: Path) -> None:
+    ctx = _editor_ctx(tmp_path)
+    loaded = json.loads(ud.handle_request("GET", "/api/settings/config?id=suites", ctx).body)
+    body = json.dumps(
+        {"content": "suites: not-a-list\n", "expected_hash": loaded["content_hash"]}
+    ).encode()
+
+    resp = ud.handle_request("POST", "/api/settings/config?id=suites", ctx, body)
+
+    assert resp.status == 422
+    assert (
+        tmp_path / "configs" / "suites.yaml"
+    ).read_text(encoding="utf-8") == _EDITOR_SUITES_YAML
+
+
+def test_api_settings_config_rejects_uneditable_ids(tmp_path: Path) -> None:
+    ctx = _editor_ctx(tmp_path)
+    assert ud.handle_request("GET", "/api/settings/config?id=models", ctx).status == 404
+    assert ud.handle_request("GET", "/api/settings/config?id=bogus", ctx).status == 404
+
+
+def test_api_settings_config_write_rejects_invalid_json_body(tmp_path: Path) -> None:
+    resp = ud.handle_request(
+        "POST", "/api/settings/config?id=suites", _editor_ctx(tmp_path), b"{not json"
+    )
+    assert resp.status == 400
+
+
+def test_settings_page_has_editor_affordance() -> None:
+    body = ud.render_page()
+    assert "settings-editor" in body
+    # the editor is a thin client over the shared read/write endpoint
+    assert "/api/settings/config" in body
+
