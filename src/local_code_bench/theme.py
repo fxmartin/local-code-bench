@@ -18,6 +18,9 @@ rendered page to enforce it. The layer has two parts:
   destructive actions; pass/ok/warn stay monochrome, distinguished by glyph +
   weight so no state relies on color alone. The accent carries focus, primary
   emphasis (``.act``), and live progress (``.progress``).
+* ``PRINT_CSS`` (story 17.3-001) — the ``@media print`` overrides: the light
+  token values forced via the print media query (not a second theme), shared
+  dashboard chrome hidden, and break hygiene for the shared primitives.
 * ``MODES_CSS`` + the theme-toggle chrome (story 16.1-002) — a
   ``[data-theme="light"|"dark"]`` root attribute forces one ``color-scheme``
   (flipping every ``light-dark()`` token and native controls/scrollbars at
@@ -457,11 +460,35 @@ p.warn, span.warn, li.warn { color: var(--warn-fg); font-weight: 600; min-height
 .card ul { margin: var(--space-2) 0 var(--space-4); }
 """
 
-def theme_css(config: ThemeConfig | None = None) -> str:
-    """Tokens + mode overrides + base styles for a theme, ready for ``<style>``."""
+# --------------------------------------------------------------------------- #
+# Print stylesheet (story 17.3-001). Paper is light: the print media query
+# resolves color-scheme to light so every light-dark() token flips at once —
+# the same tokens, not a second theme (the dark-mode selector is repeated so a
+# stored preference cannot out-cascade the override). Shared dashboard chrome
+# (nav, form controls, theme toggle, modal scrim, anything marked .print-hide)
+# never prints, backgrounds keep their token colors, and headings stay
+# attached to the content they introduce.
+# --------------------------------------------------------------------------- #
 
-    return tokens_css(config) + "\n" + MODES_CSS + "\n" + BASE_CSS
+PRINT_CSS = """\
+@media print {
+  :root, :root[data-theme="dark"] { color-scheme: light; }
+  :root { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  nav, button, input, select, textarea, #theme-toggle, #modal,
+  .print-hide { display: none !important; }
+  h1, h2, h3 { break-after: avoid; }
+  tr, .card { break-inside: avoid; }
+}
+"""
+
+def theme_css(config: ThemeConfig | None = None) -> str:
+    """Tokens + mode overrides + base styles + print overrides for a theme,
+    ready for ``<style>``. ``PRINT_CSS`` comes last so its forced-light rule
+    wins at equal specificity over the ``[data-theme]`` mode overrides."""
+
+    return tokens_css(config) + "\n" + MODES_CSS + "\n" + BASE_CSS + "\n" + PRINT_CSS
 
 
 THEME_CSS = theme_css()
-"""Tokens + mode overrides + base styles, ready to embed in a page's ``<style>`` block."""
+"""Tokens + mode overrides + base styles + print overrides, ready to embed in a
+page's ``<style>`` block."""

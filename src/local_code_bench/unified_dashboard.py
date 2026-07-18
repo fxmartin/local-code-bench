@@ -1809,6 +1809,33 @@ _PAGE = """<!DOCTYPE html>
     font-family: var(--font-mono); font-size: var(--text-sm); }
   .settings-editor .editor-note { color: var(--text-muted); font-size: var(--text-sm); }
   .settings-editor .editor-warnings { color: var(--warn-fg); }
+  /* Print projection (story 17.3-001): the Benchmarks report paginates as a
+     document. The theme layer already forces the light tokens and hides
+     nav/controls; here the page header goes too, breaks fall between the
+     h3-led report sections only — never inside a stat tile or chart — and
+     the inline-SVG charts widen to the page so labels print legibly. */
+  @media print {
+    header { display: none !important; }
+    main { margin: 0; }
+    #bench-report h3 { break-before: page; break-after: avoid; }
+    #bench-report h3:first-of-type { break-before: auto; }
+    .report-kicker, .report-hero, .report-subtitle { break-inside: avoid;
+      break-after: avoid; }
+    .chip-row, .stat-panel, .chart-svg, .legend { break-inside: avoid; }
+    .chart-svg { max-width: 100%; }
+  }
+  /* Every printed page carries the running header (report title + generation
+     date) and footer (suite + version, hardware tag) via @page margin boxes;
+     the Benchmarks client fills the strings when it renders a report.
+     Browsers without margin-box support print blank margins — the on-page
+     kicker and methodology chips still carry the same facts. */
+  @page {
+    margin: 18mm 14mm;
+    @top-center { content: var(--print-header, ""); font-size: 9pt;
+      color: var(--text-muted); }
+    @bottom-center { content: var(--print-footer, ""); font-size: 9pt;
+      color: var(--text-muted); }
+  }
 </style>
 </head>
 <body>
@@ -1906,12 +1933,12 @@ _PAGE = """<!DOCTYPE html>
 
 <section id="section-benchmarks" class="section" hidden>
   <h2>Benchmarks</h2>
-  <p class="note">A finished run matrix read as evidence: pick a comparison axis from the
+  <p class="note print-hide">A finished run matrix read as evidence: pick a comparison axis from the
     catalog (configs/comparisons.yaml) to render it as a report — paired stat panels per
     cohort member, the cross-cutting Pareto frontier, and context scaling where sweep data
     exists. Axes without comparable runs yet list which models to run.</p>
   <p id="bench-err" class="err"></p>
-  <p>
+  <p class="print-hide">
     <label for="bench-axis">Comparison axis</label>
     <select id="bench-axis"></select>
   </p>
@@ -4047,7 +4074,21 @@ _PAGE = """<!DOCTYPE html>
     return wrap;
   }
 
+  function setPrintChrome(data) {
+    // Running header/footer for the @page margin boxes (story 17.3-001):
+    // report title + generation date on top, suite + version and hardware
+    // tag on the bottom. JSON.stringify yields a valid quoted CSS string.
+    const date = new Date().toISOString().slice(0, 10);
+    const meta = data.chips
+      .filter((chip) => chip.label === "suite" || chip.label === "hardware")
+      .map((chip) => chip.value);
+    const style = document.documentElement.style;
+    style.setProperty("--print-header", JSON.stringify(data.axis.title + " — generated " + date));
+    style.setProperty("--print-footer", JSON.stringify(meta.join(" — ")));
+  }
+
   function renderReport(data) {
+    setPrintChrome(data);
     host.innerHTML = "";
     host.appendChild(kicker(data.axis.title));
     host.appendChild(hero(data.sides));

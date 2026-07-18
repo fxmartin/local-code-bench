@@ -127,6 +127,35 @@ def test_theme_css_bundles_tokens_and_base_styles() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Print stylesheet (story 17.3-001) — light tokens forced, chrome hidden
+# --------------------------------------------------------------------------- #
+
+
+def test_print_css_forces_light_token_values() -> None:
+    assert "@media print" in theme.PRINT_CSS
+    # Same light-dark() tokens resolved light — not a second theme. The dark
+    # override selector is repeated so a stored preference cannot out-cascade
+    # the print media query.
+    assert ':root, :root[data-theme="dark"] { color-scheme: light; }' in theme.PRINT_CSS
+
+
+def test_print_css_hides_shared_chrome() -> None:
+    hidden = (
+        "nav, button, input, select, textarea, #theme-toggle, #modal,\n"
+        "  .print-hide { display: none !important; }"
+    )
+    assert hidden in theme.PRINT_CSS
+
+
+def test_print_css_is_token_pure_and_bundled_last() -> None:
+    assert _hexes(theme.PRINT_CSS) == []
+    assert not _COLOR_FN_RE.search(theme.PRINT_CSS)
+    # Bundled after the mode overrides so the forced light scheme wins at
+    # equal specificity against :root[data-theme="dark"].
+    assert theme.THEME_CSS.endswith(theme.PRINT_CSS)
+
+
+# --------------------------------------------------------------------------- #
 # Grep-enforceable AC — no color literals outside the token module
 # --------------------------------------------------------------------------- #
 
