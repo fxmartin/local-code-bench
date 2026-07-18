@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## v0.76.0 (2026-07-18)
+
+### Bug Fixes
+
+- **settings-management**: External-change detection, live (#15.4-001)
+  ([`5e19ab4`](https://github.com/fxmartin/local-code-bench/commit/5e19ab433a9e23fc9edb52b033d901e6e1d6b76b))
+
+### Features
+
+- **benchmark-comparison-dashboard**: Deterministic (#17.2-002)
+  ([`380e4fc`](https://github.com/fxmartin/local-code-bench/commit/380e4fc444e8b779c0614ccaccd2e2768da6c72c))
+
+- **settings-management**: External-change detection, live (#15.4-001)
+  ([`25c11da`](https://github.com/fxmartin/local-code-bench/commit/25c11dadc4c2a2562b251c8e500d3315f1933327))
+
+
 ## v0.75.0 (2026-07-18)
 
 ### Features
