@@ -513,6 +513,54 @@ def test_page_styles_comparison_sides_from_tokens() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Print stylesheet (story 17.3-001): pagination, chrome, running header/footer
+# ---------------------------------------------------------------------------
+
+
+def test_page_print_rules_break_between_report_sections() -> None:
+    body = ud.render_page()
+    # Breaks fall between the h3-led report sections, never inside a stat
+    # tile or chart; the hero block stays attached to the first section.
+    assert "#bench-report h3 { break-before: page; break-after: avoid; }" in body
+    assert "#bench-report h3:first-of-type { break-before: auto; }" in body
+    assert ".chip-row, .stat-panel, .chart-svg, .legend { break-inside: avoid; }" in body
+    assert (
+        ".report-kicker, .report-hero, .report-subtitle { break-inside: avoid;\n"
+        "      break-after: avoid; }" in body
+    )
+
+
+def test_page_print_hides_dashboard_chrome() -> None:
+    body = ud.render_page()
+    # The page header (title + tab nav) and the axis-picker row never print;
+    # the theme layer already hides nav/buttons/inputs/toggle globally.
+    assert "header { display: none !important; }" in body
+    assert '<p class="print-hide">' in body  # the axis-picker row
+    assert 'class="note print-hide"' in body  # the tab's usage instructions
+
+
+def test_page_print_charts_render_full_width_vector() -> None:
+    body = ud.render_page()
+    # Inline SVG is vector — print resolution is native; widening to the page
+    # keeps labels legible on paper.
+    assert ".chart-svg { max-width: 100%; }" in body
+
+
+def test_page_print_running_header_footer() -> None:
+    body = ud.render_page()
+    # Every printed page carries the report title + generation date (top) and
+    # suite + version / hardware tag (bottom) via @page margin boxes; the
+    # Benchmarks client fills the strings when it renders a report.
+    assert "@page" in body
+    assert 'content: var(--print-header, "")' in body
+    assert 'content: var(--print-footer, "")' in body
+    assert "setPrintChrome" in body
+    assert '"--print-header"' in body
+    assert '"--print-footer"' in body
+    assert '" — generated "' in body
+
+
+# ---------------------------------------------------------------------------
 # routing / safety
 # ---------------------------------------------------------------------------
 

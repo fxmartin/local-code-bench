@@ -803,6 +803,20 @@ the report renders in both light and dark modes with no raw color literals; the
 catalog is re-read per request, so a `configs/comparisons.yaml` edit shows up on
 refresh, and a broken catalog degrades to an inline picker error.
 
+The report carries a dedicated print stylesheet, so printing the Benchmarks tab
+(⌘P or the browser's print-to-PDF) produces a paginated document rather than a
+screenshot of the dashboard: the light token values are forced via `@media print`
+(the same `light-dark()` tokens, not a second theme), dashboard chrome — page
+header, tab nav, the axis picker, buttons — is hidden, and page breaks fall
+between the report's sections, never inside a stat panel or chart. Charts are
+inline SVG, so they print at native vector resolution with legible labels, widened
+to the page. Every printed page carries a running header (report title +
+generation date) and footer (suite + version, hardware tag) via CSS `@page` margin
+boxes (Chromium 131+); browsers without margin-box support print the same content
+with plain margins — the on-page kicker and methodology chips still state the
+title, suite, and hardware, so print stays a faithful projection of the screen
+report.
+
 The **Settings** section (`GET /api/settings`) aggregates every harness config surface
 into one view, so you can see the whole configuration without opening four
 YAML files: **Models** (`--models`, default `configs/models.yaml`), **Inferencers** and
