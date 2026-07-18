@@ -123,6 +123,33 @@ one-click action in v1):
 3. Reload the affected group in the Settings tab (the banner appears because
    the file changed on disk — that is the detection working as intended).
 
+## Settings tab: the Harness group (story 15.5-002)
+
+The unified dashboard's Settings tab renders a **Harness** group over this file,
+like every other config surface:
+
+- Every key appears with its **resolved effective value** and the **source
+  layer** that produced it — `env`, `yaml`, or `fallback` — resolved by the
+  loader (`settings_provenance`), not recomputed by the tab. CLI flags are
+  per-invocation, so they can never be the resolved source at render time;
+  where a documented flag exists the tab notes it as the "overrides per run"
+  layer.
+- A key currently overridden by an environment variable (today:
+  `BENCH_PROVIDER_TIMEOUT_SECONDS`) still shows its YAML field as editable, but
+  the tab states that the env override wins until unset — an edit is never
+  silently shadowed by an invisible layer.
+- Edits save through `POST /api/settings/harness` into the story 15.2-001
+  store: the submitted values are coerced by the loader's own key map, then the
+  write runs the full pipeline — conflict check against the hash the form was
+  loaded with, loader validation, timestamped backup, atomic replace. The tab
+  can never produce a `settings.yaml` the harness would refuse to load.
+- The read-only `protocol:` entries render locked with their rationale and no
+  edit affordance.
+
+`configs/settings.yaml` is a registered config in the settings store
+(`config id "settings"`), so programmatic edits get the same validated, atomic,
+comment-preserving write path as the other registered YAML files.
+
 ## Audit inventory (15.5-001)
 
 Every hardcoded operational value found in the audit, with its disposition:

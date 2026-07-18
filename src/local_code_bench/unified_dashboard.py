@@ -69,11 +69,18 @@ from .inferencers import manager as inferencer_manager
 from .inferencers import tiered, tiering
 from .inferencers.external import check_availability
 from .optimizers import manager as optimizer_manager
-from .settings import get_settings, load_theme_config
+from .settings import (
+    SettingsError,
+    get_settings,
+    load_settings,
+    load_theme_config,
+    parse_setting_value,
+)
 from .settings_changes import SettingsChangeLog
 from .settings_store import (
     ConflictError,
     SettingsStore,
+    SettingsStoreError,
     SettingsValidationError,
     UnknownConfigError,
     WriteFailedError,
@@ -317,7 +324,9 @@ class DashboardContext:
     models_path: str | Path = "configs/models.yaml"
     agents_path: str | Path = "configs/agents.yaml"
     inferencers_path: str | Path = "configs/inferencers.yaml"
-    # Story 16.4-001: the operational-defaults file behind the Harness/theme group.
+    # Story 16.4-001 / 15.5-002: the operational-defaults file behind the
+    # Harness/theme group and the Settings tab's editable Harness group; edits
+    # go through the 15.2-001 store.
     settings_path: str | Path = "configs/settings.yaml"
     # Story 17.2-001: the comparison-axis catalog behind the Benchmarks tab. It is
     # re-read per request like the settings sources, so a catalog edit (an eighth
@@ -643,6 +652,55 @@ def settings_changelog_action(ctx: DashboardContext) -> tuple[int, dict]:
     if ctx.settings_changelog is None:
         return 200, {"entries": []}
     return 200, {"entries": ctx.settings_changelog.entries(limit=50)}
+
+
+def settings_harness_edit_action(ctx: DashboardContext, body: bytes) -> tuple[int, dict]:
+    """Apply a Harness-group edit through the 15.2-001 store (story 15.5-002).
+
+    Submitted dotted keys are coerced and pre-validated by the settings
+    loader's own key map (protocol keys are refused outright), then written via
+    :meth:`SettingsStore.apply_updates` — conflict check, loader validation,
+    timestamped backup, atomic replace — so the tab can never produce a
+    ``settings.yaml`` the harness would refuse to load. The store's backup
+    wiring (``settings_backup.*``) is resolved from the file being edited.
+    """
+
+    try:
+        parsed = json.loads(body or b"{}")
+    except json.JSONDecodeError:
+        return 400, {"error": "invalid JSON body"}
+    if not isinstance(parsed, dict):
+        return 400, {"error": "request body must be a JSON object"}
+    updates = parsed.get("updates")
+    expected_hash = parsed.get("expected_hash")
+    if not isinstance(updates, dict) or not updates:
+        return 400, {"error": "updates must be a non-empty object of dotted settings keys"}
+    if not isinstance(expected_hash, str) or not expected_hash:
+        return 400, {"error": "expected_hash is required (reload the Settings tab)"}
+
+    try:
+        coerced = {
+            dotted: parse_setting_value(dotted, value) for dotted, value in updates.items()
+        }
+        store = default_settings_store(
+            Path(ctx.settings_path).parent, settings=load_settings(ctx.settings_path)
+        )
+    except SettingsError as exc:
+        return 400, {"error": str(exc)}
+    try:
+        result = store.apply_updates("settings", coerced, expected_hash=expected_hash)
+    except ConflictError as exc:
+        return 409, {"error": str(exc), "current_hash": exc.current_hash}
+    except SettingsValidationError as exc:
+        return 400, {"error": str(exc)}
+    except SettingsStoreError as exc:
+        return 500, {"error": str(exc)}
+    # backup name only — the sanitize seam would redact an absolute path anyway
+    return 200, {
+        "written": True,
+        "content_hash": result.content_hash,
+        "backup": result.backup_path.name,
+    }
 
 
 def optimizers_action(ctx: DashboardContext) -> tuple[int, dict]:
@@ -1497,6 +1555,8 @@ def handle_request(
         return _json(*settings_changelog_action(ctx))
     if method == "POST" and route == "/api/settings/write":
         return _json(*settings_write_action(ctx, body))
+    if method == "POST" and route == "/api/settings/harness":
+        return _json(*settings_harness_edit_action(ctx, body))
     if method == "GET" and route == "/api/chat/catalog":
         return _json(*chat_catalog_action(ctx))
     if method == "GET" and route == "/api/inventory":
@@ -1915,6 +1975,14 @@ _PAGE = """<!DOCTYPE html>
   .model-actions button { margin-left: var(--space-2); }
   .settings-source { color: var(--text-muted); font-size: var(--text-xs); font-weight: 400;
     margin-left: var(--space-2); font-family: var(--font-mono); }
+  .settings-layer { color: var(--text-muted); font-size: var(--text-xs);
+    font-family: var(--font-mono); margin-left: var(--space-1); }
+  .settings-input { width: 11rem; font-family: var(--font-mono); font-size: var(--text-xs); }
+  .settings-note { color: var(--text-muted); font-size: var(--text-xs);
+    margin-left: var(--space-2); }
+  .settings-env-note { color: var(--warn-fg); font-size: var(--text-xs);
+    margin-left: var(--space-2); }
+  .settings-save { margin: var(--space-2) 0 var(--space-4); }
   .lock-note { color: var(--warn-fg); }
   .flag-set { color: var(--ok-fg); } .flag-unset { color: var(--warn-fg); }
   .seditor-card { border: 1px solid var(--border); border-radius: var(--radius-md);
@@ -2219,16 +2287,19 @@ _PAGE = """<!DOCTYPE html>
 
 <section id="section-settings" class="section" hidden>
   <h2>Settings</h2>
-  <p class="note">Every harness config surface in one view — models, inferencers,
-    storage tiering, suites, and agents — each group labelled with the file it comes from.
-    Env-var entries show only the variable name and whether it is currently set. Values
-    marked read-only are fixed by the benchmark protocol. Models can be added, edited,
-    duplicated, and removed here; every save is validated by the harness loader and
-    written atomically with a backup. Inferencer store paths and the storage tier
-    blocks are editable in the editor below — edit the YAML files directly for
-    everything else. If a file changes on disk while the tab is open, the affected
-    group is flagged until you reload it.</p>
+  <p class="note">Every harness config surface in one view — harness defaults, models,
+    inferencers, storage tiering, suites, and agents — each group labelled with the file it
+    comes from. The Harness group shows each key's effective value with the layer that
+    produced it (env / yaml / fallback) and saves edits to configs/settings.yaml through
+    the validated, atomic write pipeline. Env-var entries show only the variable name and
+    whether it is currently set. Values marked read-only are fixed by the benchmark
+    protocol. Models can be added, edited, duplicated, and removed here; every save is
+    validated by the harness loader and written atomically with a backup. Inferencer store
+    paths and the storage tier blocks are editable in the editor below — edit the YAML
+    files directly for everything else. If a file changes on disk while the tab is open,
+    the affected group is flagged until you reload it.</p>
   <p id="settings-err" class="err"></p>
+  <p id="settings-msg" class="note"></p>
   <div id="model-form" class="model-form" hidden>
     <h3 id="mf-title">Add model</h3>
     <div class="model-form-grid">
@@ -3531,21 +3602,25 @@ _PAGE = """<!DOCTYPE html>
 
 // Settings section: aggregate over /api/settings (story 15.1-001). Renders
 // whatever groups/items/fields the server sends — all interpretation (env
-// indicators, protocol locks, per-group load errors, which groups are editable)
-// happens server-side. Groups flagged editable get a YAML editor over the
-// validated write path at /api/settings/config (story 15.3-003), and the Models
-// group gets its own form over GET/POST /api/settings/models (story 15.3-001) —
-// the form only pre-validates prices inline and locks local concurrency for UX,
-// while every write authority (duplicate names, loader validation, atomic
-// write + backup) lives server-side. External-change detection and the change
-// log (story 15.4-001): each group renders from the last *accepted* payload;
-// when a later poll reports a different source-file hash the group keeps its
-// accepted view and shows a "changed on disk — reload" banner instead of
-// silently swapping content. Stale submissions stay blocked server-side by the
-// 15.2-001 conflict check until the reload picks up the new hash.
+// indicators, source layers, protocol locks, per-group load errors, which
+// groups are editable) happens server-side. Groups flagged editable get a YAML
+// editor over the validated write path at /api/settings/config (story 15.3-003),
+// the Models group gets its own form over GET/POST /api/settings/models (story
+// 15.3-001) — the form only pre-validates prices inline and locks local
+// concurrency for UX, while every write authority (duplicate names, loader
+// validation, atomic write + backup) lives server-side — and the Harness group
+// (story 15.5-002) is editable: its yaml-layer inputs save through
+// POST /api/settings/harness (the 15.2-001 pipeline). External-change detection
+// and the change log (story 15.4-001): each group renders from the last
+// *accepted* payload; when a later poll reports a different source-file hash the
+// group keeps its accepted view and shows a "changed on disk — reload" banner
+// instead of silently swapping content. Stale submissions stay blocked
+// server-side by the 15.2-001 conflict check until the reload picks up the new
+// hash.
 (function () {
   const host = document.getElementById("settings-groups");
   const err = document.getElementById("settings-err");
+  const msg = document.getElementById("settings-msg");
   const form = document.getElementById("model-form");
   const formTitle = document.getElementById("mf-title");
   const formErr = document.getElementById("mf-err");
@@ -3755,6 +3830,12 @@ _PAGE = """<!DOCTYPE html>
       badge.textContent = f.is_set ? " (set)" : " (unset)";
       td.appendChild(badge);
     }
+    if (f.source) {
+      const layer = document.createElement("span");
+      layer.className = "settings-layer";
+      layer.textContent = "[" + f.source + "]";
+      td.appendChild(layer);
+    }
     return td;
   }
 
@@ -3763,19 +3844,75 @@ _PAGE = """<!DOCTYPE html>
     if (f.locked) {
       td.className = "lock-note";
       td.textContent = "read-only \\u2014 " + (f.rationale || "");
+      return td;
+    }
+    if (f.editable) {
+      const input = document.createElement("input");
+      input.className = "settings-input";
+      input.dataset.key = f.key;
+      const initial = f.yaml_value === null || f.yaml_value === undefined
+        ? "" : String(f.yaml_value);
+      input.value = initial;
+      input.dataset.initial = initial;
+      input.placeholder = f.value === null || f.value === undefined ? "" : String(f.value);
+      td.appendChild(input);
+    }
+    if (f.note) {
+      const note = document.createElement("span");
+      // bracket access keeps the page clear of the dotted env-file pattern
+      // the page-wide leak check bans
+      note.className = f["env_active"] ? "settings-env-note" : "settings-note";
+      note.textContent = f.note;
+      td.appendChild(note);
     }
     return td;
   }
 
+  function saveBar(g, table) {
+    const bar = document.createElement("div");
+    bar.className = "settings-save";
+    const btn = document.createElement("button");
+    btn.textContent = "Save harness defaults";
+    btn.addEventListener("click", async () => {
+      const updates = {};
+      table.querySelectorAll("input[data-key]").forEach((input) => {
+        if (input.value !== input.dataset.initial && input.value !== "") {
+          updates[input.dataset.key] = input.value;
+        }
+      });
+      if (!Object.keys(updates).length) {
+        msg.textContent = "nothing changed";
+        return;
+      }
+      try {
+        const res = await fetch("/api/settings/harness", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ updates: updates, expected_hash: g.content_hash }),
+        });
+        const data = await res.json();
+        msg.textContent = res.ok
+          ? "saved \\u2014 backup " + data.backup
+          : "save failed: " + (data.error || res.status);
+      } catch (e) {
+        msg.textContent = "save failed: " + e;
+      }
+      refresh(true);
+    });
+    bar.appendChild(btn);
+    return bar;
+  }
+
   function renderGroup(g) {
-    const editable = g.id === "models";
+    const modelsGroup = g.id === "models";
+    const harnessEdit = g.id === "harness" && g.editable === true;
     const title = document.createElement("h3");
     title.textContent = g.label;
     const src = document.createElement("span");
     src.className = "settings-source";
     src.textContent = "from " + g.source;
     title.appendChild(src);
-    if (editable && !g.error) {
+    if (modelsGroup && !g.error) {
       const actions = document.createElement("span");
       actions.className = "model-actions";
       actions.appendChild(actionButton("Add model", () => openForm(null)));
@@ -3792,7 +3929,7 @@ _PAGE = """<!DOCTYPE html>
     const table = document.createElement("table");
     const thead = document.createElement("thead");
     const htr = document.createElement("tr");
-    for (const label of ["Item", "Setting", "Value", ""]) {
+    for (const label of ["Item", "Setting", "Value", harnessEdit ? "Edit (yaml layer)" : ""]) {
       const th = document.createElement("th");
       th.textContent = label;
       htr.appendChild(th);
@@ -3806,7 +3943,7 @@ _PAGE = """<!DOCTYPE html>
         const nameTd = document.createElement("td");
         if (i === 0) {
           nameTd.textContent = item.name;
-          if (editable) nameTd.appendChild(modelActions(item.name));
+          if (modelsGroup) nameTd.appendChild(modelActions(item.name));
         }
         const settingTd = document.createElement("td");
         settingTd.textContent = f.label;
@@ -3825,7 +3962,10 @@ _PAGE = """<!DOCTYPE html>
     }
     table.appendChild(tbody);
     host.appendChild(table);
-    if (g.editable) attachEditor(g);
+    if (harnessEdit) host.appendChild(saveBar(g, table));
+    // the Harness group is editable but saves through its own save bar, not
+    // the raw-YAML editor — only groups with an editor note get the editor
+    if (g.editable && g.editable_note) attachEditor(g);
   }
 
   // One YAML editor per editable group (story 15.3-003): load content + hash,
@@ -3987,9 +4127,20 @@ _PAGE = """<!DOCTYPE html>
     }
   }
 
-  async function refresh() {
-    // Never re-render over an open editor: it would wipe unsaved edits.
+  // Don't let the periodic refresh wipe an edit in progress.
+  function editing() {
+    for (const input of host.querySelectorAll("input[data-key]")) {
+      if (input.value !== input.dataset.initial) return true;
+      if (document.activeElement === input) return true;
+    }
+    return false;
+  }
+
+  async function refresh(force) {
+    // Never re-render over an open editor or in-progress input edit:
+    // it would wipe unsaved edits.
     if (host.querySelector(".settings-editor[open]")) return;
+    if (!force && editing()) return;
     try {
       const res = await fetch("/api/settings");
       const data = await res.json();
@@ -4009,8 +4160,8 @@ _PAGE = """<!DOCTYPE html>
   fields.inferencer.addEventListener("input", lockConcurrency);
   fields.endpoint.addEventListener("input", lockConcurrency);
 
-  refresh();
-  setInterval(refresh, 10000);
+  refresh(true);
+  setInterval(() => refresh(false), 10000);
 })();
 
 // Benchmarks section (story 17.2-001): a thin client over /api/compare/axes

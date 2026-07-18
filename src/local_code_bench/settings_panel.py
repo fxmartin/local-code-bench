@@ -37,7 +37,13 @@ from .config import (
 from . import pdf_export
 from . import theme
 from .agents import supported_harness_kinds
-from .settings import Settings, SettingsError, load_settings
+from .settings import (
+    Settings,
+    SettingsError,
+    load_settings,
+    protocol_entries,
+    settings_provenance,
+)
 from .settings_store import content_hash
 from .suite_catalog import suite_catalog
 
@@ -94,12 +100,16 @@ def settings_payload(
     Each group re-reads its source file now, so a YAML edit shows up on the next
     refresh and a broken file surfaces as that group's inline ``error`` instead of
     failing the whole document. ``environ`` defaults to ``os.environ`` and is only
-    consulted for key *membership* (the set/unset indicator).
+    consulted for key *membership* (the set/unset indicator) — except for the
+    Harness group's documented env overrides, whose values are operational
+    tunables (never secrets) and are shown so an env override is never mistaken
+    for the YAML value (story 15.5-002).
     """
 
     env = os.environ if environ is None else environ
     return {
         "groups": [
+            _harness_group(settings_path, env),
             _group(
                 "models",
                 "Models",
@@ -134,10 +144,85 @@ def settings_payload(
                 "settings",
                 "Harness",
                 settings_path,
-                lambda: _harness_items(load_settings(settings_path)),
+                lambda: _theme_items(load_settings(settings_path)),
             ),
         ]
     }
+
+
+#: Why each protocol key in the Harness group is read-only (story 15.5-002).
+_PROTOCOL_RATIONALES = {
+    "benchmark_temperature": PROTOCOL_SAMPLING_RATIONALE,
+    "benchmark_seed": PROTOCOL_SAMPLING_RATIONALE,
+    "local_concurrency": LOCAL_CONCURRENCY_RATIONALE,
+}
+
+
+def _harness_group(settings_path: str | Path, environ: Mapping[str, str]) -> dict[str, Any]:
+    """The Harness defaults group: every ``configs/settings.yaml`` key with its
+    resolved effective value and source layer (story 15.5-002).
+
+    Carries the file's ``content_hash`` so an edit can run the 15.2-001
+    conflict check; ``editable`` is false when the file is missing (the keys
+    still render at their fallback layer, there is just nothing to edit).
+    """
+
+    path = Path(settings_path)
+    try:
+        items = _harness_items(settings_path, environ)
+        hash_value = content_hash(path.read_text(encoding="utf-8")) if path.exists() else None
+    except (SettingsError, OSError) as exc:
+        items, hash_value, error = [], None, str(exc)
+    else:
+        error = None
+    return {
+        "id": "harness",
+        "label": "Harness",
+        "source": str(settings_path),
+        "error": error,
+        "items": items,
+        "editable": hash_value is not None,
+        "content_hash": hash_value,
+    }
+
+
+def _harness_items(settings_path: str | Path, environ: Mapping[str, str]) -> list[dict[str, Any]]:
+    items: dict[str, dict[str, Any]] = {}
+    for entry in settings_provenance(settings_path, environ):
+        field: dict[str, Any] = {
+            "label": entry.key,
+            "value": entry.value,
+            "source": entry.layer,
+            "key": f"{entry.section}.{entry.key}",
+            "editable": True,
+            "yaml_value": entry.yaml_value,
+        }
+        if entry.env_var is not None:
+            field["env_var"] = entry.env_var
+            field["env_active"] = entry.env_active
+        note = _harness_note(entry)
+        if note:
+            field["note"] = note
+        items.setdefault(entry.section, {"name": entry.section, "fields": []})
+        items[entry.section]["fields"].append(field)
+    protocol_fields = [
+        _field(key, value, locked=True, rationale=_PROTOCOL_RATIONALES[key])
+        for key, value in protocol_entries().items()
+    ]
+    return [*items.values(), {"name": "protocol", "fields": protocol_fields}]
+
+
+def _harness_note(entry: Any) -> str:
+    """Server-side layering note, so the tab renders without interpreting."""
+
+    parts = []
+    if entry.env_active:
+        parts.append(f"env {entry.env_var} wins until unset — an edit here will not take effect")
+    elif entry.env_var is not None:
+        parts.append(f"env {entry.env_var} overrides when set")
+    if entry.flag is not None:
+        parts.append(f"CLI flag {entry.flag} overrides per run")
+    return "; ".join(parts)
 
 
 def _group(
@@ -342,7 +427,7 @@ def _suite_items(suites_path: str | Path, cache_dir: str | Path) -> list[dict[st
     return items
 
 
-def _harness_items(settings: Settings) -> list[dict[str, Any]]:
+def _theme_items(settings: Settings) -> list[dict[str, Any]]:
     """The Harness/theme group (story 16.4-001): configured hues, derived tints.
 
     The dark tints are shown but not editable as values of their own — they are

@@ -25,7 +25,9 @@ inventory.
 
 from __future__ import annotations
 
+import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from functools import lru_cache
 from pathlib import Path
@@ -148,6 +150,28 @@ _PROTOCOL_LOCKED: dict[str, float | int] = {
 
 _FIELD_TYPES = {field.name: field.type for field in fields(Settings)}
 
+# Documented env-var layer per field (env > yaml > fallback). Today only the
+# provider timeout has one; extend here when a new override is documented.
+_ENV_OVERRIDES: dict[str, str] = {
+    "provider_timeout_seconds": PROVIDER_TIMEOUT_ENV,
+}
+
+# Documented CLI-flag layer per field — display metadata for the Settings tab.
+# Flags are per-invocation, so the loader can never resolve them as the source
+# of an effective value; the tab shows them as the "overrides per run" layer.
+_CLI_FLAGS: dict[str, str] = {
+    "endpoint_max_tokens": "--max-tokens",
+    "sandbox_timeout_seconds": "--timeout",
+    "dashboard_host": "--host",
+    "dashboard_port": "--port",
+    "unified_dashboard_port": "--port",
+    "dashboard_state_file": "--state-file",
+    "cache_dir": "--cache-dir",
+    "results_dir": "--results-dir",
+    "inferencer_state_dir": "--state-dir",
+    "optimizer_state_dir": "--optimizer-state-dir",
+}
+
 
 def load_settings(path: str | Path | None = None) -> Settings:
     """Load settings from ``path`` (default ``configs/settings.yaml``).
@@ -157,15 +181,21 @@ def load_settings(path: str | Path | None = None) -> Settings:
     """
 
     settings_path = Path(path) if path is not None else DEFAULT_SETTINGS_PATH
+    return Settings(**_load_overrides(settings_path))
+
+
+def _load_overrides(settings_path: Path) -> dict[str, Any]:
+    """The validated yaml layer as ``Settings`` field overrides (may be empty)."""
+
     if not settings_path.exists():
-        return Settings()
+        return {}
 
     try:
         raw = yaml.safe_load(settings_path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
         raise SettingsError(f"{settings_path}: invalid YAML: {exc}") from exc
     if raw is None:
-        return Settings()
+        return {}
     if not isinstance(raw, dict):
         raise SettingsError(f"{settings_path}: top level must be a mapping of sections")
 
@@ -181,7 +211,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
             if field_name is None:
                 raise SettingsError(f"{settings_path}: unknown setting '{section}.{key}'")
             overrides[field_name] = _coerce(settings_path, f"{section}.{key}", field_name, value)
-    return Settings(**overrides)
+    return overrides
 
 
 @lru_cache(maxsize=1)
@@ -214,6 +244,109 @@ def load_theme_config(path: str | Path | None = None) -> ThemeConfig:
         return theme_config(load_settings(path))
     except SettingsError:
         return ThemeConfig()
+
+
+@dataclass(frozen=True)
+class SettingProvenance:
+    """One settings key with its effective value and the layer that produced it.
+
+    ``layer`` is the highest layer the loader can resolve at read time —
+    ``"env"``, ``"yaml"``, or ``"fallback"``. The CLI-flag layer is
+    per-invocation and therefore never the resolved source here; where a
+    documented flag exists it is exposed as ``flag`` display metadata.
+    """
+
+    section: str
+    key: str
+    field: str
+    value: object
+    yaml_value: object | None
+    layer: str
+    env_var: str | None
+    env_active: bool
+    flag: str | None
+
+
+def settings_provenance(
+    path: str | Path | None = None, environ: Mapping[str, str] | None = None
+) -> list[SettingProvenance]:
+    """Per-key provenance for the Settings tab (story 15.5-002).
+
+    Resolves env > yaml > fallback for every key in :data:`_KEY_MAP`, keeping
+    the yaml layer visible even when an env override wins so the tab can state
+    that an edit to the file will not take effect until the variable is unset.
+    A malformed file raises :class:`SettingsError` (the caller degrades it to
+    an inline group error like every other config surface).
+    """
+
+    env = os.environ if environ is None else environ
+    settings_path = Path(path) if path is not None else DEFAULT_SETTINGS_PATH
+    overrides = _load_overrides(settings_path)
+    fallbacks = Settings()
+
+    entries = []
+    for (section, key), field_name in _KEY_MAP.items():
+        env_var = _ENV_OVERRIDES.get(field_name)
+        env_raw = env.get(env_var) if env_var is not None else None
+        if env_raw is not None:
+            layer, value = "env", _display_env_value(env_raw)
+        elif field_name in overrides:
+            layer, value = "yaml", overrides[field_name]
+        else:
+            layer, value = "fallback", getattr(fallbacks, field_name)
+        entries.append(
+            SettingProvenance(
+                section=section,
+                key=key,
+                field=field_name,
+                value=value,
+                yaml_value=overrides.get(field_name),
+                layer=layer,
+                env_var=env_var,
+                env_active=env_raw is not None,
+                flag=_CLI_FLAGS.get(field_name),
+            )
+        )
+    return entries
+
+
+def protocol_entries() -> dict[str, float | int]:
+    """The read-only protocol section (key -> locked value), for display."""
+
+    return dict(_PROTOCOL_LOCKED)
+
+
+def parse_setting_value(dotted: str, value: object) -> object:
+    """Coerce one submitted Harness-group edit to its typed, validated value.
+
+    Accepts the string form a web form submits (``"2048"``) as well as
+    already-typed values; unknown keys, protocol keys, wrong types, and
+    non-positive numbers raise :class:`SettingsError`.
+    """
+
+    section, _, key = dotted.partition(".")
+    if section == "protocol":
+        raise SettingsError(f"{dotted} is read-only (measurement protocol)")
+    field_name = _KEY_MAP.get((section, key))
+    if field_name is None:
+        raise SettingsError(f"unknown setting '{dotted}'")
+    annotation = _FIELD_TYPES[field_name]
+    if isinstance(value, str) and annotation in ("int", "float"):
+        try:
+            value = int(value.strip()) if annotation == "int" else float(value.strip())
+        except ValueError:
+            kind = "an integer" if annotation == "int" else "a number"
+            raise SettingsError(f"{dotted} must be {kind}") from None
+    return _coerce(DEFAULT_SETTINGS_PATH, dotted, field_name, value)
+
+
+def _display_env_value(raw: str) -> object:
+    """The env layer's value for display: numeric when parseable, else raw."""
+
+    try:
+        return float(raw)
+    except ValueError:
+        return raw
 
 
 def _coerce(path: Path, dotted: str, field_name: str, value: object) -> object:

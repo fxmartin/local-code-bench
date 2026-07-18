@@ -76,7 +76,10 @@ fixed precedence: CLI flag > env var > `configs/settings.yaml` > built-in
 fallback. The file is additive — delete it (or any key) and behaviour is
 unchanged. Measurement-protocol values (benchmark temperature/seed, local-model
 concurrency) sit in a read-only `protocol:` section the loader refuses to
-override. Full key reference and the audit inventory: `docs/SETTINGS.md`.
+override. The unified dashboard's Settings tab shows every key with its
+effective value and source layer (env / yaml / fallback) in a Harness group,
+and saves edits back to the file through the validated, atomic write pipeline.
+Full key reference and the audit inventory: `docs/SETTINGS.md`.
 
 ## Endpoint Mode
 
