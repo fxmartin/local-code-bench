@@ -34,6 +34,7 @@ from .config import (
     load_models,
     resolve_health_url,
 )
+from . import pdf_export
 from . import theme
 from .agents import supported_harness_kinds
 from .settings import Settings, SettingsError, load_settings
@@ -346,8 +347,13 @@ def _harness_items(settings: Settings) -> list[dict[str, Any]]:
 
     The dark tints are shown but not editable as values of their own — they are
     always derived from the configured hues, keeping one hue per role.
+
+    The PDF-export item (story 17.3-002) shows the live renderer detection
+    next to the configured candidates, so when one-click Download PDF is
+    unavailable the tab names exactly which binary would enable it.
     """
 
+    renderer = pdf_export.detect_renderer(settings.pdf_renderer_candidates)
     return [
         {
             "name": "theme",
@@ -358,7 +364,20 @@ def _harness_items(settings: Settings) -> list[dict[str, Any]]:
                 _field("danger dark tint (derived)", theme.dark_tint(settings.theme_danger)),
                 _field("default mode", settings.theme_default_mode),
             ],
-        }
+        },
+        {
+            "name": "pdf export",
+            "fields": [
+                _field(
+                    "renderer detected",
+                    renderer.candidate
+                    if renderer is not None
+                    else "none — one-click export disabled",
+                ),
+                _field("renderer candidates", ", ".join(settings.pdf_renderer_candidates)),
+                _field("render timeout seconds", settings.pdf_render_timeout_seconds),
+            ],
+        },
     ]
 
 

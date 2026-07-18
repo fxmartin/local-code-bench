@@ -817,6 +817,22 @@ with plain margins — the on-page kicker and methodology chips still state the
 title, suite, and hardware, so print stays a faithful projection of the screen
 report.
 
+A **Download PDF** button next to the axis picker produces that same document in
+one click when Chrome or Chromium is installed. Detection follows the inferencer
+pattern — the harness probes the binaries and `.app` bundles listed under
+`pdf.renderer_candidates` in `configs/settings.yaml` (detect-only; it never
+installs a browser) — and the server renders the current axis with
+`--headless --print-to-pdf` against its own localhost URL (`/?print=<axis>`
+serves the print projection directly), returning the file as a download and
+archiving a copy under `results/reports/<axis>-<date>.pdf` whose filename and
+embedded title metadata identify the axis, date, suite + version, and hardware
+tag. Renders run one at a time (a second click while one runs is refused, with
+progress shown on the button), a failed render surfaces the renderer's stderr
+tail, and the subprocess budget is `pdf.render_timeout_seconds`. With no
+renderer detected the button explains the browser print-to-PDF path above
+(same print stylesheet, same output) instead of failing silently, and the
+Settings tab's Harness group shows which binary would enable one-click export.
+
 The **Settings** section (`GET /api/settings`) aggregates every harness config surface
 into one view, so you can see the whole configuration without opening four
 YAML files: **Models** (`--models`, default `configs/models.yaml`), **Inferencers** and
