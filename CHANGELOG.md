@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.80.0 (2026-07-18)
+
+### Features
+
+- **macos-native-app**: Notarization and distribution (#18.3-002)
+  ([`6c02a23`](https://github.com/fxmartin/local-code-bench/commit/6c02a23ae458a28d572ce6d78d0269993589cff6))
+
+
 ## v0.79.0 (2026-07-18)
 
 ### Features
