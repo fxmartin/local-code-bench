@@ -220,6 +220,27 @@ let moveNullJSON = #"{"job": null}"#.data(using: .utf8)!
     expectEqual(
         MenuBarStatus.moveLine(zeroTotal), "Promote m — 0.0 GB copied",
         "zero-total move avoids a division by zero")
+
+    let failedRun = RigSnapshot.parse(status: nil, runs: runsFailedJSON, move: nil).runs[0]
+    expectEqual(
+        MenuBarStatus.runLine(failedRun),
+        "Run: glm-4 — failed (2 passed, 1 failed)",
+        "failed run line names the failure")
+}
+
+// MARK: - Snapshot equality (synthesized conformances used by edge detection)
+
+@MainActor func checkRigSnapshotEquality() {
+    let a = RigSnapshot.parse(status: statusJSON, runs: runsRunningJSON, move: moveRunningJSON)
+    let b = RigSnapshot.parse(status: statusJSON, runs: runsRunningJSON, move: moveRunningJSON)
+    expectEqual(a, b, "identical payloads parse to equal snapshots")
+    expectEqual(a.engines[0], b.engines[0], "engine rows compare equal")
+    expectEqual(a.runs[0], b.runs[0], "run rows compare equal")
+    expectEqual(a.move, b.move, "move jobs compare equal")
+
+    let c = RigSnapshot.parse(status: statusJSON, runs: runsCompletedJSON, move: moveDoneJSON)
+    expect(a != c, "different run/move states compare unequal")
+    expect(a.engines[0] != a.engines[1], "different engine rows compare unequal")
 }
 
 // MARK: - NotificationContent
@@ -248,6 +269,26 @@ let moveNullJSON = #"{"job": null}"#.data(using: .utf8)!
     let moveFailed = NotificationContent.content(for: .moveFinished(badMove))
     expectEqual(moveFailed.title, "Tier move failed", "errored move notification title")
     expect(moveFailed.body.contains("external repo offline"), "errored move body carries the error")
+
+    // Failures without a reason (the backend reported no error string) omit
+    // the dash instead of printing a dangling separator.
+    let silentRun = RunStatus(
+        id: "r9", model: "m", suites: ["mbpp"], status: "failed",
+        total: 10, completed: 1, passed: 0, failed: 1, error: nil)
+    expectEqual(
+        NotificationContent.content(for: .runFinished(silentRun)),
+        NotificationContent(
+            title: "Benchmark run failed", body: "m (0 passed, 1 failed)", section: "run"),
+        "reason-less failed run notification omits the dash")
+
+    let silentMove = MoveStatus(
+        verb: "demote", name: "m", format: "gguf", state: "error",
+        bytesTotal: 0, bytesDone: 0, error: nil)
+    expectEqual(
+        NotificationContent.content(for: .moveFinished(silentMove)),
+        NotificationContent(
+            title: "Tier move failed", body: "Demote m (gguf)", section: "inventory"),
+        "reason-less errored move notification omits the dash")
 }
 
 // MARK: - StatusPollSettings
@@ -326,4 +367,113 @@ let moveNullJSON = #"{"job": null}"#.data(using: .utf8)!
     await poller.pollOnce()
     expect(!poller.isStale, "recovered poll clears the stale flag")
     expectEqual(received.count, 2, "recovery does not replay old terminal states")
+}
+
+// MARK: - StatusPoller loop (start/stop)
+
+actor PollCounter {
+    private(set) var count = 0
+    func bump() { count += 1 }
+}
+
+@MainActor func checkStatusPollerLoop() async {
+    let counter = PollCounter()
+    let poller = StatusPoller(
+        baseURL: URL(string: "http://127.0.0.1:8765/")!,
+        interval: 0.02,
+        fetch: { _ in
+            await counter.bump()
+            return statusJSON
+        })
+
+    poller.start()
+    poller.start() // second start must not spawn a second loop
+
+    var waited = 0
+    while await counter.count == 0, waited < 200 {
+        try? await Task.sleep(for: .milliseconds(10))
+        waited += 1
+    }
+    expect(poller.snapshot != nil, "start() drives polls on the loop")
+    expect(!poller.isStale, "looped poll of a healthy backend is not stale")
+
+    poller.stop()
+    poller.stop() // stop is idempotent
+    // Let any in-flight cycle finish, then confirm the loop is dead.
+    try? await Task.sleep(for: .milliseconds(60))
+    let settled = await counter.count
+    try? await Task.sleep(for: .milliseconds(100))
+    let later = await counter.count
+    expectEqual(later, settled, "stop() halts the poll loop")
+}
+
+// MARK: - StatusPoller default HTTP fetcher
+
+/// A minimal one-thread HTTP server answering every request with `body`, so
+/// the poller's real URLSession fetcher can be exercised without a live
+/// dashboard. Returns the bound port and the listening fd (close it to stop).
+func startTinyHTTPServer(body: Data) -> (port: UInt16, fd: Int32)? {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    guard fd >= 0 else { return nil }
+    var yes: Int32 = 1
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+
+    var addr = sockaddr_in()
+    addr.sin_family = sa_family_t(AF_INET)
+    addr.sin_port = 0 // kernel-assigned port
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+    let bound = withUnsafePointer(to: &addr) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+        }
+    }
+    guard bound == 0, listen(fd, 8) == 0 else {
+        close(fd)
+        return nil
+    }
+
+    var assigned = sockaddr_in()
+    var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+    _ = withUnsafeMutablePointer(to: &assigned) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) }
+    }
+    let port = UInt16(bigEndian: assigned.sin_port)
+
+    Thread.detachNewThread {
+        while true {
+            let client = accept(fd, nil, nil)
+            if client < 0 { break } // listening fd closed -> shut down
+            var request = [UInt8](repeating: 0, count: 4096)
+            _ = recv(client, &request, request.count, 0)
+            let header = "HTTP/1.1 200 OK\r\nContent-Length: \(body.count)\r\n"
+                + "Content-Type: application/json\r\nConnection: close\r\n\r\n"
+            _ = header.data(using: .utf8)!.withUnsafeBytes {
+                send(client, $0.baseAddress, $0.count, 0)
+            }
+            _ = body.withUnsafeBytes { send(client, $0.baseAddress, $0.count, 0) }
+            close(client)
+        }
+    }
+    return (port, fd)
+}
+
+@MainActor func checkStatusPollerHTTPFetch() async {
+    // Nothing listens on port 1: the default fetcher must fail the poll and
+    // mark the (absent) data stale, not hang or crash.
+    let dead = StatusPoller(baseURL: URL(string: "http://127.0.0.1:1/")!)
+    await dead.pollOnce()
+    expect(dead.isStale, "default fetcher marks a dead service stale")
+    expect(dead.snapshot == nil, "no snapshot is invented for a dead service")
+
+    // A live server: the default fetcher reads the payload over real HTTP.
+    guard let server = startTinyHTTPServer(body: statusJSON) else {
+        expect(false, "tiny HTTP server starts for the fetcher check")
+        return
+    }
+    defer { close(server.fd) }
+
+    let live = StatusPoller(baseURL: URL(string: "http://127.0.0.1:\(server.port)/")!)
+    await live.pollOnce()
+    expect(!live.isStale, "default fetcher reads a live service")
+    expectEqual(live.snapshot?.engines.count, 2, "default fetcher returns the status payload")
 }
