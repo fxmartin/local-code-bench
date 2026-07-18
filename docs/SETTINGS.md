@@ -47,8 +47,8 @@ are rejected with a `SettingsError` naming the offending `section.key`.
 | `inferencer.health_timeout_seconds` | `1.0` | `inferencers.manager.health_check` | Per-probe health-endpoint budget |
 | `opencode.build_timeout_seconds` | `60.0` | `opencode.blackbox.score_task_a` | `go build` budget for Task A scoring |
 | `opencode.run_timeout_seconds` | `10.0` | `opencode.blackbox.score_task_a` | Per-check run budget for the compiled binary |
-| `settings_backup.dir` | `.runtime/settings-backups` | reserved for story 15.2-001 | Backup dir for validated settings writes |
-| `settings_backup.retention` | `10` | reserved for story 15.2-001 | Backups kept per settings file |
+| `settings_backup.dir` | `.runtime/settings-backups` | `settings_store.default_settings_store` | Backup dir for validated settings writes |
+| `settings_backup.retention` | `10` | `settings_store.default_settings_store` | Backups kept per settings file |
 
 ## Read-only protocol section
 
@@ -82,7 +82,7 @@ Every hardcoded operational value found in the audit, with its disposition:
 | Dashboard state file `.runtime/dashboard.json` | `cli.py` | **Externalized** → `dashboard.state_file` |
 | Inferencer start/health timeouts 30 s / 1 s | `inferencers/manager.py` | **Externalized** → `inferencer.start_timeout_seconds`, `inferencer.health_timeout_seconds` |
 | OpenCode build/run timeouts 60 s / 10 s | `opencode/blackbox.py` | **Externalized** → `opencode.build_timeout_seconds`, `opencode.run_timeout_seconds` |
-| 15.2-001 backup dir/retention | (not yet implemented) | **Externalized ahead of need** → `settings_backup.dir`, `settings_backup.retention`, reserved for that story's loader |
+| 15.2-001 backup dir/retention | `settings_store.py` | **Externalized** → `settings_backup.dir`, `settings_backup.retention`, wired by `default_settings_store()` |
 | Canary anchor set `CANARY_HUMANEVAL_IDS` | `tasks.py` | **Non-setting (protocol-locked)** — the fixed anchor set is what makes historical canary runs comparable; no settings key exists on purpose |
 | Benchmark temperature 0 / seed 0 | `runner.py`, `cli.py` (opencode), `opencode/invoke.py` | **Non-setting (protocol-locked)** — read-only `protocol:` section documents them; loader refuses overrides |
 | Local-model concurrency = 1 | `configs/models.yaml` per-model `concurrency` | **Non-setting (protocol-locked)** — a per-model measurement-protocol knob in the model registry, not an operational default |
