@@ -1,6 +1,6 @@
 # Local Code Bench — macOS App Shell
 
-A native SwiftUI shell (Stories 18.1-001/18.1-002/18.2-001) that hosts the unified
+A native SwiftUI shell (Stories 18.1-001/18.1-002/18.2-001/18.2-002) that hosts the unified
 dashboard (`bench dashboard`, Epic-09) in a full-bleed `WKWebView`, so the
 harness feels like a Mac application: Dock icon, a real window with its
 size/position restored across launches, and no browser tab to lose.
@@ -60,17 +60,31 @@ size/position restored across launches, and no browser tab to lose.
   see nothing. When one exists, the menu bar gains a single
   "Update Available — Download …" entry that opens the release page in the
   browser; there is no auto-install. Unbundled dev builds skip the check.
-- **Minimal bridging.** Same-origin navigations render in the web view;
-  external links open in the default browser; downloads (e.g. the Epic-17
-  comparison PDF) go through the standard save panel. There is no JS↔Swift
-  message channel.
+- **Finder conveniences.** The menu-bar menu and the Dock menu both offer
+  **Open Results Folder** and the most recent Epic-17 PDF reports (read fresh
+  from `results/reports/` each time the menu opens), revealed in Finder.
+- **Launch at Login.** A menu-bar toggle registers the app as a login item
+  via the modern `SMAppService` API; a login launch starts quietly in the
+  menu bar (the dashboard window is not splashed across login). Registration
+  needs a real `.app` bundle, so the toggle is hidden in unbundled
+  `swift run` dev builds.
+- **Report downloads land in the reports folder.** A PDF download triggered
+  inside the web view (e.g. the Epic-17 comparison report) skips the save
+  panel: it lands in `results/reports/` under a collision-free name and a
+  notification — with a **Reveal in Finder** action — announces where it
+  landed, even while the app is frontmost. Non-PDF downloads keep the
+  standard save panel. Unbundled dev builds cannot post notifications and
+  reveal the finished download in Finder directly.
+- **Minimal bridging.** Same-origin navigations render in the web view and
+  external links open in the default browser. There is no JS↔Swift message
+  channel.
 
 ## Layout
 
 | Target | Role |
 |--------|------|
-| `LocalCodeBenchKit` | Pure-Foundation logic: `StartupTracker` (startup state machine), `RestartPolicy` (crash/backoff rules), `StaleServiceState`, `BundledRuntime`, `LogTail`, `DataLocationStore` / `CheckoutValidation`, `NavigationPolicy`, `ServiceLaunchPlan`, the `ServiceController` process/supervision glue, and the status pipeline (`RigSnapshot` parsing, `StatusEventDetector` edge detection, `MenuBarStatus` / `NotificationContent` formatting, `StatusPollSettings`, `StatusPoller`), and `UpdateCheck` (release-hint decision + best-effort fetch). |
-| `LocalCodeBench` | The SwiftUI app: `WindowGroup` + `MenuBarExtra`, `WKWebView` wrapper, loading/failure/first-run views, window-frame autosave, `UNUserNotificationCenter` glue (`StatusNotifier`). |
+| `LocalCodeBenchKit` | Pure-Foundation logic: `StartupTracker` (startup state machine), `RestartPolicy` (crash/backoff rules), `StaleServiceState`, `BundledRuntime`, `LogTail`, `DataLocationStore` / `CheckoutValidation`, `NavigationPolicy`, `ServiceLaunchPlan`, the `ServiceController` process/supervision glue, and the status pipeline (`RigSnapshot` parsing, `StatusEventDetector` edge detection, `MenuBarStatus` / `NotificationContent` formatting, `StatusPollSettings`, `StatusPoller`), `UpdateCheck` (release-hint decision + best-effort fetch), and the convenience logic (`ReportsLocation`, `RecentReports`, `ReportDownload` / `DownloadNotification`, `LoginItemLaunch`). |
+| `LocalCodeBench` | The SwiftUI app: `WindowGroup` + `MenuBarExtra`, `WKWebView` wrapper, loading/failure/first-run views, window-frame autosave, `UNUserNotificationCenter` glue (`StatusNotifier`), the Dock menu, and the `SMAppService` launch-at-login toggle. |
 | `LocalCodeBenchChecks` | The kit's test suite as an assertion-based executable. |
 
 ## Build, run, test

@@ -21,7 +21,11 @@ struct RootView: View {
         if model.isFirstRun {
             FirstRunView()
         } else if let controller = model.controller {
-            ServiceHostView(controller: controller, pendingSection: $model.pendingSection)
+            ServiceHostView(
+                controller: controller,
+                reportsDirectory: model.reportsDirectory,
+                onReportDownloaded: { model.reportDownloadFinished(at: $0) },
+                pendingSection: $model.pendingSection)
         } else {
             ProgressView()
         }
@@ -32,6 +36,8 @@ struct RootView: View {
 /// ObservableObject (the controller) actually drives re-renders.
 private struct ServiceHostView: View {
     @ObservedObject var controller: ServiceController
+    var reportsDirectory: URL?
+    var onReportDownloaded: ((URL) -> Void)?
     @Binding var pendingSection: String?
 
     var body: some View {
@@ -39,7 +45,11 @@ private struct ServiceHostView: View {
         case .idle, .starting:
             LoadingView(state: controller.state)
         case .ready:
-            DashboardWebView(url: controller.baseURL, pendingSection: $pendingSection)
+            DashboardWebView(
+                url: controller.baseURL,
+                reportsDirectory: reportsDirectory,
+                onReportDownloaded: onReportDownloaded,
+                pendingSection: $pendingSection)
                 .ignoresSafeArea()
         case .failed(let reason):
             ServiceFailureView(

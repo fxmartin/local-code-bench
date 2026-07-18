@@ -30,7 +30,8 @@ private struct MenuBarIconInner: View {
 }
 
 /// Menu content: service state, the active engine, live run and tier-move
-/// progress from the status poller, and a restart action when degraded.
+/// progress from the status poller, a restart action when degraded, and the
+/// Finder/login conveniences (story 18.2-002).
 struct MenuBarContent: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.openWindow) private var openWindow
@@ -50,10 +51,57 @@ struct MenuBarContent: View {
                 NSWorkspace.shared.open(update.url)
             }
         }
+        if !model.isFirstRun {
+            Divider()
+            MenuBarConveniences()
+        }
         Divider()
         Button("Quit Local Code Bench") {
             NSApp.terminate(nil)
         }
+    }
+}
+
+/// "Open Results Folder", the recent Epic-17 PDF reports (revealed in
+/// Finder), and the launch-at-login toggle. The menu body is rebuilt each
+/// time the menu opens, so the recents list is read fresh from
+/// `results/reports/` (story 18.2-002).
+private struct MenuBarConveniences: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        Button("Open Results Folder") {
+            model.openResultsFolder()
+        }
+        let reports = model.recentReports()
+        if !reports.isEmpty {
+            Menu("Recent Reports") {
+                ForEach(reports, id: \.self) { report in
+                    Button(report.lastPathComponent) {
+                        model.revealInFinder(report)
+                    }
+                }
+            }
+        }
+        if LaunchAtLogin.isSupported {
+            LaunchAtLoginToggle(setting: model.launchAtLogin)
+        }
+    }
+}
+
+private struct LaunchAtLoginToggle: View {
+    @ObservedObject var setting: LaunchAtLogin
+
+    var body: some View {
+        Toggle(
+            "Launch at Login",
+            isOn: Binding(
+                get: { setting.isEnabled },
+                set: { setting.setEnabled($0) })
+        )
+        // The user can also flip the login item in System Settings; re-read
+        // the real status whenever the menu opens.
+        .onAppear { setting.refresh() }
     }
 }
 
