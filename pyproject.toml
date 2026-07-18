@@ -8,6 +8,7 @@ license = { text = "MIT" }
 dependencies = [
     "python-dotenv>=1.2.0",
     "pyyaml>=6.0.2",
+    "ruamel-yaml>=0.18",
 ]
 
 [project.scripts]

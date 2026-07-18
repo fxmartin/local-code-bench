@@ -25,6 +25,9 @@ results/
 # Inferencer lifecycle runtime state (PID/state files + captured logs)
 .runtime/
 
+# Settings-store write backups (timestamped previous versions of configs/*.yaml)
+configs/.backups/
+
 # Environment & secrets (OpenRouter / API keys)
 .env
 .env.*

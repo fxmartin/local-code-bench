@@ -46,7 +46,8 @@ opencode:
   run_timeout_seconds: 10.0
 
 settings_backup:
-  # Reserved for story 15.2-001 (validated, atomic settings writes).
+  # Validated, atomic settings writes (story 15.2-001): where the settings
+  # store keeps timestamped backups, and how many it retains per config file.
   dir: .runtime/settings-backups
   retention: 10
 
