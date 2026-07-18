@@ -405,3 +405,38 @@ def test_broken_group_still_reports_its_content_hash(tmp_path: Path) -> None:
 
     assert models["error"] is not None
     assert models["content_hash"] == content_hash(broken.read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------------------
+# Story 17.3-002: the Harness group shows what enables one-click PDF export
+# ---------------------------------------------------------------------------
+
+
+def test_harness_group_shows_pdf_renderer_detection(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        settings_panel.pdf_export,
+        "detect_renderer",
+        lambda candidates: settings_panel.pdf_export.DetectedRenderer(
+            candidate="chromium", path="/opt/bin/chromium"
+        ),
+    )
+    harness = _group(_payload(tmp_path), "settings")
+    fields = _fields(_item(harness, "pdf export"))
+
+    assert fields["renderer detected"]["value"] == "chromium"
+    assert "google-chrome" in fields["renderer candidates"]["value"]
+    assert fields["render timeout seconds"]["value"] == 60.0
+
+
+def test_harness_group_names_binaries_that_would_enable_export(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings_panel.pdf_export, "detect_renderer", lambda candidates: None)
+    harness = _group(_payload(tmp_path), "settings")
+    fields = _fields(_item(harness, "pdf export"))
+
+    # no renderer: the tab still shows which binaries would enable one-click
+    assert "none" in fields["renderer detected"]["value"]
+    assert "Google Chrome.app" in fields["renderer candidates"]["value"]

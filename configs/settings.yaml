@@ -51,6 +51,19 @@ settings_backup:
   dir: .runtime/settings-backups
   retention: 10
 
+pdf:
+  # One-click Download PDF (story 17.3-002): Chrome/Chromium probed in order —
+  # detect-only, the harness never installs a browser. Bare names resolve via
+  # PATH; entries with a slash are .app-relative paths probed under the macOS
+  # Application directories.
+  renderer_candidates:
+    - google-chrome
+    - chromium
+    - Google Chrome.app/Contents/MacOS/Google Chrome
+    - Chromium.app/Contents/MacOS/Chromium
+  # Subprocess budget for one headless render.
+  render_timeout_seconds: 60.0
+
 theme:
   # Dashboard theme (story 16.4-001): light-mode accent/danger hues (#RRGGBB)
   # and the initial mode (light | dark | system) before any per-browser toggle

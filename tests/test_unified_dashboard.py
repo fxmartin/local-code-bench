@@ -119,6 +119,7 @@ def _ctx(
     comparisons_path: str | Path = "configs/does-not-exist-comparisons.yaml",
     settings_store: object | None = None,
     settings_changelog: object | None = None,
+    results_dir: str | Path | None = None,
 ) -> ud.DashboardContext:
     extra = {"settings_store": settings_store} if settings_store is not None else {}
     return ud.DashboardContext(
@@ -129,6 +130,7 @@ def _ctx(
         orchestrator=orchestrator,
         cache_dir=cache_dir,
         suites_path=suites_path,
+        results_dir=results_dir,
         models_path=models_path,
         agents_path=agents_path,
         inferencers_path=inferencers_path,
@@ -561,8 +563,200 @@ def test_page_print_running_header_footer() -> None:
 
 
 # ---------------------------------------------------------------------------
-# routing / safety
+# Download PDF (story 17.3-002): detected-Chrome render, one at a time
 # ---------------------------------------------------------------------------
+
+
+def _pdf_ctx(tmp_path: Path, *, base_url: str | None = "http://127.0.0.1:8765") -> ud.DashboardContext:
+    catalog = tmp_path / "comparisons.yaml"
+    catalog.write_text(_COMPARISONS_YAML, encoding="utf-8")
+    run = tmp_path / "run.jsonl"
+    append_jsonl(run, _endpoint_record("local-coder", "HumanEval/0", passed=True))
+    ctx = _ctx([run], comparisons_path=catalog, results_dir=tmp_path / "results")
+    ctx.pdf_worker.base_url = base_url
+    return ctx
+
+
+def _detected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        ud.pdf_export,
+        "detect_renderer",
+        lambda candidates: ud.pdf_export.DetectedRenderer(
+            candidate="chromium", path="/opt/bin/chromium"
+        ),
+    )
+
+
+def test_api_pdf_renders_current_axis_and_archives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _detected(monkeypatch)
+    calls: list[tuple] = []
+
+    def fake_render(binary, url, destination, *, timeout_seconds):
+        calls.append((binary, url, destination, timeout_seconds))
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"%PDF-1.7 fake report")
+        return destination
+
+    monkeypatch.setattr(ud.pdf_export, "render_pdf", fake_render)
+    ctx = _pdf_ctx(tmp_path)
+
+    resp = ud.handle_request("POST", "/api/report/pdf?axis=engine", ctx)
+    ctx.pdf_worker.wait()
+
+    assert resp.status == 200
+    payload = json.loads(resp.body)
+    assert payload["state"] == "running"
+    expected_name = f"engine-{ud.date.today().isoformat()}.pdf"
+    assert payload["filename"] == expected_name
+    # the render hits the server's own localhost URL with the print param (AC1)
+    binary, url, destination, _timeout = calls[0]
+    assert binary == "/opt/bin/chromium"
+    assert url == "http://127.0.0.1:8765/?print=engine"
+    # the archive lands under results/reports/<axis>-<date>.pdf
+    assert destination == tmp_path / "results" / "reports" / expected_name
+    assert destination.read_bytes().startswith(b"%PDF")
+    status = ctx.pdf_worker.status()
+    assert status["state"] == "done"
+
+
+def test_api_pdf_download_serves_finished_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _detected(monkeypatch)
+
+    def fake_render(binary, url, destination, *, timeout_seconds):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"%PDF-1.7 fake report")
+        return destination
+
+    monkeypatch.setattr(ud.pdf_export, "render_pdf", fake_render)
+    ctx = _pdf_ctx(tmp_path)
+    ud.handle_request("POST", "/api/report/pdf?axis=engine", ctx)
+    ctx.pdf_worker.wait()
+
+    resp = ud.handle_request("GET", "/api/report/pdf/file", ctx)
+
+    assert resp.status == 200
+    assert resp.content_type == "application/pdf"
+    assert resp.body.startswith(b"%PDF")
+    disposition = dict(resp.headers)["Content-Disposition"]
+    assert disposition.startswith("attachment;")
+    assert f"engine-{ud.date.today().isoformat()}.pdf" in disposition
+
+
+def test_api_pdf_file_404_before_any_render(tmp_path: Path) -> None:
+    resp = ud.handle_request("GET", "/api/report/pdf/file", _pdf_ctx(tmp_path))
+
+    assert resp.status == 404
+
+
+def test_api_pdf_second_request_refused_while_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _detected(monkeypatch)
+    release = threading.Event()
+
+    def slow_render(binary, url, destination, *, timeout_seconds):
+        release.wait(timeout=5.0)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"%PDF")
+        return destination
+
+    monkeypatch.setattr(ud.pdf_export, "render_pdf", slow_render)
+    ctx = _pdf_ctx(tmp_path)
+
+    first = ud.handle_request("POST", "/api/report/pdf?axis=engine", ctx)
+    second = ud.handle_request("POST", "/api/report/pdf?axis=engine", ctx)
+    release.set()
+    ctx.pdf_worker.wait()
+
+    assert first.status == 200
+    assert second.status == 409
+    assert "already in progress" in json.loads(second.body)["error"]
+
+
+def test_api_pdf_no_renderer_explains_browser_print_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ud.pdf_export, "detect_renderer", lambda candidates: None)
+    ctx = _pdf_ctx(tmp_path)
+
+    resp = ud.handle_request("POST", "/api/report/pdf?axis=engine", ctx)
+
+    assert resp.status == 503
+    payload = json.loads(resp.body)
+    # never fails silently: the guidance names the browser print-to-PDF path
+    # (same print stylesheet, same output) and what would enable one-click
+    assert "Print" in payload["guidance"]
+    assert "Save as PDF" in payload["guidance"]
+    assert "chromium" in payload["candidates"]
+    assert ctx.pdf_worker.status() is None
+
+
+def test_api_pdf_unknown_axis_is_404(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _detected(monkeypatch)
+    resp = ud.handle_request("POST", "/api/report/pdf?axis=bogus", _pdf_ctx(tmp_path))
+
+    assert resp.status == 404
+    assert "unknown axis" in json.loads(resp.body)["error"]
+
+
+def test_api_pdf_render_failure_surfaces_stderr_tail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _detected(monkeypatch)
+
+    def broken_render(binary, url, destination, *, timeout_seconds):
+        raise ud.pdf_export.PdfRenderError("renderer exit code 3; stderr: no usable GPU")
+
+    monkeypatch.setattr(ud.pdf_export, "render_pdf", broken_render)
+    ctx = _pdf_ctx(tmp_path)
+    ud.handle_request("POST", "/api/report/pdf?axis=engine", ctx)
+    ctx.pdf_worker.wait()
+
+    resp = ud.handle_request("GET", "/api/report/pdf/status", ctx)
+
+    payload = json.loads(resp.body)
+    assert payload["job"]["state"] == "error"
+    assert "no usable GPU" in payload["job"]["error"]
+
+
+def test_api_pdf_status_reports_renderer_detection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ud.pdf_export, "detect_renderer", lambda candidates: None)
+
+    resp = ud.handle_request("GET", "/api/report/pdf/status", _pdf_ctx(tmp_path))
+
+    assert resp.status == 200
+    payload = json.loads(resp.body)
+    assert payload["renderer"]["detected"] is None
+    assert "google-chrome" in payload["renderer"]["candidates"]
+    assert payload["job"] is None
+
+
+def test_make_server_binds_localhost_and_sets_render_base_url(tmp_path: Path) -> None:
+    ctx = _pdf_ctx(tmp_path, base_url=None)
+
+    server = ud.make_server(ctx, host="127.0.0.1", port=0)
+    try:
+        port = server.server_address[1]
+        assert ctx.pdf_worker.base_url == f"http://127.0.0.1:{port}"
+    finally:
+        server.server_close()
+
+
+def test_page_has_download_pdf_button_and_print_param_handling() -> None:
+    body = ud.render_page()
+    assert 'id="bench-pdf"' in body
+    assert "Download PDF" in body
+    assert "/api/report/pdf" in body
+    # ?print=<axis> serves the print projection directly: the page opens the
+    # Benchmarks section on that axis and stamps the PDF metadata title
+    assert 'get("print")' in body
+    assert "document.title" in body
 
 
 # ---------------------------------------------------------------------------

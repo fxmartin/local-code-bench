@@ -69,6 +69,17 @@ class Settings:
     opencode_run_timeout_seconds: float = 10.0
     settings_backup_dir: str = ".runtime/settings-backups"
     settings_backup_retention: int = 10
+    # PDF export (story 17.3-002): Chrome/Chromium probed in order for the
+    # dashboard's one-click Download PDF — detect-only, never installed. Bare
+    # names resolve via PATH; entries with a slash are ``.app``-relative paths
+    # probed under the macOS Application directories.
+    pdf_renderer_candidates: tuple[str, ...] = (
+        "google-chrome",
+        "chromium",
+        "Google Chrome.app/Contents/MacOS/Google Chrome",
+        "Chromium.app/Contents/MacOS/Chromium",
+    )
+    pdf_render_timeout_seconds: float = 60.0
     # Dashboard theme (story 16.4-001): light-mode hues (#RRGGBB) and the
     # initial mode; dark-mode tints are derived by the theme layer, never set.
     theme_accent: str = DEFAULT_ACCENT
@@ -98,6 +109,8 @@ _KEY_MAP: dict[tuple[str, str], str] = {
     ("opencode", "run_timeout_seconds"): "opencode_run_timeout_seconds",
     ("settings_backup", "dir"): "settings_backup_dir",
     ("settings_backup", "retention"): "settings_backup_retention",
+    ("pdf", "renderer_candidates"): "pdf_renderer_candidates",
+    ("pdf", "render_timeout_seconds"): "pdf_render_timeout_seconds",
     ("theme", "accent"): "theme_accent",
     ("theme", "danger"): "theme_danger",
     ("theme", "default_mode"): "theme_default_mode",
@@ -116,6 +129,7 @@ _POSITIVE_FIELDS = {
     "opencode_build_timeout_seconds",
     "opencode_run_timeout_seconds",
     "settings_backup_retention",
+    "pdf_render_timeout_seconds",
 }
 
 # Theme hues must be full #RRGGBB hex so the token block and the luminance
@@ -205,6 +219,10 @@ def load_theme_config(path: str | Path | None = None) -> ThemeConfig:
 def _coerce(path: Path, dotted: str, field_name: str, value: object) -> object:
     annotation = _FIELD_TYPES[field_name]
     # bool is an int subclass; a YAML `true` must not sneak in as 1.
+    if annotation == "tuple[str, ...]":
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise SettingsError(f"{path}: {dotted} must be a list of strings")
+        return tuple(value)
     if annotation == "int":
         if isinstance(value, bool) or not isinstance(value, int):
             raise SettingsError(f"{path}: {dotted} must be an integer")

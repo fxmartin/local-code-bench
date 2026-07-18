@@ -49,6 +49,8 @@ are rejected with a `SettingsError` naming the offending `section.key`.
 | `opencode.run_timeout_seconds` | `10.0` | `opencode.blackbox.score_task_a` | Per-check run budget for the compiled binary |
 | `settings_backup.dir` | `.runtime/settings-backups` | `settings_store.default_settings_store` | Backup dir for validated settings writes |
 | `settings_backup.retention` | `10` | `settings_store.default_settings_store` | Backups kept per settings file |
+| `pdf.renderer_candidates` | `google-chrome`, `chromium`, plus the Chrome/Chromium `.app` bundle paths | `pdf_export.detect_renderer` via `unified_dashboard` | Chrome/Chromium probed in order for one-click Download PDF (story 17.3-002) — detect-only, never installed. Bare names resolve via `PATH`; entries with a slash are `.app`-relative paths probed under the macOS Application dirs |
+| `pdf.render_timeout_seconds` | `60.0` | `pdf_export.render_pdf` via `unified_dashboard` | Subprocess budget for one `--headless --print-to-pdf` render |
 | `theme.accent` | `#1e40af` | `theme.tokens_css` via `settings.load_theme_config` | Light-mode accent hue (`#RRGGBB`); the dark-mode tint is derived automatically |
 | `theme.danger` | `#991b1b` | `theme.tokens_css` via `settings.load_theme_config` | Light-mode danger hue (`#RRGGBB`); the dark-mode tint is derived automatically |
 | `theme.default_mode` | `system` | `theme.theme_head_snippet` via `settings.load_theme_config` | Initial dashboard mode (`light` \| `dark` \| `system`); a stored per-browser toggle choice wins |

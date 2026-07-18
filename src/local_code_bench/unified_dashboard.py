@@ -30,9 +30,10 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+from datetime import date
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from . import chat
 from . import compare
@@ -42,6 +43,7 @@ from . import dashboard_lifecycle
 from . import dashboard_server as results_panel
 from . import launch
 from . import models_editor
+from . import pdf_export
 from . import settings_changes
 from . import settings_editor
 from . import settings_panel
@@ -337,15 +339,26 @@ class DashboardContext:
     # write. Optional so a read-only context (older callers, most tests) keeps
     # serving every GET route.
     settings_changelog: SettingsChangeLog | None = None
+    # Story 17.3-002: single background worker for Download PDF, mirroring the
+    # move worker's one-at-a-time convention. Off-thread is load-bearing: the
+    # single-threaded server must stay free to serve the page headless Chrome
+    # is printing. ``make_server`` stamps the worker with the bound address so
+    # the render URL always targets this server's own localhost socket.
+    pdf_worker: pdf_export.PdfWorker = field(default_factory=pdf_export.PdfWorker)
 
 
 @dataclass(frozen=True)
 class Response:
-    """A fully-formed HTTP response: status, content type, and encoded body."""
+    """A fully-formed HTTP response: status, content type, and encoded body.
+
+    ``headers`` carries any extra response headers (story 17.3-002 uses it for
+    the PDF download's ``Content-Disposition``); most responses need none.
+    """
 
     status: int
     content_type: str
     body: bytes
+    headers: tuple[tuple[str, str], ...] = ()
 
 
 def _json(status: int, payload: dict) -> Response:
@@ -1275,6 +1288,106 @@ def compare_report_action(ctx: DashboardContext, axis_id: str) -> tuple[int, dic
     )
 
 
+_PDF_BUSY_ERROR = "a PDF render is already in progress — wait for it to finish"
+
+#: What the button shows when no renderer is detected: the browser print path
+#: produces the same output (same print stylesheet), and what would enable
+#: one-click export. Never a silent failure (story 17.3-002 AC2).
+PDF_FALLBACK_GUIDANCE = (
+    "No Chrome/Chromium detected, so one-click export is unavailable. Use your "
+    "browser's Print > Save as PDF instead — the print stylesheet produces the "
+    "same report. Installing any renderer listed under pdf.renderer_candidates "
+    "in configs/settings.yaml (see the Settings tab) enables one-click export; "
+    "the harness only detects a browser, it never installs one."
+)
+
+
+def _pdf_slug(axis_id: str) -> str:
+    """Filesystem-safe archive stem for an axis id (ids are free-form YAML strings)."""
+
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", axis_id).strip("-") or "axis"
+
+
+def pdf_start_action(ctx: DashboardContext, axis_id: str) -> tuple[int, dict]:
+    """Start one background ``--headless --print-to-pdf`` render of ``axis_id``.
+
+    The render targets this server's own localhost URL with the ``?print=``
+    param (the page then serves the print projection of that axis directly) and
+    archives the output under ``results/reports/<axis>-<date>.pdf``. No
+    renderer detected answers 503 with the browser-print guidance; a render
+    already running answers 409 — one at a time, like tier moves.
+    """
+
+    catalog = compare_report.load_catalog_safe(ctx.comparisons_path)
+    if catalog.axis(axis_id) is None:
+        return 404, {
+            "error": f"unknown axis: {axis_id!r}",
+            "axes": [declared.id for declared in catalog.axes],
+        }
+    settings = get_settings()
+    renderer = pdf_export.detect_renderer(settings.pdf_renderer_candidates)
+    if renderer is None:
+        return 503, {
+            "error": "no Chrome/Chromium detected for one-click export",
+            "guidance": PDF_FALLBACK_GUIDANCE,
+            "candidates": list(settings.pdf_renderer_candidates),
+        }
+    base_url = ctx.pdf_worker.base_url
+    if base_url is None:
+        return 503, {"error": "render unavailable: dashboard server address not bound yet"}
+    filename = f"{_pdf_slug(axis_id)}-{date.today().isoformat()}.pdf"
+    destination = Path(ctx.results_dir or DEFAULT_RESULTS_DIR) / "reports" / filename
+    url = f"{base_url}/?print={quote(axis_id)}"
+    renderer_path = renderer.path
+    timeout = settings.pdf_render_timeout_seconds
+
+    def run() -> Path:
+        return pdf_export.render_pdf(renderer_path, url, destination, timeout_seconds=timeout)
+
+    if not ctx.pdf_worker.start(axis_id=axis_id, filename=filename, run=run):
+        return 409, {"error": _PDF_BUSY_ERROR}
+    return 200, {"state": "running", "axis": axis_id, "filename": filename}
+
+
+def pdf_status_action(ctx: DashboardContext) -> tuple[int, dict]:
+    """Renderer detection plus the current/last render job (button progress).
+
+    Detection re-runs per request (like the Epic-08 status probes), so
+    installing Chrome shows up on the next poll without a restart. Only the
+    configured candidate spec is exposed — never a resolved absolute path.
+    """
+
+    settings = get_settings()
+    renderer = pdf_export.detect_renderer(settings.pdf_renderer_candidates)
+    return 200, {
+        "renderer": {
+            "detected": renderer.candidate if renderer is not None else None,
+            "candidates": list(settings.pdf_renderer_candidates),
+        },
+        "guidance": None if renderer is not None else PDF_FALLBACK_GUIDANCE,
+        "job": ctx.pdf_worker.status(),
+    }
+
+
+def pdf_file_action(ctx: DashboardContext) -> Response:
+    """Serve the last finished render as a download (the archived copy stays)."""
+
+    finished = ctx.pdf_worker.finished_file()
+    if finished is None:
+        return _json(404, {"error": "no finished PDF export"})
+    filename, archived = finished
+    try:
+        body = archived.read_bytes()
+    except OSError:
+        return _json(404, {"error": "archived PDF is no longer readable"})
+    return Response(
+        200,
+        "application/pdf",
+        body,
+        headers=(("Content-Disposition", f'attachment; filename="{filename}"'),),
+    )
+
+
 def _resolve_result_paths(ctx: DashboardContext) -> list[str | Path]:
     """Explicit ``--input`` files plus any ``*.jsonl`` under ``results_dir``.
 
@@ -1347,6 +1460,12 @@ def handle_request(
         return _json(*compare_axes_action(ctx))
     if method == "GET" and route == "/api/compare/report":
         return _json(*compare_report_action(ctx, query.get("axis", [""])[0]))
+    if method == "POST" and route == "/api/report/pdf":
+        return _json(*pdf_start_action(ctx, query.get("axis", [""])[0]))
+    if method == "GET" and route == "/api/report/pdf/status":
+        return _json(*pdf_status_action(ctx))
+    if method == "GET" and route == "/api/report/pdf/file":
+        return pdf_file_action(ctx)
     if method == "GET" and route == "/api/catalog":
         return _json(*catalog_action(ctx))
     if method == "GET" and route == "/api/settings":
@@ -1440,6 +1559,8 @@ def make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
             self.send_response(response.status)
             self.send_header("Content-Type", response.content_type)
             self.send_header("Content-Length", str(len(response.body)))
+            for name, value in response.headers:
+                self.send_header(name, value)
             self.end_headers()
             self.wfile.write(response.body)
 
@@ -1480,9 +1601,16 @@ def make_server(
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
 ) -> HTTPServer:
-    """Create an ``HTTPServer`` bound to localhost only."""
+    """Create an ``HTTPServer`` bound to localhost only.
 
-    return HTTPServer((host, port), make_handler(ctx))
+    The PDF worker learns the *bound* address here (port 0 resolves on bind),
+    so a Download PDF render always targets this server's own localhost socket
+    — never a caller-supplied host (story 17.3-002).
+    """
+
+    server = HTTPServer((host, port), make_handler(ctx))
+    ctx.pdf_worker.base_url = f"http://{host}:{server.server_address[1]}"
+    return server
 
 
 def _build_orchestrator(
@@ -1941,7 +2069,9 @@ _PAGE = """<!DOCTYPE html>
   <p class="print-hide">
     <label for="bench-axis">Comparison axis</label>
     <select id="bench-axis"></select>
+    <button id="bench-pdf">Download PDF</button>
   </p>
+  <p id="bench-pdf-note" class="note print-hide"></p>
   <div id="bench-report"></div>
 </section>
 
@@ -2179,7 +2309,9 @@ _PAGE = """<!DOCTYPE html>
   buttons.forEach((b) => b.addEventListener("click", () => show(b.dataset.section)));
   // Exposed so the Inventory section can jump to the Run launcher on row-click.
   window.showSection = show;
-  show("inferencers");
+  // ?print=<axis> (story 17.3-002): headless Chrome fetches this URL for the
+  // Download PDF render — open straight into the Benchmarks print projection.
+  show(new URLSearchParams(window.location.search).get("print") ? "benchmarks" : "inferencers");
 })();
 
 // Inferencers section: thin client over Epic-08's /api/status, /api/start, /api/stop.
@@ -3890,6 +4022,11 @@ _PAGE = """<!DOCTYPE html>
   const picker = document.getElementById("bench-axis");
   const host = document.getElementById("bench-report");
   const err = document.getElementById("bench-err");
+  const pdfBtn = document.getElementById("bench-pdf");
+  const pdfNote = document.getElementById("bench-pdf-note");
+  // ?print=<axis> (story 17.3-002): the headless-Chrome render URL. The page
+  // serves the print projection of that axis directly — no picker interaction.
+  const printAxis = new URLSearchParams(window.location.search).get("print");
   const SIDE_CLASSES = 4;
   const METRICS = [
     ["prefill_tokens_per_second", "prefill", fmtSpeed],
@@ -4085,6 +4222,12 @@ _PAGE = """<!DOCTYPE html>
     const style = document.documentElement.style;
     style.setProperty("--print-header", JSON.stringify(data.axis.title + " — generated " + date));
     style.setProperty("--print-footer", JSON.stringify(meta.join(" — ")));
+    if (printAxis) {
+      // Chrome embeds document.title as the PDF's Title metadata: axis, date,
+      // suite + version, and hardware tag identify the archived report.
+      document.title = [data.axis.id, data.axis.title + " — generated " + date]
+        .concat(meta).join(" — ");
+    }
   }
 
   function renderReport(data) {
@@ -4166,11 +4309,65 @@ _PAGE = """<!DOCTYPE html>
         picker.appendChild(option);
       }
       err.textContent = (data.errors || []).join("; ");
+      if (printAxis) picker.value = printAxis;
       if (picker.value) renderAxis(picker.value);
     } catch (e) {
       err.textContent = "axis catalog unavailable: " + e;
     }
   }
+
+  // Download PDF (story 17.3-002): POST starts one background render (409
+  // while one runs — same one-at-a-time convention as tier moves), the button
+  // shows progress from the status poll, and a finished render downloads the
+  // archived file. No renderer detected surfaces the browser-print guidance.
+  let pdfPoll = null;
+  function pdfIdle() {
+    pdfBtn.disabled = false;
+    pdfBtn.textContent = "Download PDF";
+  }
+  async function pollPdf() {
+    try {
+      const res = await fetch("/api/report/pdf/status");
+      const data = await res.json();
+      const job = data.job;
+      if (job && job.state === "running") {
+        pdfBtn.textContent = "Rendering PDF… " + job.elapsed_seconds + "s";
+        return;
+      }
+      clearInterval(pdfPoll);
+      pdfPoll = null;
+      pdfIdle();
+      if (job && job.state === "done") {
+        pdfNote.textContent = "Saved " + job.filename + " — archived under results/reports/.";
+        window.location.href = "/api/report/pdf/file";
+      } else if (job) {
+        pdfNote.textContent = "PDF export failed: " + (job.error || "unknown error");
+      }
+    } catch (e) {
+      clearInterval(pdfPoll);
+      pdfPoll = null;
+      pdfIdle();
+      pdfNote.textContent = "PDF status unavailable: " + e;
+    }
+  }
+  pdfBtn.addEventListener("click", async () => {
+    pdfNote.textContent = "";
+    if (!picker.value) { pdfNote.textContent = "Pick a comparison axis first."; return; }
+    try {
+      const res = await fetch("/api/report/pdf?axis=" + encodeURIComponent(picker.value),
+        { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        pdfNote.textContent = data.guidance || data.error || "PDF export unavailable";
+        return;
+      }
+      pdfBtn.disabled = true;
+      pdfBtn.textContent = "Rendering PDF…";
+      pdfPoll = setInterval(pollPdf, 1000);
+    } catch (e) {
+      pdfNote.textContent = "PDF export failed: " + e;
+    }
+  });
 
   picker.addEventListener("change", () => renderAxis(picker.value));
   loadAxes();

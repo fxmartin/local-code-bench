@@ -58,6 +58,15 @@ def test_builtin_fallbacks_match_story_values() -> None:
     assert defaults.opencode_run_timeout_seconds == 10.0
     assert defaults.settings_backup_dir == ".runtime/settings-backups"
     assert defaults.settings_backup_retention == 10
+    # Story 17.3-002: Chrome/Chromium detect candidates (detect-only, never
+    # installed) and the per-render subprocess budget.
+    assert defaults.pdf_renderer_candidates == (
+        "google-chrome",
+        "chromium",
+        "Google Chrome.app/Contents/MacOS/Google Chrome",
+        "Chromium.app/Contents/MacOS/Chromium",
+    )
+    assert defaults.pdf_render_timeout_seconds == 60.0
 
 
 def test_yaml_overrides_apply(tmp_path: Path) -> None:
@@ -127,6 +136,41 @@ def test_non_positive_numbers_rejected(tmp_path: Path) -> None:
     path.write_text("sandbox:\n  timeout_seconds: 0\n", encoding="utf-8")
     with pytest.raises(SettingsError, match="sandbox.timeout_seconds"):
         load_settings(path)
+
+
+class TestPdfSection:
+    """Story 17.3-002: renderer candidates are a configurable string list."""
+
+    def test_renderer_candidates_override_applies(self, tmp_path: Path) -> None:
+        path = tmp_path / "settings.yaml"
+        path.write_text(
+            "pdf:\n  renderer_candidates:\n    - brave-browser\n", encoding="utf-8"
+        )
+        loaded = load_settings(path)
+        assert loaded.pdf_renderer_candidates == ("brave-browser",)
+
+    def test_render_timeout_override_applies(self, tmp_path: Path) -> None:
+        path = tmp_path / "settings.yaml"
+        path.write_text("pdf:\n  render_timeout_seconds: 15\n", encoding="utf-8")
+        assert load_settings(path).pdf_render_timeout_seconds == 15.0
+
+    def test_non_list_candidates_rejected(self, tmp_path: Path) -> None:
+        path = tmp_path / "settings.yaml"
+        path.write_text("pdf:\n  renderer_candidates: chromium\n", encoding="utf-8")
+        with pytest.raises(SettingsError, match="pdf.renderer_candidates"):
+            load_settings(path)
+
+    def test_non_string_candidate_rejected(self, tmp_path: Path) -> None:
+        path = tmp_path / "settings.yaml"
+        path.write_text("pdf:\n  renderer_candidates:\n    - 7\n", encoding="utf-8")
+        with pytest.raises(SettingsError, match="pdf.renderer_candidates"):
+            load_settings(path)
+
+    def test_non_positive_render_timeout_rejected(self, tmp_path: Path) -> None:
+        path = tmp_path / "settings.yaml"
+        path.write_text("pdf:\n  render_timeout_seconds: 0\n", encoding="utf-8")
+        with pytest.raises(SettingsError, match="pdf.render_timeout_seconds"):
+            load_settings(path)
 
 
 class TestProtocolSection:
