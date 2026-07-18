@@ -292,6 +292,47 @@ var passes = 0
         "executable Resources/python/bin/python3 is located")
 }
 
+// MARK: - AboutInfo
+
+@MainActor func checkAboutInfo() throws {
+    expectEqual(
+        AboutInfo.resolve(bundleShortVersion: nil, bundledHarnessVersion: nil),
+        AboutInfo(appVersion: "dev", harnessVersion: "unbundled"),
+        "dev build (no bundle, no runtime) -> dev/unbundled")
+
+    expectEqual(
+        AboutInfo.resolve(bundleShortVersion: "0.75.0", bundledHarnessVersion: "0.75.0"),
+        AboutInfo(appVersion: "0.75.0", harnessVersion: "0.75.0"),
+        "bundled build shows both versions")
+
+    expectEqual(
+        AboutInfo.resolve(bundleShortVersion: "  ", bundledHarnessVersion: ""),
+        AboutInfo(appVersion: "dev", harnessVersion: "unbundled"),
+        "blank versions fall back like missing ones")
+
+    expectEqual(
+        AboutInfo.bundledHarnessVersion(resourcesDirectory: nil), nil,
+        "no resources directory -> no harness version")
+
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    expectEqual(
+        AboutInfo.bundledHarnessVersion(resourcesDirectory: dir), nil,
+        "missing harness-version file -> nil")
+
+    let file = dir.appendingPathComponent("harness-version")
+    try "0.75.0\n".write(to: file, atomically: true, encoding: .utf8)
+    expectEqual(
+        AboutInfo.bundledHarnessVersion(resourcesDirectory: dir), "0.75.0",
+        "harness-version file is read and trimmed")
+
+    try "\n".write(to: file, atomically: true, encoding: .utf8)
+    expectEqual(
+        AboutInfo.bundledHarnessVersion(resourcesDirectory: dir), nil,
+        "whitespace-only harness-version file -> nil")
+}
+
 // MARK: - RestartPolicy
 
 @MainActor func checkRestartPolicy() {
@@ -617,6 +658,7 @@ do {
     checkNavigationPolicy()
     try checkServiceLaunchPlan()
     try checkBundledRuntime()
+    try checkAboutInfo()
     checkRestartPolicy()
     try checkStaleServiceState()
     try await checkServiceControllerProcessDeath()

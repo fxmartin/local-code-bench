@@ -930,8 +930,17 @@ swift run LocalCodeBenchChecks     # run the kit's test suite
 ```
 
 `scripts/build-macos-app.sh` assembles a self-contained `dist/LocalCodeBench.app`
-that embeds a relocatable CPython (python-build-standalone) with the harness
-wheel installed, so the app runs on a Mac with no Python or uv installed.
+that embeds a relocatable CPython (python-build-standalone, checksum-verified)
+with the harness wheel installed, so the app runs on a Mac with no Python or uv
+installed. Every bundled Mach-O is codesigned inside-out with the hardened
+runtime and the entitlements in `app/macos/entitlements.plist`; with a
+"Developer ID Application" certificate in the keychain the bundle is
+distribution-signed, otherwise it falls back to an ad-hoc signature (local use
+only). All pins — CPython version/tag/checksum, bundle id, minimum macOS,
+signing identity — live in `configs/build.yaml`, and
+`scripts/build-macos-app.sh --print-config` shows the resolved values. The
+app's about panel shows both the app version (`CFBundleShortVersionString`,
+mirroring `pyproject.toml`) and the bundled harness version.
 
 The testable logic (startup state machine, log tailing, data-location store,
 link/download policy, service launch plan) lives in the `LocalCodeBenchKit`

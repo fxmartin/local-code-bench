@@ -1,0 +1,21 @@
+# macOS app build pipeline pins (Story 18.3-001). Every tool version and path
+# scripts/build-macos-app.sh depends on is declared here, not in the script
+# (the Epic-15 no-hardcoding principle applied to the build). Flat scalar keys
+# only — the script's bash-side parser does not handle nesting.
+
+app_name: LocalCodeBench
+bundle_id: me.fxmartin.local-code-bench
+min_macos: "14.0"
+
+# Relocatable CPython: python-build-standalone release pinned by tag, version,
+# and archive checksum so the embedded runtime is byte-for-byte reproducible.
+pbs_tag: "20241016"
+pbs_python: "3.12.7"
+pbs_arch: aarch64-apple-darwin
+pbs_sha256: 4c18852bf9c1a11b56f21bcf0df1946f7e98ee43e9e4c0c5374b2b3765cf9508
+
+# Signing. Empty identity → auto-detect a "Developer ID Application"
+# certificate in the keychain, falling back to ad-hoc (local use only,
+# unsigned for distribution) when none exists.
+codesign_identity: ""
+entitlements: app/macos/entitlements.plist
