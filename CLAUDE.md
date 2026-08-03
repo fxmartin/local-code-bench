@@ -151,5 +151,10 @@ docs/STORIES.md (overview and navigation)
 - `LEADERBOARD.md` — Generated benchmark rankings (created by the harness)
 - `docs/FINDINGS.md` — Recorded benchmark findings (e.g. DFlash vs TurboQuant on M3 Max)
 - `docs/UI-TOOLING-DECISION.md` — CSS/chart tooling evaluation (16.3-001): all candidates rejected, hand-rolled token layer stands
-- `articles/` — The two-part Medium series this project is modeled on (local Claude
-  Code setup; MoE vs speculative decoding benchmark methodology)
+- `articles/` — Reference research: the two-part Medium series this project is
+  modeled on (local Claude Code setup; MoE vs speculative decoding benchmark
+  methodology), plus Cody Sandahl's "I Have 96GB for Local AI Models" (Jul 2026) —
+  five months of daily local-LLM use arguing wall time, harness overhead (system
+  prompt size, sub-agent parallelism), and tool-call reliability matter more than
+  parameter count; corroborates the harness's TTFT/prefill focus and its
+  cost-projection method (real token counts × dated cloud price tables)
