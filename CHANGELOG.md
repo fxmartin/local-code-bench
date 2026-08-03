@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.84.0 (2026-08-03)
+
+### Features
+
+- **macos-app**: Add app icon
+  ([`a4a84ad`](https://github.com/fxmartin/local-code-bench/commit/a4a84ad6895a5a9481a03c376e5a894eb6380064))
+
+
 ## v0.83.0 (2026-08-03)
 
 ### Chores
