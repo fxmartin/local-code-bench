@@ -151,10 +151,10 @@ final class AppModel: ObservableObject {
     /// directories the service reads/writes relative to cwd exist.
     private func prepareAppSupportDirectory() {
         let root = defaultAppSupportDirectory()
-        for subdirectory in ["configs", "results"] {
-            try? FileManager.default.createDirectory(
-                at: root.appendingPathComponent(subdirectory),
-                withIntermediateDirectories: true)
-        }
+        try? FileManager.default.createDirectory(
+            at: root.appendingPathComponent("results"), withIntermediateDirectories: true)
+        try? DefaultConfigSeeder.seed(
+            appSupportDirectory: root,
+            resourcesDirectory: Bundle.main.resourceURL)
     }
 }

@@ -177,6 +177,43 @@ var passes = 0
     expect(CheckoutValidation.isBenchCheckout(dir), "configs/ + pyproject.toml is a checkout")
 }
 
+@MainActor func checkDefaultConfigSeeder() throws {
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    let resources = dir.appendingPathComponent("Resources")
+    let defaults = resources.appendingPathComponent("default-configs")
+    let nested = defaults.appendingPathComponent("datasets")
+    try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+    try "seeded\n".write(
+        to: defaults.appendingPathComponent("inferencers.yaml"),
+        atomically: true,
+        encoding: .utf8)
+    try "dataset\n".write(
+        to: nested.appendingPathComponent("task.jsonl"),
+        atomically: true,
+        encoding: .utf8)
+
+    let appSupport = dir.appendingPathComponent("AppSupport")
+    try FileManager.default.createDirectory(
+        at: appSupport.appendingPathComponent("configs"), withIntermediateDirectories: true)
+    try "custom\n".write(
+        to: appSupport.appendingPathComponent("configs/inferencers.yaml"),
+        atomically: true,
+        encoding: .utf8)
+
+    try DefaultConfigSeeder.seed(appSupportDirectory: appSupport, resourcesDirectory: resources)
+
+    let config = try String(
+        contentsOf: appSupport.appendingPathComponent("configs/inferencers.yaml"),
+        encoding: .utf8)
+    let dataset = try String(
+        contentsOf: appSupport.appendingPathComponent("configs/datasets/task.jsonl"),
+        encoding: .utf8)
+    expectEqual(config, "custom\n", "seeder preserves existing app-support configs")
+    expectEqual(dataset, "dataset\n", "seeder copies missing nested config defaults")
+}
+
 // MARK: - NavigationPolicy
 
 @MainActor func checkNavigationPolicy() {
@@ -756,6 +793,7 @@ do {
     try checkLogTail()
     try checkDataLocation()
     try checkCheckoutValidation()
+    try checkDefaultConfigSeeder()
     checkNavigationPolicy()
     try checkServiceLaunchPlan()
     try checkBundledRuntime()

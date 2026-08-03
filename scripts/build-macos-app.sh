@@ -128,6 +128,7 @@ cp "${SWIFT_BIN}" "${APP_DIR}/Contents/MacOS/${APP_NAME}"
 # The archive extracts to python/ — exactly the layout BundledRuntime expects
 # (Contents/Resources/python/bin/python3).
 tar -xzf "${CACHE_DIR}/${PBS_ARCHIVE}" -C "${APP_DIR}/Contents/Resources"
+cp -R "${REPO_ROOT}/configs" "${APP_DIR}/Contents/Resources/default-configs"
 
 cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
