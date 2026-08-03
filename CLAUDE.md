@@ -157,4 +157,7 @@ docs/STORIES.md (overview and navigation)
   five months of daily local-LLM use arguing wall time, harness overhead (system
   prompt size, sub-agent parallelism), and tool-call reliability matter more than
   parameter count; corroborates the harness's TTFT/prefill focus and its
-  cost-projection method (real token counts × dated cloud price tables)
+  cost-projection method (real token counts × dated cloud price tables) — and its
+  companion "I Finally Have My Dream Local AI Stack (and it runs on AMD)"
+  (Apr 2026): the underlying stack build (Strix Halo 128 GB unified memory,
+  Lemonade Server, LiteLLM, Open WebUI, Tailscale)
