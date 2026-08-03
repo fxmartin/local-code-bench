@@ -129,6 +129,7 @@ cp "${SWIFT_BIN}" "${APP_DIR}/Contents/MacOS/${APP_NAME}"
 # (Contents/Resources/python/bin/python3).
 tar -xzf "${CACHE_DIR}/${PBS_ARCHIVE}" -C "${APP_DIR}/Contents/Resources"
 cp -R "${REPO_ROOT}/configs" "${APP_DIR}/Contents/Resources/default-configs"
+cp "${REPO_ROOT}/app/macos/Resources/AppIcon.icns" "${APP_DIR}/Contents/Resources/AppIcon.icns"
 
 cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -136,6 +137,7 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key><string>${APP_NAME}</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
     <key>CFBundleName</key><string>Local Code Bench</string>
     <key>CFBundlePackageType</key><string>APPL</string>
