@@ -2,6 +2,24 @@
 
 <!-- version list -->
 
+## v0.83.0 (2026-08-03)
+
+### Chores
+
+- **sdlc**: Route sdlc runs to the codex harness
+  ([`ddf7e91`](https://github.com/fxmartin/local-code-bench/commit/ddf7e91dbaf9158066b05a2bcc75e93e2cc90ef8))
+
+### Documentation
+
+- **articles**: Add sandahl 96gb local-ai article to references
+  ([`d1d96f4`](https://github.com/fxmartin/local-code-bench/commit/d1d96f42ac21e872ff18e5eaba7a2251e43b6031))
+
+### Features
+
+- **macos-app**: Seed bundled default configs into app support
+  ([`8c76975`](https://github.com/fxmartin/local-code-bench/commit/8c7697589ad2df57c1fe2e3583c4e24597e7d4c9))
+
+
 ## v0.82.0 (2026-07-18)
 
 ### Bug Fixes
